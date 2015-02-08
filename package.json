@@ -1,0 +1,35 @@
+{
+	"author": {
+		"name": "Mikael 'Lilleman' Göransson",
+		"email": "lilleman@larvit.se",
+		"url": "http://github.com/larvit/larvitsmpp"
+	},
+	"private": false,
+	"contributors": [],
+	"dependencies": {
+		"smpp": "x",
+		"winston": "x",
+		"utils-merge": "x"
+	},
+	"description": "Wrapper for SMPP",
+	"devDependencies": {},
+	"keywords": [
+		"smpp",
+		"pdu",
+		"sms"
+	],
+	"main": "larvitsmpp.js",
+	"name": "larvitsmpp",
+	"repository": {
+		"url": "https://github.com/larvit/larvitsmpp",
+		"type": "git"
+	},
+	"version": "0.0.1beta",
+	"readmeFilename": "README.md",
+	"readme": "larvitsmpp",
+	"bugs": {
+		"url": "https://github.com/larvit/larvitsmpp/issues"
+	},
+	"homepage": "https://github.com/larvit/larvitsmpp",
+	"scripts": {}
+}
