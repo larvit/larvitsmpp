@@ -1,5 +1,5 @@
 /**
- * Handle incomming SMPP traffic
+ * SMPP Wrapper
  *
  * Error codes: http://www.activexperts.com/activsms/sms/smpperrorcodes/
  */
@@ -14,18 +14,39 @@ var log   = require('winston'),
  *
  * The option "checkUserAndPass" should be a function, taking three parameters: username, password and callback(err)
  *
- * @param obj options port, checkUserAndPass-function
+ * @param obj options
+ *                   * port - what port to bind to, defaults to 2775
+ *                   * checkUserAndPass - to require username and password to bind
+ *                     to this server this should be a function, taking three
+ *                     parameters: username, password and callback(err)
+ *                   * timeout - number of ms before the link should be considered dead. Defaults to 30000 (30 sec)
+ *
  */
 exports.server = function(options) {
 	options = merge({
 		'port': 2775,
-		'checkUserAndPass': false
+		'checkUserAndPass': false,
+		'timeout': 30000
 	}, options);
 
 	smpp.createServer(function(smppSession) {
-		var loggedIn = false;
+		var loggedIn = false,
+		    killTimer;
 
 		log.debug('larvitsmpp: server() - server session started');
+
+		function resetKillTimer() {
+			log.silly('larvitsmpp: server() - Resetting the kill timer');
+			if (killTimer) {
+				clearTimeout(killTimer);
+			}
+
+			killTimer = setTimeout(function() {
+				log.warn('larvitsmpp: server() - Closing session due to timeout');
+				smppSession.close();
+			}, options.timeout);
+		}
+		resetKillTimer();
 
 		/**
 		 * Set logged in to true
@@ -75,11 +96,12 @@ exports.server = function(options) {
 
 		smppSession.on('error', function() {
 			log.error('larvitsmpp: server() - smppSession error!', arguments);
-			console.log(arguments);
 		});
 
 		smppSession.on('pdu', function(pdu) {
-			log.debug('larvitsmpp: server() - Received command "' + pdu.command + '"');
+			log.silly('larvitsmpp: server() - Received command "' + pdu.command + '"');
+
+			resetKillTimer();
 
 			if (pdu.command === 'bind_receiver' || pdu.command === 'bind_transmitter' || pdu.command === 'bind_transceiver') {
 				bindGeneral(pdu);
