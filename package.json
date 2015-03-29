@@ -7,11 +7,10 @@
 	"private": false,
 	"contributors": [],
 	"dependencies": {
-		"smpp": "x",
 		"winston": "x",
 		"utils-merge": "x"
 	},
-	"description": "Wrapper for SMPP",
+	"description": "Simplified SMPP implementation",
 	"devDependencies": {},
 	"keywords": [
 		"smpp",
@@ -24,7 +23,7 @@
 		"url": "https://github.com/larvit/larvitsmpp",
 		"type": "git"
 	},
-	"version": "0.0.1beta",
+	"version": "0.0.2beta",
 	"readmeFilename": "README.md",
 	"readme": "larvitsmpp",
 	"bugs": {
