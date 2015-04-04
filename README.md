@@ -2,22 +2,6 @@
 
 This is a simplified implementation of the SMPP protocol. It only supports transciever mode and all messages are sent via the "data_sm" command.
 
-## Server
-
-This will setup a password less server on localhost, port 2775 and console.log() incomming commands.
-
-    var larvitsmpp = require('larvitsmpp');
-
-    larvitsmpp.server(function(err, serverSession) {
-    	if (err) {
-    		throw err;
-    	}
-
-    	serverSession.on('data', function(data) {
-    		console.log('command: ' + data.command);
-    	});
-    });
-
 ## Client
 
 This will setup a client that connects to localhost, port 2775 without username or password and send a message.
@@ -43,6 +27,40 @@ This will setup a client that connects to localhost, port 2775 without username 
 
     	clientSession.close();
     });
+
+## Server
+
+This will setup a password less server on localhost, port 2775 and console.log() incomming commands.
+
+    var larvitsmpp = require('larvitsmpp');
+
+    larvitsmpp.server(function(err, serverSession) {
+        if (err) {
+            throw err;
+        }
+
+        serverSession.on('data', function(data) {
+            console.log('command: ' + data.command);
+        });
+    });
+
+### Events
+
+#### connect
+
+Triggered when the socket is connected to a client
+
+#### data
+
+Triggered when data is comming in on the socket
+
+#### close
+
+Triggered when the socket is closed
+
+#### error
+
+Generic error event
 
 ## Advanced server
 
