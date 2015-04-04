@@ -408,10 +408,15 @@ function session(sock, options, callback) {
 /**
  * Setup a server
  *
- * @param obj options - host, port, checkuserpass() etc
+ * @param obj options - host, port, checkuserpass() etc (OPTIONAL)
  * @param func callback(session)
  */
 function server(options, callback) {
+	if (typeof options === 'function') {
+		callback = options;
+		options  = {};
+	}
+
 	// Set default options
 	options = merge({
 		'host': 'localhost',
