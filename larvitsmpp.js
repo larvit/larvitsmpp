@@ -296,18 +296,20 @@ function pduReturn(pdu, status, callback) {
 		status = 'ESME_ROK';
 	}
 
-	if (defs.errors[status] === undefined) {
-		err = new Error('larvitsmpp: pduReturn() - Invalid status');
-		log.warn(err.message);
-
-		callback(err);
-		return;
+	if (pdu === undefined || pdu.errors === undefined || pdu.cmdName === undefined || pdu.seqNr === undefined) {
+		err = new Error('larvitsmpp: pduReturn() - Invalid call PDU, cannot create response PDU');
 	}
 
-	if (defs.cmds[pdu.cmdName + '_resp'] === undefined) {
-		err = new Error('larvitsmpp: pduReturn() - This command does not have a response listed. Given command: "' + pdu.cmdName + '"');
-		log.warn(err.message);
+	if (err === null && defs.errors[status] === undefined) {
+		err = new Error('larvitsmpp: pduReturn() - Invalid status');
+	}
 
+	if (err === null && defs.cmds[pdu.cmdName + '_resp'] === undefined) {
+		err = new Error('larvitsmpp: pduReturn() - This command does not have a response listed. Given command: "' + pdu.cmdName + '"');
+	}
+
+	if (err !== null) {
+		log.warn(err.message);
 		callback(err);
 		return;
 	}
@@ -349,51 +351,52 @@ function session(sock, options, callback) {
 		var data,
 		    respPdu;
 
-		// Try to parse the incoming PDU
-		try {
-			data = pduToObj(pdu);
-		} catch(e) {
-			log.warn('larvitsmpp: session() - Invalid PDU. ' + e.message);
+		pduToObj(pdu, function(err, data) {
+			if (err) {
+				log.warn('larvitsmpp: session() - Invalid PDU. ' + err.message);
 
-			pduReturn(data, 'ESME_RUNKNOWNERR', function(err, retPdu) {
-				if (err) {
-					log.error('larvitsmpp: session() - Could not create return PDU: ' + err.message);
+				pduReturn(data, 'ESME_RUNKNOWNERR', function(err, retPdu) {
+					if (err) {
+						log.error('larvitsmpp: session() - Could not create return PDU: ' + err.message);
+						sock.destroy();
+						return;
+					}
+
+					sock.write(retPdu);
 					sock.destroy();
 					return;
+				});
+			} else {
+				if (loggedIn === false) {
+					// Only bind_* is accepted when the client is not logged in
+
+					if (data.cmdName !== 'bind_transceiver' && data.cmdName !== 'bind_receiver' && data.cmdName !== 'bind_transmitter') {
+						pduReturn(data, 'ESME_RINVBNDSTS', function(err, retPdu) {
+
+						});
+						sock.write(pduReturn(data, 'ESME_RINVBNDSTS'))
+
+						return;
+					}
+
+					// Pass the data along to the sessionEmitter
+					//sessionEmitter.emit('data', data);
+
+					console.log('Converted to obj:');
+					console.log(data);
+
+
+
+					console.log('DATA ' + sock.remoteAddress + ': ' + data);
+					// Write the data back to the socket, the client will receive it as data from the server
+					sock.write('You said "' + data + '"');
+
+
+
 				}
 
-				sock.write(retPdu);
-				sock.destroy();
-				return;
-			});
-		}
-
-		if (loggedIn === false) {
-			// Only bind_* is accepted when the client is not logged in
-
-			if (data.cmdName !== 'bind_transceiver' && data.cmdName !== 'bind_receiver' && data.cmdName !== 'bind_transmitter') {
-				pduReturn(data, 'ESME_RINVBNDSTS', function(err, retPdu) {
-
-				})
-				sock.write(pduReturn(data, 'ESME_RINVBNDSTS'))
-
-				return;
 			}
-		}
-
-
-
-		// Pass the data along to the sessionEmitter
-		//sessionEmitter.emit('data', data);
-
-		console.log('Converted to obj:');
-		console.log(data);
-
-
-
-		console.log('DATA ' + sock.remoteAddress + ': ' + data);
-		// Write the data back to the socket, the client will receive it as data from the server
-		sock.write('You said "' + data + '"');
+		});
   });
 
 	// Add a 'close' event handler to this instance of socket
