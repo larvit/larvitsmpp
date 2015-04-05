@@ -79,7 +79,7 @@ describe('PDU convertion', function() {
 		});
 
 		it('should read a submit_sm with an ending NULL octet to the short_message', function(done) {
-			var pdu = new Buffer('0000003c0000000400000000000000020001003436373031313333313131000101343637303937373133333700000000000000000000047465737400', 'hex');
+			var pdu = new Buffer('0000003c0000000400000000000000020001003436373031313333313131000101343637303937373133333700000000000000000100047465737400', 'hex');
 
 			larvitsmpp.pduToObj(pdu, function(err, obj) {
 				assert( ! err, 'Error should be negative');
@@ -92,7 +92,7 @@ describe('PDU convertion', function() {
 		});
 
 		it('should read a submit_sm without an ending NULL octet to the short_message', function(done) {
-			var pdu = new Buffer('0000003b00000004000000000000000200010034363730313133333131310001013436373039373731333337000000000000000000000474657374', 'hex');
+			var pdu = new Buffer('0000003b00000004000000000000000200010034363730313133333131310001013436373039373731333337000000000000000001000474657374', 'hex');
 
 			larvitsmpp.pduToObj(pdu, function(err, obj) {
 				assert( ! err, 'Error should be negative');
