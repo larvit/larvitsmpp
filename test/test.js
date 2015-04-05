@@ -106,3 +106,23 @@ describe('PDU convertion', function() {
 	});
 
 });
+
+/*
+describe('Sessions', function() {
+	it('should try to send submit_sm while not logged in and get a failure return PDU back', function(done) {
+
+	});
+
+	it('should send a bind_transceiver to a new session and get logged in', function(done) {
+
+	});
+
+	it('should send a bind_transceiver to a new session with a login-method and fail due to wrong username and password', function(done) {
+
+	});
+
+	it('should send a bind_transceiver to a new session with a login-method and succeed with correct username and password', function(done) {
+
+	});
+});
+*/

@@ -56,6 +56,11 @@ function pduToObj(pdu, callback) {
 	    tlvCmdId,
 	    paramSize;
 
+	// Returns true if this PDU is a response to another PDU
+	retObj.isResponse = function() {
+		return ! ! (this.cmdId & 0x80000000);
+	};
+
 	log.silly('larvitsmpp: pduToObj() - Decoding PDU to Obj. PDU buff in hex: ' + pdu.toString('hex'));
 
 	if (pdu.length < 16) {
@@ -274,6 +279,8 @@ function pduReturn(pdu, status, callback) {
 	    param;
 
 	if (Buffer.isBuffer(pdu)) {
+		log.silly('larvitsmpp: pduReturn() - ran with pdu as buffer, run pduToObj() and retry');
+
 		pduToObj(pdu, function(err, pduObj) {
 			if (err) {
 				callback(err);
@@ -284,6 +291,8 @@ function pduReturn(pdu, status, callback) {
 		});
 		return;
 	}
+
+	log.silly('larvitsmpp: pduReturn() - ran');
 
 	// If status is a function, it is the callback.
 	// Default to OK status and sett callback correctly
@@ -339,62 +348,234 @@ function pduReturn(pdu, status, callback) {
 function session(sock, options, callback) {
 	var sessionEmitter = new events.EventEmitter(),
 	    loggedIn       = false,
-	    enquireLinkTimer; // A timer used for keep alive of the session
+	    ourSeqNr       = 1, // Sequence number used for commands initiated from us
+	    enqLinkTimer; // A timer used for keep alive of the session
 
-	log.verbose('larvitsmpp: session() - New session started from ' + sock.remoteAddress + ':' + sock.remotePort);
+	log.silly('larvitsmpp: session() - New session started from ' + sock.remoteAddress + ':' + sock.remotePort);
 
 	// Make the socket transparent via the returned emitter
 	sessionEmitter.sock = sock;
 
-	// Add a 'data' event handler to this instance of socket
-	sock.on('data', function(pdu) {
-		var data,
-		    respPdu;
+	/**
+	 * Increase our sequence number
+	 */
+	function incOurSeqNr() {
+		ourSeqNr ++;
 
-		pduToObj(pdu, function(err, data) {
+		// If we pass the maximum, start over at 1
+		if (ourSeqNr > 2147483646) {
+			ourSeqNr = 1;
+		}
+	}
+
+	/**
+	 * Close the socket
+	 * Always use this function to close the socket so we get it on log
+	 */
+	function closeSocket() {
+		log.verbose('larvitsmpp: session() - closeSocket() - Closing socket for ' + sock.remoteAddress + ':' + sock.remotePort);
+		if (enqLinkTimer) {
+			clearTimeout(enqLinkTimer);
+		}
+		sock.destroy();
+	}
+
+	/**
+	 * Send PDU to socket
+	 *
+	 * @param buf pdu - can also take PDU object
+	 * @param bol closeAfterSend - if true will close the socket after sending
+	 */
+	function send(pdu, closeAfterSend) {
+		if ( ! Buffer.isBuffer(pdu)) {
+			objToPdu(pdu, function(err, buffer) {
+				if (err) {
+					log.warn('larvitsmpp: session() - send() - Could not convert PDU to buffer');
+					closeSocket();
+					return;
+				}
+
+				send(buffer);
+			});
+			return;
+		}
+
+		log.verbose('larvitsmpp: session() - send() - sending PDU. SeqNr: ' + pdu.readUInt32BE(12) + ' cmd: ' + defs.cmdsById[pdu.readUInt32BE(4)].command + ' cmdStatus: ' + defs.errorsById[parseInt(pdu.readUInt32BE(8))] + ' hex: ' + pdu.toString('hex'));
+		sock.write(pdu);
+
+		if (closeAfterSend) {
+			closeSocket();
+		}
+	}
+
+	/**
+	 * Send a return to given PDU
+	 *
+	 * @param obj or buf pdu
+	 * @param str status - see list at defs.errors - defaults to 'ESME_ROK' - no error
+	 * @param bol closeAfterSend - if true will close the socket after sending (OPTIONAL)
+	 * @param func callback(err)
+	 */
+	function sendReturn(pdu, status, closeAfterSend, callback) {
+		if (typeof closeAfterSend === 'function') {
+			callback       = closeAfterSend;
+			closeAfterSend = undefined;
+		}
+
+		pduReturn(pdu, status, function(err, retPdu) {
+			if (err) {
+				log.error('larvitsmpp: session() - Could not create return PDU: ' + err.message);
+				closeSocket();
+
+				if (typeof callback === 'function') {
+					callback(err);
+				}
+
+				return;
+			}
+
+			send(retPdu, closeAfterSend);
+
+			if (typeof callback === 'function') {
+				callback();
+			}
+		});
+	}
+
+	/**
+	 * Try to log a connecting peer in
+	 *
+	 * @param obj pduObj
+	 */
+	function login(pduObj) {
+		log.debug('larvitsmpp: session() - sock.on(data) - Data received and session is not loggedIn');
+
+		// Pause socket so we do not receive any other commands until we have processed the login
+		sock.pause();
+
+		// Only bind_* is accepted when the client is not logged in
+		if (pduObj.cmdName !== 'bind_transceiver' && pduObj.cmdName !== 'bind_receiver' && pduObj.cmdName !== 'bind_transmitter') {
+			log.debug('larvitsmpp: session() - sock.on(data) - Session is not loggedIn and no bind_* command is given. Return error "ESME_RINVBNDSTS');
+
+			pduReturn(pduObj, 'ESME_RINVBNDSTS', function(err, retPdu) {
+				if (err) {
+					closeSocket();
+					return;
+				}
+
+				sock.resume();
+				send(retPdu);
+			});
+
+			return;
+		}
+
+		// If there is a checkuserpass(), use it to check system_id and password from the PDU
+		if (typeof options.checkuserpass === 'function') {
+			options.checkuserpass(pduObj.params.system_id, pduObj.params.password, function(err, res) {
+				if (err) {
+					closeSocket();
+					return;
+				}
+
+				if ( ! res) {
+					log.info('larvitsmpp: session() - login() - Login failed! Connected host: ' + sock.remoteAddress + ':' + sock.remotePort + ' system_id: "' + pduObj.params.system_id + '"');
+
+					sock.resume();
+					sendReturn(pduObj, 'ESME_RBINDFAIL');
+					return;
+				}
+
+				log.verbose('larvitsmpp: session() - login() - Login successful! Connected host: ' + sock.remoteAddress + ':' + sock.remotePort + ' system_id: "' + pduObj.params.system_id + '"');
+				loggedIn = true;
+				sock.resume();
+				sendReturn(pduObj);
+			});
+
+			return;
+		}
+
+		// If we arrived here it means we are not logged in and that a bind_* event happened and no checkuserpass() method exists. Lets login!
+		loggedIn = true;
+		sock.resume();
+		sendReturn(pduObj);
+	}
+
+	function handleResponse(pduObj) {
+		console.log(pduObj);
+		console.log('HANDLE IT motha fukkah!');
+	}
+
+	function deliverSm(pduObj) {
+		console.log(pduObj);
+		sendReturn(pduObj);
+	}
+
+	function submitSm(pduObj) {
+		sessionEmitter.emit('sms', {
+			'from':         pduObj.params.source_addr,
+			'to':           pduObj.params.destination_addr,
+			'message':      pduObj.params.short_message,
+			'dlrRequested': Boolean(pduObj.params.registered_delivery),
+			'seqNr':        pduObj.seqNr // Needed for DLR to be returned
+		});
+		sendReturn(pduObj);
+	}
+
+	/**
+	 * Reset the enquire link timer
+	 * If this is not ran within options.timeout milliseconds, this session will self terminate
+	 */
+	function resetEnqLinkTimer() {
+		log.silly('larvitsmpp: session() - resetEnqLinkTimer() - Resetting the kill timer');
+		if (enqLinkTimer) {
+			clearTimeout(enqLinkTimer);
+		}
+
+		enqLinkTimer = setTimeout(function() {
+			log.info('larvitsmpp: session() - resetEnqLinkTimer() - Closing session due to timeout');
+			closeSocket();
+		}, options.timeout);
+	}
+	resetEnqLinkTimer();
+
+	function enquireLink(pduObj) {
+		log.silly('larvitsmpp: session() - enquireLink() - Enquiring link');
+		resetEnqLinkTimer();
+		sendReturn(pduObj);
+	}
+
+	// Add a 'data' event handler to this instance of socket
+	sock.on('data', function(pduBuf) {
+		// Pass the data along to the sessionEmitter
+		sessionEmitter.emit('data', pduBuf);
+
+		log.silly('larvitsmpp: session() - sock.on(data) - Incoming PDU: ' + pduBuf.toString('hex'));
+
+		pduToObj(pduBuf, function(err, pduObj) {
 			if (err) {
 				log.warn('larvitsmpp: session() - Invalid PDU. ' + err.message);
 
-				pduReturn(data, 'ESME_RUNKNOWNERR', function(err, retPdu) {
-					if (err) {
-						log.error('larvitsmpp: session() - Could not create return PDU: ' + err.message);
-						sock.destroy();
-						return;
-					}
-
-					sock.write(retPdu);
-					sock.destroy();
-					return;
-				});
+				sock.destroy();
 			} else {
+				log.verbose('larvitsmpp: session() - sock.on(data) - Incoming PDU. Seqnr: ' + pduObj.seqNr + ' cmd: ' + pduObj.cmdName + ' cmdStatus: ' + pduObj.cmdStatus + ' hex: ' + pduBuf.toString('hex'));
+
 				if (loggedIn === false) {
-					// Only bind_* is accepted when the client is not logged in
-
-					if (data.cmdName !== 'bind_transceiver' && data.cmdName !== 'bind_receiver' && data.cmdName !== 'bind_transmitter') {
-						pduReturn(data, 'ESME_RINVBNDSTS', function(err, retPdu) {
-
-						});
-						sock.write(pduReturn(data, 'ESME_RINVBNDSTS'))
-
-						return;
-					}
-
-					// Pass the data along to the sessionEmitter
-					//sessionEmitter.emit('data', data);
-
-					console.log('Converted to obj:');
-					console.log(data);
-
-
-
-					console.log('DATA ' + sock.remoteAddress + ': ' + data);
-					// Write the data back to the socket, the client will receive it as data from the server
-					sock.write('You said "' + data + '"');
-
-
-
+					login(pduObj);
+				} else if (pduObj.isResponse()) {
+					handleResponse(pduObj);
+				} else if (pduObj.cmdName === 'deliver_sm') {
+					deliverSm(pduObj);
+				} else if (pduObj.cmdName === 'enquire_link') {
+					enquireLink(pduObj);
+				} else if (pduObj.cmdName === 'submit_sm') {
+					submitSm(pduObj);
+				} else if (pduObj.cmdName === 'unbind') {
+					sendReturn(pduObj, 'ESME_ROK', true);
+				} else {
+					// All other commands we do not support
+					sendReturn(pduObj, 'ESME_RINVCMDID');
 				}
-
 			}
 		});
   });
@@ -402,11 +583,11 @@ function session(sock, options, callback) {
 	// Add a 'close' event handler to this instance of socket
 	sock.on('close', function() {
 		sessionEmitter.emit('close');
-		console.log('CLOSED: ' + sock.remoteAddress +' '+ sock.remotePort);
+		log.silly('larvitsmpp: session() - socket closed');
 	});
 
 	callback(null, sessionEmitter);
-}/**/
+}
 
 /**
  * Setup a server
@@ -423,7 +604,8 @@ function server(options, callback) {
 	// Set default options
 	options = merge({
 		'host': 'localhost',
-		'port': 2775
+		'port': 2775,
+		'timeout': 30000 // 30 sec
 	}, options || {});
 
 	// Create a server instance, and chain the listen function to it
@@ -431,13 +613,13 @@ function server(options, callback) {
 	// The sock object the callback function receives UNIQUE for each connection
 	net.createServer(function(sock) {
 		// We have a connection - a socket object is assigned to the connection automatically
-		log.verbose('larvitsmpp: server() - Incomming connection! remoteAddress: ' + sock.remoteAddress + ' remotePort: ' + sock.remotePort);
+		log.verbose('larvitsmpp: server() - Incomming connection! From: ' + sock.remoteAddress + ':' + sock.remotePort);
 
 		session(sock, options, callback);
 	}).listen(options.port, options.host);
 
 	log.info('larvitsmpp: server() - Up and running at ' + options.host + ':' + options.port);
-}/**/
+}
 
 /**
  * Setup a client
@@ -475,7 +657,7 @@ function client(options, callback) {
 	client.on('close', function() {
 		console.log('Connection closed');
 	});
-}/**/
+}
 
 // Expose some functions
 exports.server    = server;
