@@ -296,7 +296,7 @@ function pduReturn(pdu, status, callback) {
 		status = 'ESME_ROK';
 	}
 
-	if (pdu === undefined || pdu.errors === undefined || pdu.cmdName === undefined || pdu.seqNr === undefined) {
+	if (pdu === undefined || pdu.cmdName === undefined || pdu.seqNr === undefined) {
 		err = new Error('larvitsmpp: pduReturn() - Invalid call PDU, cannot create response PDU');
 	}
 
