@@ -516,8 +516,7 @@ function session(sock, options, callback) {
 			'from':         pduObj.params.source_addr,
 			'to':           pduObj.params.destination_addr,
 			'message':      pduObj.params.short_message,
-			'dlrRequested': Boolean(pduObj.params.registered_delivery),
-			'seqNr':        pduObj.seqNr // Needed for DLR to be returned
+			'dlrRequested': Boolean(pduObj.params.registered_delivery)
 		});
 		sendReturn(pduObj);
 	}
@@ -550,13 +549,16 @@ function session(sock, options, callback) {
 		// Pass the data along to the sessionEmitter
 		sessionEmitter.emit('data', pduBuf);
 
+		// Reset the enquire link timer
+		resetEnqLinkTimer();
+
 		log.silly('larvitsmpp: session() - sock.on(data) - Incoming PDU: ' + pduBuf.toString('hex'));
 
 		pduToObj(pduBuf, function(err, pduObj) {
 			if (err) {
 				log.warn('larvitsmpp: session() - Invalid PDU. ' + err.message);
 
-				sock.destroy();
+				closeSocket();
 			} else {
 				log.verbose('larvitsmpp: session() - sock.on(data) - Incoming PDU. Seqnr: ' + pduObj.seqNr + ' cmd: ' + pduObj.cmdName + ' cmdStatus: ' + pduObj.cmdStatus + ' hex: ' + pduBuf.toString('hex'));
 
@@ -628,34 +630,128 @@ function server(options, callback) {
  * @param func callback(err, connection)
  */
 function client(options, callback) {
-	var client = new net.Socket();
+	var sock           = new net.Socket(),
+	    sessionEmitter = new events.EventEmitter(),
+	    ourSeqNr       = 1, // Sequence number used for commands initiated from us
+	    enqLinkTimer;
 
 	// Set default options
 	options = merge({
-		'host': 'localhost',
-		'port': 2775
+		'host':          'localhost',
+		'port':          2775,
+		'username':      'user',
+		'password':      'pass',
+		'enqLinkTiming': 20000 // 20 sec
 	}, options || {});
 
-	client.connect(options.port, options.host, function() {
+	// Make the socket transparent via the returned emitter
+	sessionEmitter.sock = sock;
 
-		console.log('CONNECTED TO: ' + options.host + ':' + options.port);
-		// Write a message to the socket as soon as the client is connected, the server will receive it as message from the client
-		client.write('I am Chuck Norris!');
-	});
+	/**
+	 * Increase our sequence number
+	 */
+	function incOurSeqNr() {
+		ourSeqNr ++;
+
+		// If we pass the maximum, start over at 1
+		if (ourSeqNr > 2147483646) {
+			ourSeqNr = 1;
+		}
+	}
+
+	/**
+	 * Close the socket
+	 * Always use this function to close the socket so we get it on log
+	 */
+	function closeSocket() {
+		log.verbose('larvitsmpp: client() - closeSocket() - Closing socket for ' + sock.remoteAddress + ':' + sock.remotePort);
+		if (enqLinkTimer) {
+			clearTimeout(enqLinkTimer);
+		}
+		sock.destroy();
+	}
+
+	/**
+	 * Send PDU to socket
+	 *
+	 * @param buf pdu - can also take PDU object
+	 * @param bol closeAfterSend - if true will close the socket after sending
+	 */
+	function send(pdu, closeAfterSend) {
+		if ( ! Buffer.isBuffer(pdu)) {
+			objToPdu(pdu, function(err, buffer) {
+				if (err) {
+					log.warn('larvitsmpp: client() - send() - Could not convert PDU to buffer');
+					closeSocket();
+					return;
+				}
+
+				send(buffer);
+			});
+			return;
+		}
+
+		log.verbose('larvitsmpp: client() - send() - sending PDU. SeqNr: ' + pdu.readUInt32BE(12) + ' cmd: ' + defs.cmdsById[pdu.readUInt32BE(4)].command + ' cmdStatus: ' + defs.errorsById[parseInt(pdu.readUInt32BE(8))] + ' hex: ' + pdu.toString('hex'));
+		sock.write(pdu);
+
+		if (closeAfterSend) {
+			closeSocket();
+		}
+	}
+
+	/**
+	 * Send a return to given PDU
+	 *
+	 * @param obj or buf pdu
+	 * @param str status - see list at defs.errors - defaults to 'ESME_ROK' - no error
+	 * @param bol closeAfterSend - if true will close the socket after sending (OPTIONAL)
+	 * @param func callback(err)
+	 */
+	function sendReturn(pdu, status, closeAfterSend, callback) {
+		if (typeof closeAfterSend === 'function') {
+			callback       = closeAfterSend;
+			closeAfterSend = undefined;
+		}
+
+		pduReturn(pdu, status, function(err, retPdu) {
+			if (err) {
+				log.error('larvitsmpp: client() - Could not create return PDU: ' + err.message);
+				closeSocket();
+
+				if (typeof callback === 'function') {
+					callback(err);
+				}
+
+				return;
+			}
+
+			send(retPdu, closeAfterSend);
+
+			if (typeof callback === 'function') {
+				callback();
+			}
+		});
+	}
 
 	// Add a 'data' event handler for the client socket
 	// data is what the server sent to this socket
-	client.on('data', function(data) {
+	sock.on('data', function(data) {
 
-		console.log('DATA: ' + data);
+		console.log('DATA: ');
+		console.log(data);
 		// Close the client socket completely
-		client.destroy();
-
+		sock.destroy();
 	});
 
 	// Add a 'close' event handler for the client socket
-	client.on('close', function() {
+	sock.on('close', function() {
 		console.log('Connection closed');
+	});
+
+	sock.connect(options.port, options.host, function() {
+		log.info('larvitsmpp: client() - Connected to ' + sock.remoteAddress + ':' + sock.remotePort);
+		// Write a message to the socket as soon as the client is connected, the server will receive it as message from the client
+		sock.write('I am Chuck Norris!');
 	});
 }
 
