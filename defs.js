@@ -192,30 +192,20 @@ types = {
 		default: ''
 	},
 	buffer: {
-		read: function(buffer, offset) {
-			var length = buffer.readUInt8(offset ++);
+		read: function(buffer, offset, length) {
 			return buffer.slice(offset, offset + length);
 		},
 		write: function(value, buffer, offset) {
-			buffer.writeUInt8(value.length, offset ++);
 			if (typeof value === 'string') {
 				value = new Buffer(value, 'ascii');
 			}
 			value.copy(buffer, offset);
 		},
-		size: function(buffer, offset) {
-			var length;
-
-			if (isNaN(offset)) {
-				offset = 0;
-			}
-
-			length = buffer.readUInt8(offset ++);
-
-			if (buffer[offset + length + 1] !== undefined && buffer.slice(offset + length + 1).toString('hex') === '00') {
-				return offset + length + 1;
+		size: function(buffer) {
+			if (buffer[buffer.length - 1] === 0x00) {
+				return buffer.length - 1;
 			} else {
-				return offset + length;
+				return buffer.length;
 			}
 		},
 		default: new Buffer(0)
@@ -1325,7 +1315,7 @@ cmds = {
 			replace_if_present_flag: {type: types.int8},
 			data_coding: {type: types.int8},
 			sm_default_msg_id: {type: types.int8},
-			//sm_length: {type: types.int8},
+			sm_length: {type: types.int8},
 			short_message: {type: types.buffer, filter: filters.message}
 		}
 	},

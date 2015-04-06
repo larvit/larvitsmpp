@@ -11,11 +11,10 @@ var log    = require('winston'),
  *
  * @param buf buffer
  * @param str encoding 'ASCII', 'LATIN1' or 'UCS2' or hex values
- * @param func callback(err, str) - str will be in utf8 format
+ * @return str in utf8 format
  */
-function decodeMsg(buffer, encoding, callback) {
-	var err = null,
-	    checkEnc;
+function decodeMsg(buffer, encoding) {
+	var checkEnc;
 
 	for (checkEnc in defs.consts.ENCODING) {
 		if (parseInt(encoding) === defs.consts.ENCODING[checkEnc] || encoding === checkEnc) {
@@ -28,18 +27,14 @@ function decodeMsg(buffer, encoding, callback) {
 		encoding = 'ASCII';
 	}
 
-	callback(err, defs.encodings[encoding].decode(buffer));
+	return defs.encodings[encoding].decode(buffer);
 }
-/*
-function encodeMsg(str, callback) {
-	var encoding = defs.encodings.detect(str),
-	    err      = null,
-	    buff;
 
-  buff = defs.encodings[encoding].encode(str);
+function encodeMsg(str) {
+	var encoding = defs.encodings.detect(str);
 
-	callback(err, buff);
-}*/
+	return defs.encodings[encoding].encode(str);
+}
 
 /**
  * Transforms a PDU to an object
@@ -104,16 +99,21 @@ function pduToObj(pdu, callback) {
 
 		// Get the parameter value by using the definition type read() function
 		try {
-			retObj.params[param] = command.params[param].type.read(pdu, offset);
-
-			// Short message seems to sometimes be terminated with a NULL and sometimes not. Very ugly and needs special care.
-			if (param === 'short_message') {
-				paramSize = command.params[param].type.size(pdu, offset);
-			} else {
-				paramSize = command.params[param].type.size(retObj.params[param]);
-			}
+			retObj.params[param] = command.params[param].type.read(pdu, offset, retObj.params.sm_length);
+			paramSize            = command.params[param].type.size(retObj.params[param]);
 
 			log.silly('larvitsmpp: pduToObj() - Reading param "' + param + '" at offset ' + offset + ' with calculated size: ' + paramSize + ' content in hex: ' + pdu.slice(offset, offset + paramSize).toString('hex'));
+
+			if (param === 'short_message') {
+				// Check if we have a trailing NULL octet after the short_message. Some idiot thought that would be a good idea
+				// in some implementations, so we need to account for that.
+
+				if (pdu.slice(offset + retObj.params.sm_length, offset + retObj.params.sm_length + 1).toString('hex') === '00') {
+					log.silly('larvitsmpp: pduToObj() - short_message is followed by a NULL octet, increase paramSize one extra to account for that');
+
+					paramSize ++;
+				}
+			}
 
 			// Increase the offset by the current params length
 			offset += paramSize;
@@ -145,17 +145,9 @@ function pduToObj(pdu, callback) {
 
 	// Decode the short message if it is set
 	if (retObj.params.short_message !== undefined) {
+		retObj.params.short_message = decodeMsg(retObj.params.short_message, retObj.params.data_coding);
 
-		decodeMsg(retObj.params.short_message, retObj.params.data_coding, function(err, decodedMsg) {
-			if (err) {
-				callback(err);
-				return;
-			}
-
-			retObj.params.short_message = decodedMsg;
-
-			callback(null, retObj);
-		});
+		callback(null, retObj);
 	} else {
 		// We need to do the standard callback in an else statement since
 		// this always would be called before the above callback if we didn't
@@ -172,6 +164,7 @@ function pduToObj(pdu, callback) {
 function objToPdu(obj, callback) {
 	var cmdLength = 16, // All commands are at least 16 octets long
 	    err       = null,
+	    shortMsg,
 	    param,
 	    paramType,
 	    buff,
@@ -232,17 +225,34 @@ function objToPdu(obj, callback) {
 		return;
 	}
 
+	// All params are mandatory. Set them if they are not set
+	if (obj.params === undefined) {
+		obj.params = {};
+	}
+
+	// If param "short_message" exists, encode it and set parameter "data_coding" accordingly
+	if (obj.params.short_message !== undefined && ! Buffer.isBuffer(obj.params.short_message)) {
+		// Detect encoding
+		obj.params.data_coding = defs.encodings.detect(obj.params.short_message);
+
+		log.silly('larvitsmpp: objToPdu() - data_coding "' + obj.params.data_coding + '" detected');
+
+		// Now set the hex value
+		obj.params.data_coding = defs.consts.ENCODING[obj.params.data_coding];
+
+		// Acutally encode the string
+		shortMsg                 = obj.params.short_message;
+		obj.params.short_message = encodeMsg(obj.params.short_message);
+		obj.params.sm_length     = obj.params.short_message.length;
+		log.silly('larvitsmpp: objToPdu() - encoding message "' + shortMsg + '" to "' + obj.params.short_message.toString('hex') + '"');
+	}
+
 	// Handle params - All command params should always exists, even if they do not contain data.
 	for (param in defs.cmds[obj.cmdName].params) {
 
 		// Get the parameter type, int, string, cstring etc.
 		// This is needed so we can calculate length etc
 		paramType = defs.cmds[obj.cmdName].params[param].type;
-
-		// All params are mandatory. Set them if they are not set
-		if (obj.params === undefined) {
-			obj.params = {};
-		}
 
 		if (obj.params[param] === undefined) {
 			obj.params[param] = paramType.default;
@@ -519,6 +529,29 @@ function session(sock) {
 				callback();
 			}
 		});
+	};
+
+	/**
+	 * Send an SMS
+	 *
+	 * @param obj smsOptions
+	 *                       from - alphanum or international format
+	 *                       to - international format
+	 *                       message - string
+	 *                       dlr - boolean defaults to false
+	 * @param func callback(err, retPduObj)
+	 */
+	sessionEmitter.sendSms = function(smsOptions, callback) {
+		var pduObj = {};
+
+		pduObj.cmdName = 'submti_sm';
+		pduObj.params  = {
+			'source_addr': smsOptions.from,
+			'destination_addr': smsOptions.to,
+			'short_message': smsOptions.message
+		};
+
+		sessionEmitter.send(pduObj, callback);
 	};
 
 	sessionEmitter.deliverSm = function(pduObj) {

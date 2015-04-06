@@ -117,6 +117,25 @@ describe('PDU convertion', function() {
 				done();
 			});
 		});
+
+		it('should create a very simple submit_sm PDU', function(done) {
+			larvitsmpp.objToPdu({
+				'cmdName': 'submit_sm',
+				'cmdStatus': 'ESME_ROK',
+				'seqNr': 12,
+				'params': {
+					'source_addr': '46701113311',
+					'destination_addr': '46709771337',
+					'short_message': 'Hello world'
+				}
+			}, function(err, pdu) {
+				assert( ! err, 'Error should be negative');
+
+				assert(pdu.toString('hex') === '0000004200000004000000000000000c00000034363730313131333331310000003436373039373731333337000000000000000001000b48656c6c6f20776f726c64');
+
+				done();
+			});
+		});
 	});
 
 });
