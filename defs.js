@@ -204,7 +204,13 @@ types = {
 			value.copy(buffer, offset);
 		},
 		size: function(buffer, offset) {
-			var length = buffer.readUInt8(offset ++);
+			var length;
+
+			if (isNaN(offset)) {
+				offset = 0;
+			}
+
+			length = buffer.readUInt8(offset ++);
 
 			if (buffer[offset + length + 1] !== undefined && buffer.slice(offset + length + 1).toString('hex') === '00') {
 				return offset + length + 1;
