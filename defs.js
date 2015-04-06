@@ -1189,7 +1189,7 @@ cmds = {
 			replace_if_present_flag: {type: types.int8},
 			data_coding: {type: types.int8},
 			sm_default_msg_id: {type: types.int8},
-			//sm_length: {type: types.int8},
+			sm_length: {type: types.int8},
 			short_message: {type: types.buffer, filter: filters.message}
 		}
 	},
@@ -1259,7 +1259,7 @@ cmds = {
 			validity_period: {type: types.cstring, filter: filters.time},
 			registered_delivery: {type: types.int8},
 			sm_default_msg_id: {type: types.int8},
-			//sm_length: {type: types.int8},
+			sm_length: {type: types.int8},
 			short_message: {type: types.buffer, filter: filters.message}
 		}
 	},

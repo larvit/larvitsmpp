@@ -48,7 +48,7 @@ function pduToObj(pdu, callback) {
 	    offset,
 	    command,
 	    param,
-	    tlvCmdId,
+	    //tlvCmdId,
 	    paramSize;
 
 	// Returns true if this PDU is a response to another PDU
@@ -128,6 +128,8 @@ function pduToObj(pdu, callback) {
 	// If the length is greater than the current offset, there must be TLVs - resolve them!
 	if (offset < retObj.cmdLength) {
 		console.log('TLVs found yo! :D Implement us');
+		console.log('TLV hex: ' + pdu.slice(offset, retObj.cmdLength).toString('hex'));
+		/*
 		console.log(pdu.length);
 		console.log(retObj.cmdLength);
 		console.log(offset);
@@ -138,9 +140,9 @@ function pduToObj(pdu, callback) {
 
 		console.log('tlvCmdId:');
 		console.log(tlvCmdId);
-		process.exit();
 
 		offset ++; //erh... not really, do something more nice! :)
+		*/
 	}
 
 	// Decode the short message if it is set
@@ -384,7 +386,7 @@ function session(sock) {
 	 * Always use this function to close the socket so we get it on log
 	 */
 	sessionEmitter.closeSocket = function() {
-		log.debug('larvitsmpp: session() - closeSocket() - Closing socket for ' + sock.remoteAddress + ':' + sock.remotePort);
+		log.verbose('larvitsmpp: session() - closeSocket() - Closing socket for ' + sock.remoteAddress + ':' + sock.remotePort);
 		if (sessionEmitter.enqLinkTimer) {
 			clearTimeout(sessionEmitter.enqLinkTimer);
 		}
@@ -550,6 +552,11 @@ function session(sock) {
 			'destination_addr': smsOptions.to,
 			'short_message': smsOptions.message
 		};
+
+		// Request DLRs!
+		if (smsOptions.dlr) {
+			pduObj.params.registered_delivery = 0x01;
+		}
 
 		sessionEmitter.send(pduObj, callback);
 	};
