@@ -143,4 +143,23 @@ describe('PDU convertion', function() {
 		});
 	});
 
+	describe('TLVs', function() {
+		it('should extract TLVs from a PDU', function(done) {
+			var pdu = new Buffer('000000e9000000050000000002a82e8600010134363730393737313333370000003436373031313133333131000400000000000000007569643a313535303430363231323432313433353835207375623a30303120646c7672643a303031207375626d697420646174653a3135303430363233323420646f6e6520646174653a3135303430363233323420737461743a44454c49565244206572723a3030303020746578743a202062616666042300030300000427000102001e001331353530343036323132343231343335383500141800040000076c145400040000000114160006323430303800', 'hex');
+
+			larvitsmpp.pduToObj(pdu, function(err, obj) {
+				assert( ! err, 'Error should be negative');
+
+				assert(obj.cmdId.toString(16)        === '5',                  'Command ID should be 0x00000005 (5)');
+				assert(obj.cmdStatus                 === 'ESME_ROK',           'Command status should be "ESME_ROK"');
+				assert(obj.seqNr                     === 44576390,             'Sequence number should be 44576390');
+				assert(obj.params.destination_addr   === '46701113311',        'Param destination_addr should be "46701113311"');
+				assert(obj.tlvs.receipted_message_id === '155040621242143585', 'TLV receipted_message_id should be "155040621242143585"');
+
+				done();
+			});
+
+		});
+	});
+
 });
