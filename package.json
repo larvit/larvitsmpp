@@ -7,12 +7,15 @@
 	"private": false,
 	"contributors": [],
 	"dependencies": {
-		"winston": "x",
-		"utils-merge": "x",
-		"iconv-lite": "x"
+		"winston": "latest",
+		"utils-merge": "latest",
+		"iconv-lite": "latest"
 	},
 	"description": "Simplified SMPP implementation",
-	"devDependencies": {},
+	"devDependencies": {
+		"mocha": "latest",
+		"portfinder": "latest"
+	},
 	"keywords": [
 		"smpp",
 		"pdu",
