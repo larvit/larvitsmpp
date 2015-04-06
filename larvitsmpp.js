@@ -544,7 +544,7 @@ function session(sock) {
 	sessionEmitter.sendSms = function(smsOptions, callback) {
 		var pduObj = {};
 
-		pduObj.cmdName = 'submti_sm';
+		pduObj.cmdName = 'submit_sm';
 		pduObj.params  = {
 			'source_addr': smsOptions.from,
 			'destination_addr': smsOptions.to,
