@@ -402,9 +402,13 @@ encodings.ASCII = { // GSM 03.38
 encodings.ASCII.init();
 
 encodings.LATIN1 = {
-	match: function(value) {
-		return value === iconv.decode(iconv.encode(value, 'latin1'), 'latin1');
+	// Never use this for new messages
+	match: function() {
+		return false;
 	},
+	/*match: function(value) {
+		return value === iconv.decode(iconv.encode(value, 'latin1'), 'latin1');
+	},*/
 	encode: function(value) {
 		return iconv.encode(value, 'latin1');
 	},
