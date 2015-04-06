@@ -1,21 +1,7 @@
 'use strict';
 
 var larvitsmpp = require('../larvitsmpp'),
-    assert     = require('assert'),
-    portfinder = require('portfinder'),
-    log        = require('winston');
-
-// Remove log output to the console
-log.remove(log.transports.Console);
-
-// Very advanced auth system
-function checkuserpass(username, password, callback) {
-	if (username === 'foo' && password === 'bar') {
-		callback(null, true);
-	} else {
-		callback(null, false);
-	}
-}
+    assert     = require('assert');
 
 describe('PDU convertion', function() {
 
@@ -136,111 +122,25 @@ describe('PDU convertion', function() {
 				done();
 			});
 		});
-	});
 
-});
-
-describe('Sessions', function() {
-
-	it('should setup a basic server and client and then directly unbinding again', function(done) {
-		portfinder.getPort(function(err, freePort) {
-			assert( ! err, 'Error should be negative');
-
-			larvitsmpp.server({
-				'port': freePort
-			}, function(err, serverSession) {
+		it('should create a submit_sm PDU with UCS2 encoding', function(done) {
+			larvitsmpp.objToPdu({
+				'cmdName': 'submit_sm',
+				'cmdStatus': 'ESME_ROK',
+				'seqNr': 12,
+				'params': {
+					'source_addr': '46701113311',
+					'destination_addr': '46709771337',
+					'short_message': 'Hello«»world'
+				}
+			}, function(err, pdu) {
 				assert( ! err, 'Error should be negative');
 
-				serverSession.on('close', function() {
-					// Manually destroy the server socket
-					serverSession.sock.destroy();
-				});
-			});
-
-			larvitsmpp.client({
-				'port': freePort
-			}, function(err, clientSession) {
-				assert( ! err, 'Error should be negative');
-
-				// Gracefully close connection
-				clientSession.unbind();
+				assert(pdu.toString('hex') === '0000004f00000004000000000000000c00000034363730313131333331310000003436373039373731333337000000000000000008001800480065006c006c006f00ab00bb0077006f0072006c0064');
 
 				done();
 			});
 		});
 	});
 
-	it('should setup a server with auth and client trying to connect with wrong username and password', function(done) {
-		portfinder.getPort(function(err, freePort) {
-			assert( ! err, 'Error should be negative');
-
-			larvitsmpp.server({
-				'port': freePort,
-				'checkuserpass': checkuserpass
-			}, function(err, serverSession) {
-				assert( ! err, 'Error should be negative');
-
-				serverSession.on('close', function() {
-					// Manually destroy the server socket
-					serverSession.sock.destroy();
-				});
-			});
-
-			larvitsmpp.client({
-				'port': freePort
-			}, function(err) {
-				assert(err, 'Error should be set since login should have failed');
-
-				done();
-			});
-		});
-	});
-
-	it('should setup a server with auth and client trying to connect with correct username and password', function(done) {
-		portfinder.getPort(function(err, freePort) {
-			assert( ! err, 'Error should be negative');
-
-			larvitsmpp.server({
-				'port': freePort,
-				'checkuserpass': checkuserpass
-			}, function(err, serverSession) {
-				assert( ! err, 'Error should be negative');
-
-				serverSession.on('close', function() {
-					// Manually destroy the server socket
-					serverSession.sock.destroy();
-				});
-			});
-
-			larvitsmpp.client({
-				'port': freePort,
-				'username': 'foo',
-				'password': 'bar'
-			}, function(err, clientSession) {
-				assert( ! err, 'Error should be negative');
-
-				// Gracefully close connection
-				clientSession.unbind();
-
-				done();
-			});
-		});
-	});
-
-	/*
-	it('should try to send submit_sm while not logged in and get a failure return PDU back', function(done) {
-
-	});
-
-	it('should send a bind_transceiver to a new session and get logged in', function(done) {
-
-	});
-
-	it('should send a bind_transceiver to a new session with a login-method and fail due to wrong username and password', function(done) {
-
-	});
-
-	it('should send a bind_transceiver to a new session with a login-method and succeed with correct username and password', function(done) {
-
-	});*/
 });
