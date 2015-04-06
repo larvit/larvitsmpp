@@ -48,7 +48,9 @@ function pduToObj(pdu, callback) {
 	    offset,
 	    command,
 	    param,
-	    //tlvCmdId,
+	    tlvCmdId,
+	    tlvLength,
+	    tlvValue,
 	    paramSize;
 
 	// Returns true if this PDU is a response to another PDU
@@ -126,23 +128,27 @@ function pduToObj(pdu, callback) {
 	}
 
 	// If the length is greater than the current offset, there must be TLVs - resolve them!
-	if (offset < retObj.cmdLength) {
-		console.log('TLVs found yo! :D Implement us');
-		console.log('TLV hex: ' + pdu.slice(offset, retObj.cmdLength).toString('hex'));
-		/*
-		console.log(pdu.length);
-		console.log(retObj.cmdLength);
-		console.log(offset);
-		console.log(retObj);
-		process.exit();
+	while (offset < retObj.cmdLength) {
+		tlvCmdId  = pdu.readInt16BE(offset);
+		tlvLength = pdu.readInt16BE(offset + 2);
 
-		tlvCmdId = pdu.readUInt16BE(offset);
+		if (defs.tlvsById[tlvCmdId] === undefined) {
+			tlvValue = pdu.slice(offset + 4, offset + 4 + tlvLength).toString('hex');
 
-		console.log('tlvCmdId:');
-		console.log(tlvCmdId);
+			retObj.tlvs['0x' + tlvCmdId.toString(16)] = tlvValue;
 
-		offset ++; //erh... not really, do something more nice! :)
-		*/
+			log.info('larvitsmpp: pduToObj() - Unknown TLV found. Hex ID: ' + tlvCmdId.toString(16) + ' length: ' + tlvLength + ' hex value: ' + tlvValue);
+		} else {
+			tlvValue  = defs.tlvsById[tlvCmdId].type.read(pdu, offset + 4, tlvLength);
+
+			if (Buffer.isBuffer(tlvValue)) {
+				tlvValue = tlvValue.toString('hex');
+			}
+
+			retObj.tlvs[defs.tlvsById[tlvCmdId].tag] = tlvValue;
+		}
+
+		offset = offset + 4 + tlvLength;
 	}
 
 	// Decode the short message if it is set
