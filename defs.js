@@ -2,12 +2,15 @@
 
 // More or less copied from https://github.com/farhadi/node-smpp
 
-var iconv     = require('iconv-lite'),
-    encodings = {},
-    filters   = {},
-    tlvsById  = {},
+var iconv      = require('iconv-lite'),
+    encodings  = {},
+    filters    = {},
+    tlvsById   = {},
+    constsById = {},
     types,
     consts,
+    constGrp,
+    constName,
     tlvs,
     tag,
     cmds,
@@ -110,6 +113,16 @@ consts = {
 		YEARS:        0x0E
 	}
 };
+
+for (constGrp in consts) {
+	if (constsById[constGrp] === undefined) {
+		constsById[constGrp] = {};
+	}
+
+	for (constName in consts[constGrp]) {
+		constsById[constGrp][consts[constGrp][constName]] = constName;
+	}
+}
 
 types = {
 	int8: {
@@ -1423,6 +1436,7 @@ for (error in errors) {
 exports.encodings  = encodings;
 exports.filters    = filters;
 exports.consts     = consts;
+exports.constsById = constsById;
 exports.cmds       = cmds;
 exports.cmdsById   = cmdsById;
 exports.types      = types;

@@ -150,11 +150,11 @@ describe('PDU convertion', function() {
 			larvitsmpp.pduToObj(pdu, function(err, obj) {
 				assert( ! err, 'Error should be negative');
 
-				assert(obj.cmdId.toString(16)        === '5',                  'Command ID should be 0x00000005 (5)');
-				assert(obj.cmdStatus                 === 'ESME_ROK',           'Command status should be "ESME_ROK"');
-				assert(obj.seqNr                     === 44576390,             'Sequence number should be 44576390');
-				assert(obj.params.destination_addr   === '46701113311',        'Param destination_addr should be "46701113311"');
-				assert(obj.tlvs.receipted_message_id === '155040621242143585', 'TLV receipted_message_id should be "155040621242143585"');
+				assert(obj.cmdId.toString(16)                 === '5',                  'Command ID should be 0x00000005 (5)');
+				assert(obj.cmdStatus                          === 'ESME_ROK',           'Command status should be "ESME_ROK"');
+				assert(obj.seqNr                              === 44576390,             'Sequence number should be 44576390');
+				assert(obj.params.destination_addr            === '46701113311',        'Param destination_addr should be "46701113311"');
+				assert(obj.tlvs.receipted_message_id.tagValue === '155040621242143585', 'TLV receipted_message_id should be "155040621242143585", but is "' + obj.tlvs.receipted_message_id.tagValue + '"');
 
 				done();
 			});
