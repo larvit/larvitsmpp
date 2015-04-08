@@ -185,7 +185,39 @@ function objToPdu(obj, callback) {
 	    paramType,
 	    buff,
 	    seqNr,
-	    i;
+	    tlvId,
+	    tlvName,
+	    tlvValue,
+	    tlvDef,
+	    tlvSize;
+
+	function calcCmdLength() {
+		// Handle params - All command params should always exists, even if they do not contain data.
+		for (param in defs.cmds[obj.cmdName].params) {
+
+			// Get the parameter type, int, string, cstring etc.
+			// This is needed so we can calculate length etc
+			paramType = defs.cmds[obj.cmdName].params[param].type;
+
+			if (obj.params[param] === undefined) {
+				obj.params[param] = paramType.default;
+			}
+
+			cmdLength += paramType.size(obj.params[param]);
+		}
+
+		// TLV params - optional parameters
+		for (tlvName in obj.tlvs) {
+			tlvValue = obj.tlvs[tlvName].tagValue;
+			tlvDef   = defs.tlvsById[obj.tlvs[tlvName].tagId];
+
+			if (tlvDef === undefined) {
+				tlvDef = defs.tlvs.default;
+			}
+
+			cmdLength += tlvDef.type.size(tlvValue) + 4;
+		}
+	}
 
 	// Used to write buffer once the command length is known
 	function writeBuffer() {
@@ -208,6 +240,27 @@ function objToPdu(obj, callback) {
 
 			// Increase the offset for the next param
 			offset += paramType.size(obj.params[param]);
+		}
+
+		// Cycle through the tlvs
+		for (tlvName in obj.tlvs) {
+			tlvId    = obj.tlvs[tlvName].tagId;
+			tlvValue = obj.tlvs[tlvName].tagValue;
+			tlvDef   = defs.tlvsById[tlvId];
+
+			if (tlvDef === undefined) {
+				tlvDef = defs.tlvs.default;
+			}
+
+			tlvSize  = tlvDef.type.size(tlvValue);
+
+			log.silly('larvitsmpp: objToPdu() - writeBuffer() - Writing TLV "' + tlvName + '" offset: ' + offset + ' value: "' + tlvValue + '"');
+
+			buff.writeUInt16BE(tlvId, offset);
+			buff.writeUInt16BE(tlvSize, offset + 2);
+			tlvDef.type.write(tlvValue, buff, offset + 4);
+
+			offset += tlvDef.type.size(tlvValue) + 4;
 		}
 	}
 
@@ -263,31 +316,7 @@ function objToPdu(obj, callback) {
 		log.silly('larvitsmpp: objToPdu() - encoding message "' + shortMsg + '" to "' + obj.params.short_message.toString('hex') + '"');
 	}
 
-	// Handle params - All command params should always exists, even if they do not contain data.
-	for (param in defs.cmds[obj.cmdName].params) {
-
-		// Get the parameter type, int, string, cstring etc.
-		// This is needed so we can calculate length etc
-		paramType = defs.cmds[obj.cmdName].params[param].type;
-
-		if (obj.params[param] === undefined) {
-			obj.params[param] = paramType.default;
-		}
-
-		cmdLength += paramType.size(obj.params[param]);
-	}
-
-	if (obj.params !== undefined) {
-		i = 0;
-		while (obj.params[i] !== undefined) {
-
-
-			i ++;
-		}
-	}
-
-	// TLV params - optional parameters
-
+	calcCmdLength();
 	writeBuffer();
 	callback(null, buff);
 }
@@ -296,10 +325,11 @@ function objToPdu(obj, callback) {
  * Create a PDU as a return to another PDU
  *
  * @param obj or buf pdu
- * @param str status - see list at defs.errors - defaults to 'ESME_ROK' - no error
- * @param func callback(err, pduBuffer)
+ * @param str status - see list at defs.errors - defaults to 'ESME_ROK' - no error (OPTIONAL)
+ * @param obj tlvs (OPTIONAL)
+ * @param func callback(err, pduBuffer) (OPTIONAL)
  */
-function pduReturn(pdu, status, callback) {
+function pduReturn(pdu, status, tlvs, callback) {
 	var err    = null,
 	    retPdu = {},
 	    param;
@@ -325,6 +355,12 @@ function pduReturn(pdu, status, callback) {
 	if (typeof status === 'function') {
 		callback = status;
 		status   = 'ESME_ROK';
+		tlvs     = undefined;
+	}
+
+	if (typeof tlvs === 'function') {
+		callback = tlvs;
+		tlvs     = undefined;
 	}
 
 	if (status === undefined) {
@@ -353,6 +389,7 @@ function pduReturn(pdu, status, callback) {
 	retPdu.cmdStatus = status;
 	retPdu.seqNr     = pdu.seqNr;
 	retPdu.params    = {};
+	retPdu.tlvs      = tlvs;
 
 	// Populate parameters that should exist in the response
 	for (param in defs.cmds[pdu.cmdName + '_resp'].params) {
@@ -517,9 +554,9 @@ function session(sock) {
 	 * Send a return to given PDU
 	 *
 	 * @param obj or buf pdu
-	 * @param str status - see list at defs.errors - defaults to 'ESME_ROK' - no error
+	 * @param str status - see list at defs.errors - defaults to 'ESME_ROK' - no error (OPTIONAL)
 	 * @param bol closeAfterSend - if true will close the socket after sending (OPTIONAL)
-	 * @param func callback(err)
+	 * @param func callback(err) (OPTIONAL)
 	 */
 	returnObj.sendReturn = function(pdu, status, closeAfterSend, callback) {
 		if (typeof closeAfterSend === 'function') {
@@ -617,15 +654,33 @@ function session(sock) {
 		returnObj.sendReturn(pduObj);
 	};
 
+	// Handle incoming submit_sm
 	returnObj.submitSm = function(pduObj) {
-		returnObj.emit('sms', {
+		var smsObj = {};
+
+		smsObj = {
 			'from':         pduObj.params.source_addr,
 			'to':           pduObj.params.destination_addr,
 			'message':      pduObj.params.short_message,
-			'dlrRequested': Boolean(pduObj.params.registered_delivery),
-			'smsId':        pduObj.params.message_id
-		}, pduObj);
-		returnObj.sendReturn(pduObj);
+			'dlrRequested': Boolean(pduObj.params.registered_delivery)
+		};
+
+		function smsReceived(smsData) {
+			if (smsData === undefined) {
+				smsData = {};
+			}
+
+			if (smsData.smsId !== undefined) {
+				// Todo: Generate random ID
+				smsData.smsId = 666;
+			}
+
+			smsObj.smsId = smsData.smsId;
+
+			returnObj.sendReturn(pduObj, {'message_id': smsObj.smsId});
+		}
+
+		returnObj.emit('sms', smsObj, smsReceived);
 	};
 
 	// Dummy, should be extended by serverSession or clientSession

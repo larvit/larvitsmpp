@@ -158,6 +158,44 @@ describe('PDU convertion', function() {
 
 				done();
 			});
+		});
+
+		it('should add TLVs to a PDU', function(done) {
+			var pduObj = {
+				'cmdName': 'deliver_sm',
+				'seqNr': 393,
+				'cmdStatus': 'ESME_ROK',
+				'params': {
+					'source_addr': '46701113311',
+					'destination_addr': '46709771337',
+					'esm_class': 4,
+					'short_message': 'random stuff'
+				},
+				'tlvs': {
+					'receipted_message_id': {
+						'tagId': 0x001E,
+						'tagName': 'receipted_message_id',
+						'tagValue': '293f293'
+					},
+					'5142': {
+						'tagId': 5142,
+						'tagName': 'Nils',
+						'tagValue': new Buffer('blajfoo', 'ascii')
+					}
+				}
+			};
+
+			larvitsmpp.objToPdu(pduObj, function(err, pduBuf) {
+				assert( ! err, 'Error should be negative');
+
+				larvitsmpp.pduToObj(pduBuf, function(err, pduObj2) {
+					assert( ! err, 'Error should be negative');
+
+					console.log(pduObj2);
+
+					done();
+				});
+			});
 
 		});
 	});

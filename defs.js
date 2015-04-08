@@ -767,6 +767,10 @@ filters.callback_num_atag = {
 };
 
 tlvs = {
+	default: {
+		id: undefined,
+		type: types.tlv.buffer
+	},
 	dest_addr_subunit: {
 		id: 0x0005,
 		type: types.tlv.int8
