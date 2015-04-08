@@ -1,8 +1,10 @@
 # Larv IT SMPP
 
-This is a simplified implementation of the SMPP protocol. It only supports transciever mode and all messages are sent via the "data_sm" command.
+This is a simplified implementation of the SMPP protocol.
 
 ## Client
+
+### Simplest possible
 
 This will setup a client that connects to localhost, port 2775 without username or password and send a message.
 
@@ -10,25 +12,59 @@ This will setup a client that connects to localhost, port 2775 without username 
 
     larvitsmpp.client(function(err, clientSession) {
     	clientSession.send({
-    		'sender': 46701113311,
-    		'receiver': 46709771337,
+    		'from': '46701113311',
+    		'to': '46709771337',
     		'message': 'Hello world'
-    	}, function(err, res) {
+    	});
+
+    	// Gracefully close connection
+    	clientSession.unbind();
+    });
+
+### Some connection parameters and DLR
+
+This will setup a client that connects to given host, port with username and password, send a password and retrieve a DLR.
+
+    larvitsmpp.client({
+    	'host': 'smpp.somewhere.com',
+    	'port': 2775,
+    	'username': 'foo',
+    	'password': 'bar'
+    }, function(err, clientSession) {
+    	if (err) {
+    		throw err;
+    	}
+
+    	clientSession.sendSms({
+    		'from': '46701113311',
+    		'to': '46709771337',
+    		'message': '«baff»',
+    		'dlr': true
+    	}, function(err, smsId, retPduObj) {
     		if (err) {
     			throw err;
     		}
 
-    		if (res) {
-    			console.log('Woho! Message sent');
-    		} else {
-    			console.log('Server did not accept :(');
-    		}
+    		console.log('SMS sent, smsId: ' + smsId);
+    		console.log('Return PDU object:');
+    		console.log(retPduObj);
     	});
 
-    	clientSession.close();
+    	clientSession.on('dlr', function(dlr, dlrPduObj) {
+    		console.log('DLR received:');
+    		console.log(dlr);
+
+    		console.log('DLR PDU object:');
+    		console.log(dlrPduObj);
+
+    		// Gracefully close connection
+    		clientSession.unbind();
+    	});
     });
 
 ## Server
+
+### Simplest possible
 
 This will setup a password less server on localhost, port 2775 and console.log() incomming commands.
 
