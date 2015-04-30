@@ -367,6 +367,7 @@ function pduReturn(pdu, status, tlvs, callback) {
 		status = 'ESME_ROK';
 	}
 
+
 	if (pdu === undefined || pdu.cmdName === undefined || pdu.seqNr === undefined) {
 		err = new Error('larvitsmpp: pduReturn() - Invalid call PDU, cannot create response PDU');
 	}
@@ -827,6 +828,7 @@ function serverSession(sock, options) {
 			parent.closeSocket();
 		}, options.timeout);
 	};
+
 	parent.resetEnqLinkTimer();
 
 	parent.on('incomingPdu', function(pduObj) {
@@ -886,13 +888,29 @@ function clientSession(sock, options) {
 			}
 		});
 	};
+
+	parent.resetEnqLinkTimer = function() {
+		log.silly('larvitsmpp: clientSession() - resetEnqLinkTimer() - Resetting the kill timer');
+		if (parent.enqLinkTimer) {
+			clearTimeout(parent.enqLinkTimer);
+		}
+
+		parent.enqLinkTimer = setTimeout(function() {
+			parent.send({
+				cmdName: 'enquire_link',
+				seqNr: parent.ourSeqNr
+			});
+		}, options.enqLinkTiming);
+	};
+
 	parent.login();
+	parent.resetEnqLinkTimer();
 
 	parent.on('incomingPdu', function(pduObj) {
 		if (pduObj.cmdName === 'deliver_sm') {
 			parent.deliverSm(pduObj);
 		} else if (pduObj.cmdName === 'enquire_link') {
-			parent.enquireLink(pduObj);
+			parent.enquireLink();
 		} else if (pduObj.cmdName === 'submit_sm') {
 			parent.submitSm(pduObj);
 		} else if (pduObj.cmdName === 'unbind') {
