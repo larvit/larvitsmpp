@@ -189,9 +189,13 @@ describe('PDU convertion', function() {
 				assert( ! err, 'Error should be negative');
 
 				larvitsmpp.utils.pduToObj(pduBuf, function(err, pduObj2) {
+					var unknownTlvBuf = new Buffer(pduObj2.tlvs['5142'].tagValue, 'hex');
+
 					assert( ! err, 'Error should be negative');
 
-					console.log(pduObj2);
+					assert(pduObj2.tlvs.receipted_message_id !== undefined, 'TLV receipted_message_id should not be undefined');
+					assert(pduObj2.tlvs.receipted_message_id.tagValue === '293f293', 'receipted_message_id should match the given one');
+					assert(unknownTlvBuf.toString('ascii') === 'blajfoo', 'Unknown TLV 5142 should have a valid buffer');
 
 					done();
 				});
