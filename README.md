@@ -80,6 +80,55 @@ This will setup a password less server on localhost, port 2775 and console.log()
         });
     });
 
+### With auth, returning smsId and DLR
+
+Example code below:
+
+    // This should of course be replaced with your preferred auth system
+    function checkuserpass(username, password, callback) {
+    	if (username === 'foo' && password === 'bar') {
+    		callback(null, true);
+    	} else {
+    		callback(null, false);
+    	}
+    }
+
+    larvitsmpp.server({
+    	'checkuserpass': checkuserpass
+    }, function(err, serverSession) {
+    	if (err) {
+    		throw err;
+    	}
+
+    	// Incoming SMS!
+    	serverSession.on('sms', function(sms, callback) {
+
+    		// It is important to run the callback since this is a part of the protocol
+    		callback({
+
+    			// Decimal value status code
+    			// Default is 0 == no error
+    			// See SMPP spec for all available status codes
+    			// For example: 11 == 0000000B == ESME_RINVDSTADR == "Invalid destination address".
+    			'status': 0,
+
+    			// Set SMS id, this is important if DLR is to be connected with the right SMS but is not mandatory
+    			'smsId': 450
+    		});
+
+    		// Oh, the sms sender wants a dlr (delivery report), send it!
+    		if (sms.dlr === true) {
+    			serverSession.sendDlr({
+    				'smsId': 450,
+    				'status': 0 // 0 == no error, 1 == error. No other values are allowed
+    			});
+    		}
+    	});
+
+
+    });
+
+
 ### Events
 
 #### connect
@@ -98,18 +147,6 @@ Triggered when the socket is closed
 
 Generic error event
 
-## Advanced server
+#### sms
 
-This example and its comments covers a lot of configuration options.
-
-    var larvitsmpp = require('larvitsmpp');
-
-    larvitsmpp.server(function(err, serverSession) {
-    	if (err) {
-    		throw err;
-    	}
-
-    	serverSession.on('data', function(data) {
-    		console.log('command: ' + data.command);
-    	});
-    });
+Incoming SMS
