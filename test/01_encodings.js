@@ -1,7 +1,7 @@
 'use strict';
 
 var assert    = require('assert'),
-    encodings = require('../defs').encodings;
+    encodings = require('../lib/defs').encodings;
 
 describe('encodings', function() {
 	describe('ASCII', function() {

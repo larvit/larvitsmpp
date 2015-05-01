@@ -1,7 +1,7 @@
 'use strict';
 
 var assert = require('assert'),
-    types  = require('../defs').types;
+    types  = require('../lib/defs').types;
 
 describe('int8', function() {
 	var b = new Buffer([0, 0x65]), expected = 0x65;
