@@ -117,27 +117,11 @@ Example code below:
     		});
 
     		// Oh, the sms sender wants a dlr (delivery report), send it!
-    		if (sms.dlr === true) {
-    			serverSession.sendDlr({
-    				'smsId': 450,
-    				'status': 2
+    		if (sms.dlrRequested === true) {
+    			serverSession.sendDlr(sms);
 
-    				/*
-    				 * All available dlr status codes:
-    				 *
-    				 * 0	SCHEDULED	The message is scheduled for later sending.
-    				 * 1	ENROUTE	The message is enroute.
-    				 * 2	DELIVERED	The message was successfully delivered.
-    				 * 3	EXPIRED	The SMSC was unable to deliver the message in a specified amount of time.For instance when the phone was turned off.
-    				 * 4	DELETED	The message was deleted.
-    				 * 5	UNDELIVERABLE	The SMS was unable to deliver the message.For instance, when the number does not exist.
-    				 * 6	ACCEPTED	The SMS was accepted and will be send.
-    				 * 7	UNKNOWN	Unknown error occured.
-    				 * 8	REJECTED	The message was rejected.The provider could have blocked phonenumbers in this range.
-    				 * 9	SKIPPED	The message was skipped.
-    				 */
-
-    			});
+    			// To send a negative delivery report do:
+    			//serverSession.sendDlr(sms, false);
     		}
     	});
     });
