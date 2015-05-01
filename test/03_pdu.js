@@ -200,8 +200,52 @@ describe('PDU convertion', function() {
 					done();
 				});
 			});
-
 		});
+	});
+
+	describe('Return PDUs', function() {
+
+		it('should create a basic and valid return PDU', function(done) {
+			var pduObj = {
+				'cmdName': 'deliver_sm',
+				'seqNr': 393,
+				'cmdStatus': 'ESME_ROK',
+				'params': {
+					'source_addr': '46701113311',
+					'destination_addr': '46709771337',
+					'esm_class': 4,
+					'short_message': 'random stuff',
+					'message_id': 'od9s2'
+				},
+				'tlvs': {
+					'receipted_message_id': {
+						'tagId': 0x001E,
+						'tagName': 'receipted_message_id',
+						'tagValue': '293f293'
+					},
+					'5142': {
+						'tagId': 5142,
+						'tagName': 'Nils',
+						'tagValue': new Buffer('blajfoo', 'ascii')
+					}
+				}
+			};
+
+			larvitsmpp.utils.pduReturn(pduObj, function(err, pduBuffer) {
+				assert( ! err, 'Error should be negative');
+
+				larvitsmpp.utils.pduToObj(pduBuffer, function(err, retPduObj) {
+					assert( ! err, 'Error should be negative');
+
+					assert(retPduObj.cmdName === 'deliver_sm_resp', 'Command name should be "deliver_sm_resp"');
+					assert(retPduObj.cmdStatus === 'ESME_ROK', 'Command status should be ESME_ROK');
+					assert(retPduObj.params.message_id === 'od9s2', 'message_id should be correct');
+
+					done();
+				});
+			});
+		});
+
 	});
 
 });
