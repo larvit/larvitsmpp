@@ -124,10 +124,7 @@ Example code below:
     			});
     		}
     	});
-
-
     });
-
 
 ### Events
 
