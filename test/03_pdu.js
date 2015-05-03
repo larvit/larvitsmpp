@@ -141,6 +141,29 @@ describe('PDU convertion', function() {
 				done();
 			});
 		});
+
+		it('should encode and decode integer cstring params correctly', function(done) {
+			var pduObj = {
+				'cmdName': 'submit_sm_resp',
+				'cmdStatus': 'ESME_ROK',
+				'seqNr': 2,
+				'params': {
+					'message_id': 450
+				}
+			};
+
+			larvitsmpp.utils.objToPdu(pduObj, function(err, pduBuf) {
+				assert( ! err, 'Error should be negative');
+
+				larvitsmpp.utils.pduToObj(pduBuf, function(err, retPduObj) {
+					assert( ! err, 'Error should be negative');
+
+					assert(retPduObj.params.message_id === '450', 'message_id param should be 450, but as string');
+
+					done();
+				});
+			});
+		});
 	});
 
 	describe('TLVs', function() {
@@ -204,7 +227,6 @@ describe('PDU convertion', function() {
 	});
 
 	describe('Return PDUs', function() {
-
 		it('should create a basic and valid return PDU', function(done) {
 			var pduObj = {
 				'cmdName': 'deliver_sm',
@@ -286,7 +308,6 @@ describe('PDU convertion', function() {
 				});
 			});
 		});
-
 	});
 
 });
