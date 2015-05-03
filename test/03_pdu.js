@@ -224,6 +224,49 @@ describe('PDU convertion', function() {
 				});
 			});
 		});
+
+		it('should add some other TLVs to a PDU', function(done) {
+			var pduObj = {
+				'cmdName': 'deliver_sm',
+				'params': {
+					'source_addr': '46701113311',
+					'destination_addr': '46709771337',
+					'esm_class': 4,
+					'short_message': 'id:450 sub:001 dlvrd:1 submit date:1504031342 done date:1504031342 stat:DELIVRD err:0 text:xxx'
+				},
+				'tlvs': {
+					'receipted_message_id': {
+						'tagId': 30,
+						'tagName': 'receipted_message_id',
+						'tagValue': 450
+					},
+					'message_state': {
+						'tagId': 1063,
+						'tagName': 'message_state',
+						'tagValue': 2
+					}
+				},
+				'seqNr': 323
+			};
+
+			larvitsmpp.utils.objToPdu(pduObj, function(err, pduBuf) {
+				assert( ! err, 'Error should be negative');
+
+				larvitsmpp.utils.pduToObj(pduBuf, function(err, retPduObj) {
+					assert( ! err, 'Error should be negative');
+
+					assert(retPduObj.params.short_message === 'id:450 sub:001 dlvrd:1 submit date:1504031342 done date:1504031342 stat:DELIVRD err:0 text:xxx', 'short_message should be preserved');
+					assert(retPduObj.cmdName === 'deliver_sm', 'Command name should be "deliver_sm"');
+					assert(retPduObj.tlvs.message_state !== undefined, 'TLV message_state should be set');
+					assert(retPduObj.tlvs.message_state.tagValue === 2, 'TLV message_state tagValue should be 2');
+					assert(retPduObj.tlvs.receipted_message_id !== undefined, 'TLV receipted_message_id should be set');
+					assert(retPduObj.tlvs.receipted_message_id.tagValue === '450', 'TLV receipted_message_id tagValue should be "450"');
+					assert(retPduObj.seqNr === 323, 'Sequence number should be 323');
+
+					done();
+				});
+			});
+		});
 	});
 
 	describe('Return PDUs', function() {

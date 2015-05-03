@@ -117,7 +117,7 @@ Example code below:
     		});
 
     		// Oh, the sms sender wants a dlr (delivery report), send it!
-    		if (sms.dlrRequested === true) {
+    		if (sms.dlr === true) {
     			serverSession.sendDlr(sms);
 
     			// To send a negative delivery report do:
