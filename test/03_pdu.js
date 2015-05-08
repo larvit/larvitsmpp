@@ -204,7 +204,6 @@ describe('PDU convertion', function() {
 	});
 
 	describe('Return PDUs', function() {
-
 		it('should create a basic and valid return PDU', function(done) {
 			var pduObj = {
 				'cmdName': 'deliver_sm',
@@ -286,7 +285,44 @@ describe('PDU convertion', function() {
 				});
 			});
 		});
+	});
 
+	describe('Message size and split', function() {
+		it('should calculate sizes of msgs', function(done) {
+			var a = 'abcd',
+			    b = 'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd',
+			    c = 'Ledds med « df BLAH och därför är alla hjul runda fast bara några hihi',
+			    d = 'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdHIHIHIHI foobar',
+			    e = 'Ledds med « df BLAH och därför är alla hjul runda fast bara några hihi Ledds med « df BLAH och därför är alla hjul runda fast bara några hihi Ledds med « df BLAH och därför är alla hjul runda fast bara några hihi Ledds med « df BLAH och därför är alla hjul runda fast bara några hihi',
+			    f = 'abcd€abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd',
+			    g = 'Ledds med « df BLAH och därför är alla hjul runda fast bara några hihi bara lite längre';
+
+			assert(larvitsmpp.utils.bitCount(a) === 28,   'ASCII');
+			assert(larvitsmpp.utils.bitCount(b) === 1120, 'ASCII');
+			assert(larvitsmpp.utils.bitCount(c) === 1120, 'UCS2');
+			assert(larvitsmpp.utils.bitCount(d) === 1225, 'ASCII');
+			assert(larvitsmpp.utils.bitCount(e) === 4528, 'UCS2');
+			assert(larvitsmpp.utils.bitCount(f) === 1120, 'ASCII with special char');
+			assert(larvitsmpp.utils.bitCount(g) === 1392, 'UCS2');
+
+			assert(larvitsmpp.utils.splitMsg(a).length === 1);
+			assert(larvitsmpp.utils.splitMsg(b).length === 1);
+			assert(larvitsmpp.utils.splitMsg(c).length === 1);
+			assert(larvitsmpp.utils.splitMsg(d).length === 2);
+			assert(larvitsmpp.utils.splitMsg(e).length === 5);
+			assert(larvitsmpp.utils.splitMsg(f).length === 1);
+			assert(larvitsmpp.utils.splitMsg(g).length === 2);
+
+			done();
+		});
+
+		it('should return an array with a buffer equalling the input msg', function(done) {
+			var msg  = 'hello world',
+			    msgs = larvitsmpp.utils.splitMsg(msg);
+
+			assert(msgs[0].toString() === msg, 'Messages should equal');
+			done();
+		});
 	});
 
 });
