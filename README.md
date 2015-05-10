@@ -11,7 +11,7 @@ This will setup a client that connects to localhost, port 2775 without username 
     var larvitsmpp = require('larvitsmpp');
 
     larvitsmpp.client(function(err, clientSession) {
-    	clientSession.send({
+    	clientSession.sendSms({
     		'from': '46701113311',
     		'to': '46709771337',
     		'message': 'Hello world'
@@ -45,7 +45,7 @@ This will setup a client that connects to given host, port with username and pas
     			throw err;
     		}
 
-    		console.log('SMS sent, smsId: ' + smsId);
+    		console.log('SMS sent, smsId(s): ' + smsId.join(', '));
     		console.log('Return PDU object:');
     		console.log(retPduObj);
     	});
@@ -101,10 +101,10 @@ Example code below:
     	}
 
     	// Incoming SMS!
-    	serverSession.on('sms', function(sms, callback) {
+    	serverSession.on('sms', function(sms) {
 
-    		// It is important to run the callback since this is a part of the protocol
-    		callback({
+    		// It is important to run the sms.resp() since this is a part of the protocol
+    		sms.resp({
 
     			// Decimal value status code
     			// Default is 0 == no error
