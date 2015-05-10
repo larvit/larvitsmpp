@@ -142,6 +142,38 @@ describe('PDU convertion', function() {
 			});
 		});
 
+		it('should create a submit_sm PDU with esm_class 0x40 and a short_message with UDH in it', function(done) {
+			var msg      = 'hej världen',
+			    msgBuf   = Buffer.concat([new Buffer('050003010101', 'hex'), new Buffer(msg)]),
+			    encoding = larvitsmpp.defs.encodings.detect(msg);
+
+			larvitsmpp.utils.objToPdu({
+				'cmdName': 'submit_sm',
+				'cmdStatus': 'ESME_ROK',
+				'seqNr': 12,
+				'params': {
+					'esm_class': 0x40,
+					'source_addr': '46701113311',
+					'destination_addr': '46709771337',
+					'sm_length': msgBuf.length,
+					'data_coding': larvitsmpp.defs.consts.ENCODING[encoding],
+					'short_message': msgBuf
+				}
+			}, function(err, pdu) {
+				assert( ! err, 'Error should be negative');
+
+				larvitsmpp.utils.pduToObj(pdu, function(err, retObj) {
+					assert( ! err, 'Error should be negative');
+
+					assert(retObj.params.short_message.toString('hex') === '05000301010168656a2076c3a4726c64656e', 'short_message should be correct');
+
+					done();
+				});
+
+			});
+		});
+
+
 		it('should encode and decode integer cstring params correctly', function(done) {
 			var pduObj = {
 				'cmdName': 'submit_sm_resp',
