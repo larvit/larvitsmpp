@@ -126,24 +126,38 @@ Example code below:
     	});
     });
 
-### Events
+## Session Events
 
 #### connect
 
-Triggered when the socket is connected to a client
+Triggered when the socket is connected to a client. This is server specific.
 
 #### data
 
-Triggered when data is comming in on the socket
+Triggered when data is comming in on the socket.
 
 #### close
 
-Triggered when the socket is closed
+Triggered when the socket is closed.
 
 #### error
 
-Generic error event
+Generic error event.
 
 #### sms
 
-Incoming SMS
+Incoming SMS.
+
+#### incomingPdu
+
+Incoming PDU.
+
+#### incomingPduObj
+
+Incoming PDU Object. Same as incomingPdu, but it have been converted into an object instead of a buffer.
+
+## Session commands
+
+### send
+
+Send a PDU to the remote.

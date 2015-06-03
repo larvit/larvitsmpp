@@ -17,12 +17,12 @@ describe('Sessions', function() {
 
 	it('should setup a basic server and client and then directly unbinding again', function(done) {
 		portfinder.getPort(function(err, freePort) {
-			assert( ! err, 'Error should be negative');
+			assert( ! err, 'Error should not be negative');
 
 			larvitsmpp.server({
 				'port': freePort
 			}, function(err, serverSession) {
-				assert( ! err, 'Error should be negative');
+				assert( ! err, 'Error should not be negative');
 
 				serverSession.on('close', function() {
 					// Manually destroy the server socket
@@ -33,7 +33,7 @@ describe('Sessions', function() {
 			larvitsmpp.client({
 				'port': freePort
 			}, function(err, clientSession) {
-				assert( ! err, 'Error should be negative');
+				assert( ! err, 'Error should not be negative');
 
 				// Gracefully close connection
 				clientSession.unbind();
@@ -45,13 +45,13 @@ describe('Sessions', function() {
 
 	it('should setup a server with auth and client trying to connect with wrong username and password', function(done) {
 		portfinder.getPort(function(err, freePort) {
-			assert( ! err, 'Error should be negative');
+			assert( ! err, 'Error should not be negative');
 
 			larvitsmpp.server({
 				'port': freePort,
 				'checkuserpass': checkuserpass
 			}, function(err, serverSession) {
-				assert( ! err, 'Error should be negative');
+				assert( ! err, 'Error should not be negative');
 
 				serverSession.on('close', function() {
 					// Manually destroy the server socket
@@ -71,13 +71,13 @@ describe('Sessions', function() {
 
 	it('should setup a server with auth and client trying to connect with correct username and password', function(done) {
 		portfinder.getPort(function(err, freePort) {
-			assert( ! err, 'Error should be negative');
+			assert( ! err, 'Error should not be negative');
 
 			larvitsmpp.server({
 				'port': freePort,
 				'checkuserpass': checkuserpass
 			}, function(err, serverSession) {
-				assert( ! err, 'Error should be negative');
+				assert( ! err, 'Error should not be negative');
 
 				serverSession.on('close', function() {
 					// Manually destroy the server socket
@@ -90,7 +90,7 @@ describe('Sessions', function() {
 				'username': 'foo',
 				'password': 'bar'
 			}, function(err, clientSession) {
-				assert( ! err, 'Error should be negative');
+				assert( ! err, 'Error should not be negative');
 
 				// Gracefully close connection
 				clientSession.unbind();
@@ -100,20 +100,65 @@ describe('Sessions', function() {
 		});
 	});
 
-	/*
-	it('should try to send submit_sm while not logged in and get a failure return PDU back', function(done) {
+	it('should try sending a simple sms', function(done) {
+		portfinder.getPort(function(err, freePort) {
+			assert( ! err, 'Error should not be negative');
 
+			larvitsmpp.server({
+				'port': freePort
+			}, function(err, serverSession) {
+				assert( ! err, 'Error should not be negative');
+
+				serverSession.on('sms', function(sms) {
+					sms.smsId = 2343;
+
+					assert(sms.from === 'foo', 'SMS from should be "foo"');
+					assert(sms.to === '46709771337', 'SMS to should be "46709771337"');
+					assert(sms.message === 'hello world', 'SMS message should be "hello world"');
+					assert(sms.dlr === false, 'DLR should be boolean false');
+					assert(sms.pduObj.cmdId === 4, 'SMS pduObj cmdId should be 4');
+
+					sms.sendResp(function(err, retPdus) {
+						assert( ! err, 'Error should not be negative');
+
+						assert(retPdus[0].toString('hex') === '000000158000000400000000000000023233343300', 'The return PDU should be "000000158000000400000000000000023233343300"');
+					});
+				});
+
+				serverSession.on('close', function() {
+					// Manually destroy the server socket
+					serverSession.sock.destroy();
+				});
+			});
+
+			larvitsmpp.client({
+				'port': freePort
+			}, function(err, clientSession) {
+				assert( ! err, 'Error should not be negative');
+
+				clientSession.sendSms({
+					'from': 'foo',
+					'to': '46709771337',
+					'message': 'hello world'
+				}, function(err, smsIds, retPduObj) {
+					assert( ! err, 'Error should not be negative');
+
+					assert(smsIds instanceof Array, 'smsIds should be an Array');
+					assert(smsIds[0] === '2343', 'Given smsId should be "2343"');
+					assert(retPduObj.cmdStatus === 'ESME_ROK', 'Command status should be "ESME_ROK"');
+					assert(retPduObj.cmdName === 'submit_sm_resp', 'Command name should be "submit_sm_resp"');
+
+					// Gracefully close connection
+					clientSession.unbind();
+
+					done();
+				});
+			});
+		});
 	});
 
-	it('should send a bind_transceiver to a new session and get logged in', function(done) {
-
-	});
-
-	it('should send a bind_transceiver to a new session with a login-method and fail due to wrong username and password', function(done) {
-
-	});
-
-	it('should send a bind_transceiver to a new session with a login-method and succeed with correct username and password', function(done) {
+	/*it('should try sending a long sms', function(done) {
 
 	});*/
+
 });
