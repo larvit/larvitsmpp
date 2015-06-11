@@ -14,6 +14,7 @@ function checkuserpass(username, password, callback) {
 }
 
 describe('Sessions', function() {
+	this.slow(2);
 
 	it('should setup a basic server and client and then directly unbinding again', function(done) {
 		portfinder.getPort(function(err, freePort) {
