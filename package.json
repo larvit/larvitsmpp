@@ -29,7 +29,7 @@
 		"url": "https://github.com/larvit/larvitsmpp",
 		"type": "git"
 	},
-	"version": "0.0.5",
+	"version": "0.0.6",
 	"readmeFilename": "README.md",
 	"readme": "larvitsmpp",
 	"bugs": {
