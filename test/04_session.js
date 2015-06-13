@@ -225,6 +225,72 @@ describe('Sessions', function() {
 		});
 	});
 
+	it('should try sending a weirder long sms', function(done) {
+		portfinder.getPort(function(err, freePort) {
+			assert( ! err, 'Error should not be negative');
+
+			larvitsmpp.server({
+				'port': freePort
+			}, function(err, serverSession) {
+				assert( ! err, 'Error should not be negative');
+
+				serverSession.on('sms', function(sms) {
+					sms.smsId = 2344;
+
+					assert(sms.from === 'foo', 'SMS from should be "foo"');
+					assert(sms.to === '46709771337', 'SMS to should be "46709771337"');
+					assert(sms.message === 'K sKM8NYUuoVbORtCn€swWsvTZjbtYM1TceGJJouolLk4cOtlk7j dxWMI56Domdx2W!dHKjGBR5UsynmUnbp1ysRDCktBri WW2pxIWHv0P7H OVRZNw 6 DBzAqpnd7ZPslwNyi»x OuiNH0R!WM2DTo8ItysNDNe1eNnpLvahhRgv»TC y lvgFrmv4OiUTOP', 'SMS message should be correct');
+					assert(sms.dlr === false, 'DLR should be boolean false');
+					assert(sms.pduObjs[0].pduObj.cmdId === 4, 'SMS pduObj cmdId should be 4');
+
+					sms.sendResp(function(err, retPdus) {
+						assert( ! err, 'Error should not be negative');
+
+						assert(retPdus[0].toString('hex') === '00000017800000040000000000000002323334342d3100', 'Return PDU 0 is wrong');
+						assert(retPdus[1].toString('hex') === '00000017800000040000000000000003323334342d3200', 'Return PDU 1 is wrong');
+						assert(retPdus[2].toString('hex') === '00000017800000040000000000000004323334342d3300', 'Return PDU 2 is wrong');
+					});
+				});
+
+				serverSession.on('close', function() {
+					// Manually destroy the server socket
+					serverSession.sock.destroy();
+				});
+			});
+
+			larvitsmpp.client({
+				'port': freePort
+			}, function(err, clientSession) {
+				assert( ! err, 'Error should not be negative');
+
+				clientSession.sendSms({
+					'from': 'foo',
+					'to': '46709771337',
+					'message': 'K sKM8NYUuoVbORtCn€swWsvTZjbtYM1TceGJJouolLk4cOtlk7j dxWMI56Domdx2W!dHKjGBR5UsynmUnbp1ysRDCktBri WW2pxIWHv0P7H OVRZNw 6 DBzAqpnd7ZPslwNyi»x OuiNH0R!WM2DTo8ItysNDNe1eNnpLvahhRgv»TC y lvgFrmv4OiUTOP'
+				}, function(err, smsIds, retPduObjs) {
+					assert( ! err, 'Error should not be negative');
+
+					assert(smsIds instanceof Array, 'smsIds should be an Array');
+					assert(smsIds[0] === '2344-1', 'First smsId should be "2344-1"');
+					assert(smsIds[1] === '2344-2', 'Second smsId should be "2344-2"');
+					assert(smsIds[2] === '2344-3', 'Third smsId should be "2344-3"');
+					assert(smsIds[3] === undefined, 'Fourth smsId should be undefined');
+					assert(retPduObjs[0].cmdStatus === 'ESME_ROK', 'Command status should be "ESME_ROK"');
+					assert(retPduObjs[0].cmdName === 'submit_sm_resp', 'Command name should be "submit_sm_resp"');
+					assert(retPduObjs[1].cmdStatus === 'ESME_ROK', 'Command status should be "ESME_ROK"');
+					assert(retPduObjs[1].cmdName === 'submit_sm_resp', 'Command name should be "submit_sm_resp"');
+					assert(retPduObjs[2].cmdStatus === 'ESME_ROK', 'Command status should be "ESME_ROK"');
+					assert(retPduObjs[2].cmdName === 'submit_sm_resp', 'Command name should be "submit_sm_resp"');
+
+					// Gracefully close connection
+					clientSession.unbind();
+
+					done();
+				});
+			});
+		});
+	});
+
 	it('should send a long sms and receive dlrs for it', function(done) {
 		portfinder.getPort(function(err, freePort) {
 			assert( ! err, 'Error should not be negative');
