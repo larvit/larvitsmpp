@@ -87,7 +87,8 @@ Example code below:
     // This should of course be replaced with your preferred auth system
     function checkuserpass(username, password, callback) {
     	if (username === 'foo' && password === 'bar') {
-    		callback(null, true);
+    		// The last parameter is just user meta data that will be attached to the session as "userData" and is optional
+    		callback(null, true, {'username': 'foo', 'userId': 123});
     	} else {
     		callback(null, false);
     	}
