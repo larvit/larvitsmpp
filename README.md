@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/larvit/larvitsmpp.svg)](https://travis-ci.org/larvit/larvitsmpp)
+
 # Larv IT SMPP
 
 This is a simplified implementation of the SMPP protocol.
