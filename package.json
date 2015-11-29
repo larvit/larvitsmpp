@@ -7,11 +7,11 @@
 	"private": false,
 	"contributors": [],
 	"dependencies": {
-		"winston": "latest",
-		"utils-merge": "latest",
-		"iconv-lite": "latest",
-		"moment": "latest",
-		"async": "latest"
+		"async": "~1.5",
+		"iconv-lite": "~0.4",
+		"moment": "~2.10",
+		"utils-merge": "~1.0",
+		"winston": "~2.1"
 	},
 	"description": "Simplified SMPP implementation",
 	"devDependencies": {
@@ -29,7 +29,7 @@
 		"url": "https://github.com/larvit/larvitsmpp",
 		"type": "git"
 	},
-	"version": "0.1.7",
+	"version": "0.1.8",
 	"readmeFilename": "README.md",
 	"readme": "larvitsmpp",
 	"bugs": {
