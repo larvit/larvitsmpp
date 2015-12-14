@@ -398,6 +398,7 @@ describe('PDU convertion', function() {
 
 			assert(larvitsmpp.utils.bitCount(a) === 28,   'ASCII');
 			assert(larvitsmpp.utils.bitCount(b) === 1120, 'ASCII');
+			assert(larvitsmpp.utils.bitCount(b, 'UCS2') === 2560, 'ASCII, expected 2560 but got ' + larvitsmpp.utils.bitCount(b, 'UCS2'));
 			assert(larvitsmpp.utils.bitCount(c) === 1120, 'UCS2');
 			assert(larvitsmpp.utils.bitCount(d) === 1225, 'ASCII');
 			assert(larvitsmpp.utils.bitCount(e) === 4528, 'UCS2');
@@ -406,6 +407,7 @@ describe('PDU convertion', function() {
 
 			assert(larvitsmpp.utils.splitMsg(a).length === 1);
 			assert(larvitsmpp.utils.splitMsg(b).length === 1);
+			assert(larvitsmpp.utils.splitMsg(b, 'UCS2').length === 3, 'Expected length 2, but got ' + larvitsmpp.utils.splitMsg(b, 'UCS2').length);
 			assert(larvitsmpp.utils.splitMsg(c).length === 1);
 			assert(larvitsmpp.utils.splitMsg(d).length === 2);
 			assert(larvitsmpp.utils.splitMsg(e).length === 5);
