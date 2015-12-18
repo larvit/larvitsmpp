@@ -1,6 +1,4 @@
-[![Build Status](https://travis-ci.org/larvit/larvitsmpp.svg)](https://travis-ci.org/larvit/larvitsmpp)
-
-<img src="https://david-dm.org/larvit/larvitsmpp.svg" alt="" />
+[![Build Status](https://travis-ci.org/larvit/larvitsmpp.svg)](https://travis-ci.org/larvit/larvitsmpp) [![Dependencies](https://david-dm.org/larvit/larvitsmpp.svg)](https://david-dm.org/larvit/larvitsmpp.svg)
 
 # Larv IT SMPP
 
