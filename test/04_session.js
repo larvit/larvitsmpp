@@ -1,8 +1,8 @@
 'use strict';
 
 var larvitsmpp = require('../larvitsmpp'),
-    assert     = require('assert'),
-    portfinder = require('portfinder');
+    portfinder = require('portfinder'),
+    assert     = require('assert');
 
 // Very advanced auth system
 function checkuserpass(username, password, callback) {
@@ -363,4 +363,67 @@ describe('Sessions', function() {
 		});
 	});
 
+	it('should verify dlr on readme example', function(done) {
+		portfinder.getPort(function(err, freePort) {
+			assert( ! err, 'Error should not be negative');
+
+			larvitsmpp.server({
+				'port': freePort
+			}, function(err, serverSession) {
+				assert( ! err, 'Error should not be negative');
+
+				serverSession.on('sms', function(sms) {
+					sms.smsId = 2343; // Random integer
+
+					sms.sendResp(function(err) {
+						assert( ! err, 'Error should not be negative');
+
+						assert(sms.dlr === true, 'sms.dlr should be true');
+
+						// Send the DLR(s)
+						sms.sendDlr(true);
+					});
+				});
+
+				serverSession.on('close', function() {
+					// Manually destroy the server socket
+					serverSession.sock.destroy();
+					done();
+				});
+			});
+
+			larvitsmpp.client({
+				'port': freePort
+			}, function(err, clientSession) {
+				assert( ! err, 'Error should not be negative');
+
+				clientSession.on('dlr', function(dlr, dlrPduObj) {
+					assert.deepEqual(dlr.statusMsg, 'DELIVERED');
+					assert.deepEqual(dlr.statusId, 2);
+					assert.deepEqual(parseInt(dlr.smsId), 2343);
+
+					assert.deepEqual(dlrPduObj.params.short_message.substring(0, 36), 'id:2343 sub:001 dlvrd:1 submit date:');
+					assert.deepEqual(dlrPduObj.params.short_message.substring(68), 'stat:DELIVRD err:0 text:xxx');
+					assert.deepEqual(dlrPduObj.cmdStatus, 'ESME_ROK');
+					assert.deepEqual(dlrPduObj.cmdName, 'deliver_sm');
+
+					// Gracefully close connection
+					clientSession.unbind();
+				});
+
+				clientSession.sendSms({
+					'from': '46701113311',
+					'to': '46709771337',
+					'message': '«baff»',
+					'dlr': true
+				}, function(err, smsId, retPduObj) {
+					assert( ! err, 'Error should not be negative');
+					assert.deepEqual(parseInt(smsId[0]), 2343);
+					assert.deepEqual(smsId[1], undefined);
+					assert.deepEqual(retPduObj[0].cmdStatus, 'ESME_ROK');
+					assert.deepEqual(retPduObj[0].cmdName, 'submit_sm_resp');
+				});
+			});
+		});
+	});
 });
