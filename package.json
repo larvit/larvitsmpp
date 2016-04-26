@@ -36,6 +36,7 @@
   },
   "homepage": "https://github.com/larvit/larvitsmpp",
   "scripts": {
+    "cover": "istanbul cover _mocha",
     "test": "mocha"
   },
   "license": "MIT"
