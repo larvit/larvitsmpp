@@ -4,6 +4,8 @@ node_js:
     - 0.12
     - 4
     - 5
+script: "npm run-script cover"
+after_script: "cat ./coverage/lcov.info | ./node_modules/coveralls/bin/coveralls.js"
 notifications:
   email:
     - lilleman@larvit.se

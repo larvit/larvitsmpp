@@ -1,4 +1,5 @@
 [![Build Status](https://travis-ci.org/larvit/larvitsmpp.svg)](https://travis-ci.org/larvit/larvitsmpp) [![Dependencies](https://david-dm.org/larvit/larvitsmpp.svg)](https://david-dm.org/larvit/larvitsmpp.svg)
+[![Coverage Status](https://coveralls.io/repos/larvit/larvitsmpp/badge.svg)](https://coveralls.io/github/larvit/larvitsmpp)
 
 # Larv IT SMPP
 
