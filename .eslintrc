@@ -4,20 +4,20 @@
 		"mocha": true
 	},
 	"rules": {
-		"global-strict": [2, "always"],
-		"no-mixed-requires": false,
-		"no-multi-spaces": false,
-		"space-infix-ops": true,
+		"strict": [2, "safe"],
+		"no-mixed-requires": 0,
+		"no-multi-spaces": 0,
+		"space-infix-ops": 2,
 		"quotes": [1, "single"],
-		"vars-on-top": [1, true],
-		"one-var": [1, true],
-		"no-shadow": false,
-		"eol-last": false,
-		"key-spacing": false,
+		"vars-on-top": 1,
+		"one-var": 1,
+		"no-shadow": 0,
+		"eol-last": 0,
+		"key-spacing": 0,
 		"no-mixed-spaces-and-tabs": [2, "smart-tabs"],
 		"space-unary-ops": [1, { "words": true, "nonwords": true }],
-		"no-underscore-dangle": false,
-		"camelcase": false,
-		"no-process-exit": false
+		"no-underscore-dangle": 0,
+		"camelcase": 0,
+		"no-process-exit": 0
 	}
 }
