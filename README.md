@@ -51,7 +51,6 @@ larvitsmpp.client({
 			throw err;
 		}
 
-		console.log('SMS sent, smsId(s): ' + smsId.join(', '));
 		console.log('Return PDU object:');
 		console.log(retPduObj);
 	});
@@ -113,26 +112,32 @@ larvitsmpp.server({
 
 	// Incoming SMS!
 	serverSession.on('sms', function(sms) {
-
 		// It is important to run the sms.resp() since this is a part of the protocol
-		sms.resp({
-
-			// Decimal value status code
-			// Default is 0 == no error
+		sms.sendResp(
+			// Status code
+			// Default is ESME_ROK == no error
 			// See SMPP spec for all available status codes
-			// For example: 11 == 0000000B == ESME_RINVDSTADR == "Invalid destination address".
-			'status': 0,
-
-			// Set SMS id, this is important if DLR is to be connected with the right SMS but is not mandatory
-			'smsId': 450
-		});
+			// For example: ESME_RINVDSTADR == "Invalid destination address".
+			'ESME_ROK'
+		);
 
 		// Oh, the sms sender wants a dlr (delivery report), send it!
 		if (sms.dlr === true) {
-			serverSession.sendDlr(sms);
+			sms.sendDlr(); // Equalent to sms.sendDlr('DELIVERED');
 
-			// To send a negative delivery report do:
-			//serverSession.sendDlr(sms, false);
+			// To send a negative delivery report for example do:
+			sms.sendDlr('UNDELIVERABLE');
+			// Possible values are:
+			// SCHEDULED
+			// ENROUTE
+			// DELIVERED <-- Default
+			// EXPIRED
+			// DELETED
+			// UNDELIVERABLE
+			// ACCEPTED
+			// UNKNOWN
+			// REJECTED
+			// SKIPPED
 		}
 	});
 });
