@@ -1,4 +1,6 @@
 {
+  "name": "larvitsmpp",
+  "version": "0.2.0",
   "author": {
     "name": "Mikael 'Lilleman' Göransson",
     "email": "lilleman@larvit.se",
@@ -28,12 +30,10 @@
     "sms"
   ],
   "main": "larvitsmpp.js",
-  "name": "larvitsmpp",
   "repository": {
     "url": "https://github.com/larvit/larvitsmpp",
     "type": "git"
   },
-  "version": "0.1.19",
   "readmeFilename": "README.md",
   "bugs": {
     "url": "https://github.com/larvit/larvitsmpp/issues"
