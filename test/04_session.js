@@ -2,7 +2,8 @@
 
 var larvitsmpp = require('../larvitsmpp'),
     portfinder = require('portfinder'),
-    assert     = require('assert');
+    assert     = require('assert'),
+    net        = require('net');
 
 // Very advanced auth system
 function checkuserpass(username, password, callback) {
@@ -422,6 +423,63 @@ describe('Sessions', function() {
 					assert.deepEqual(smsId[1], undefined);
 					assert.deepEqual(retPduObj[0].cmdStatus, 'ESME_ROK');
 					assert.deepEqual(retPduObj[0].cmdName, 'submit_sm_resp');
+				});
+			});
+		});
+	});
+
+	it('should test a session fetched from Kannel on long messages with large UDH', function(done) {
+		portfinder.getPort(function(err, freePort) {
+			var sock      = new net.Socket(),
+			    sockInLog = []; // Log incomming socket messages
+
+			assert( ! err, 'Error should not be negative');
+
+			sock.connect(freePort, 'localhost', function() {
+				// bind_transceiver - initial call. Subsequent calls should be made on the sock.on('data') thingie
+				sock.write(new Buffer('0000002100000009000000000000002f666f6f0062617200736d70700034000000', 'hex'));
+			});
+
+			sock.on('data', function(data) {
+				sockInLog.push(data.toString('hex'));
+
+				if (sockInLog.length === 1) {
+					assert.deepEqual(data.toString('hex'), '0000001480000009000000000000002f666f6f00');
+
+					// Send all 4 parts at the same time
+					sock.write(new Buffer('000000de00000004000000000000003000050074657374000201313233343500430000003136303630373136333031333030302b00000000009f0500030204014c6f72656d20497073756d2069732073696d706c792064756d6d792074657874206f6620746865207072696e74696e6720616e64207479706573657474696e6720696e6475737472792e204c6f72656d20497073756d20686173206265656e2074686520696e6475737472792773207374616e646172642064756d6d79207465787420657665722073696e6365207468652031353030732c200426000101', 'hex'));
+					sock.write(new Buffer('000000de00000004000000000000003100050074657374000201313233343500430000003136303630373136333031333030302b00000000009f0500030204027768656e20616e20756e6b6e6f776e207072696e74657220746f6f6b20612067616c6c6579206f66207479706520616e6420736372616d626c656420697420746f206d616b65206120747970652073706563696d656e20626f6f6b2e20497420686173207375727669766564206e6f74206f6e6c7920666976652063656e7475726965732c2062757420616c736f20746865206c65617020690426000101', 'hex'));
+					sock.write(new Buffer('000000de00000004000000000000003200050074657374000201313233343500430000003136303630373136333031333030302b00000000009f0500030204036e746f20656c656374726f6e6963207479706573657474696e672c2072656d61696e696e6720657373656e7469616c6c7920756e6368616e6765642e2049742077617320706f70756c61726973656420696e207468652031393630732077697468207468652072656c65617365206f66204c657472617365742073686565747320636f6e7461696e696e67204c6f72656d20497073756d20700426000101', 'hex'));
+					sock.write(new Buffer('000000b200000004000000000000003300050074657374000201313233343500430000003136303630373136333031333030302b000000000078050003020404617373616765732c20616e64206d6f726520726563656e746c792077697468206465736b746f70207075626c697368696e6720736f667477617265206c696b6520416c64757320506167654d616b657220696e636c7564696e672076657273696f6e73206f66204c6f72656d20497073756d', 'hex'));
+				} else if (sockInLog.length === 2) {
+					assert.deepEqual(data.toString('hex'), '000000158000000400000000000000303233343300');
+				} else if (sockInLog.length === 3) {
+					// This is actually four different PDUs at the same time, marking the response on all four parts above
+					assert.deepEqual(data.toString('hex'), '000000158000000400000000000000313233343300000000158000000400000000000000323233343300000000158000000400000000000000333233343300');
+					done();
+				} else {
+					throw new Error('To much data received');
+				}
+			});
+
+			larvitsmpp.server({
+				'port': freePort
+			}, function(err, serverSession) {
+				assert( ! err, 'Error should not be negative');
+
+				serverSession.on('sms', function(sms) {
+					assert.deepEqual(sms.message, 'Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry\'s standard dummy text ever since the 1500s, when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five centuries, but also the leap into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of Letraset sheets containing Lorem Ipsum passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum');
+
+					sms.smsId = 2343;
+
+					sms.sendResp(function(err) {
+						assert( ! err, 'Error should not be negative');
+					});
+				});
+
+				serverSession.on('close', function() {
+					// Manually destroy the server socket
+					serverSession.sock.destroy();
 				});
 			});
 		});
