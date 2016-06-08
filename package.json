@@ -16,9 +16,11 @@
   "description": "Simplified SMPP implementation",
   "devDependencies": {
     "coveralls": "^2.11.9",
+    "eslint": "^2.11.1",
     "istanbul": "^0.4.3",
-    "mocha": "^2.4.5",
-    "portfinder": "^1.0.3"
+    "mocha": "^2.5.3",
+    "portfinder": "^1.0.3",
+    "pre-git": "^3.8.4"
   },
   "keywords": [
     "smpp",
@@ -41,5 +43,18 @@
     "cover": "istanbul cover _mocha",
     "test": "mocha"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "config": {
+    "pre-git": {
+      "commit-msg": "",
+      "pre-commit": [
+        'eslint ./',
+        'mocha'
+      ],
+      "pre-push": [],
+      "post-commit": [],
+      "post-checkout": [],
+      "post-merge": []
+    }
+  }
 }
