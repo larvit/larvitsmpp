@@ -4,7 +4,7 @@ var larvitsmpp = require('../larvitsmpp'),
     assert     = require('assert');
 
 describe('PDU convertion', function() {
-	this.slow(2);
+	this.slow(20);
 
 	describe('No TLVs', function() {
 		it('should build a PDU buffer for bind_transceiver_resp with error correctly', function(done) {
