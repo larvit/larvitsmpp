@@ -6,6 +6,12 @@
 
 This is a simplified implementation of the SMPP protocol.
 
+## Installation
+
+```bash
+npm install larvitsmpp
+```
+
 ## Client
 
 ### Simplest possible
