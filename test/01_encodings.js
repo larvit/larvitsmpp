@@ -88,7 +88,7 @@ describe('encodings', function() {
 				var str;
 
 				for (str in samples) {
-					assert.deepEqual(LATIN1.decode(samples[str]), str);
+					assert.deepEqual(LATIN1.decode(new Buffer(samples[str])), str);
 				}
 			});
 		});
