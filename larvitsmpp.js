@@ -1,6 +1,6 @@
 'use strict';
 
-exports.server = require('./lib/server');
-exports.client = require('./lib/client');
-exports.utils  = require('./lib/utils');
-exports.defs   = require('./lib/defs');
+exports.server = require(__dirname + '/lib/server');
+exports.client = require(__dirname + '/lib/client');
+exports.utils  = require(__dirname + '/lib/utils');
+exports.defs   = require(__dirname + '/lib/defs');
