@@ -48,8 +48,8 @@
     "pre-git": {
       "commit-msg": "",
       "pre-commit": [
-        "eslint ./",
-        "mocha"
+        "./node_modules/.bin/eslint ./",
+        "./node_modules/.bin/mocha"
       ],
       "pre-push": [],
       "post-commit": [],
