@@ -485,7 +485,7 @@ describe('Sessions', function () {
 		});
 	});
 
-	it('should test a session can recreate SMS with random sequence', function (done) {
+	it('should test that a session can recreate SMS with random sequence', function (done) {
 		portfinder.getPort(function (err, freePort) {
 			const	sockInLog	= [], // Log incomming socket messages
 				sock	= new net.Socket();
