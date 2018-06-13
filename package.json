@@ -1,6 +1,6 @@
 {
   "name": "larvitsmpp",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "author": {
     "name": "Mikael 'Lilleman' Göransson",
     "email": "lilleman@larvit.se",
@@ -14,15 +14,15 @@
     "moment": "^2.18.1",
     "utils-merge": "^1.0.0",
     "uuid": "^3.2.1",
-    "winston": "^2.3.1"
+    "winston": "^3.0.0"
   },
   "description": "Simplified SMPP implementation",
   "devDependencies": {
-    "coveralls": "^2.11.9",
+    "coveralls": "^3.0.1",
     "eslint": "^4.1.0",
     "istanbul": "^0.4.3",
-    "mocha": "^3.4.2",
-    "mocha-eslint": "^3.0.1",
+    "mocha": "^5.2.0",
+    "mocha-eslint": "^4.1.0",
     "portfinder": "^1.0.3"
   },
   "keywords": [
