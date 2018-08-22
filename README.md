@@ -19,7 +19,7 @@ npm install larvitsmpp
 This will setup a client that connects to localhost, port 2775 without username or password and send a message.
 
 ```javascript
-var larvitsmpp = require('larvitsmpp');
+const larvitsmpp = require('larvitsmpp');
 
 larvitsmpp.client(function(err, clientSession) {
 	clientSession.sendSms({
@@ -35,24 +35,30 @@ larvitsmpp.client(function(err, clientSession) {
 
 ### Some connection parameters and DLR
 
-This will setup a client that connects to given host, port with username and password, send a password and retrieve a DLR.
+This will setup a client that connects to given host, port with username and password, send a password and retrieve a DLR and with a custom log driver, compatible with winston.
 
 ```javascript
+const larvitsmpp = require('larvitsmpp');
+const LUtils = require('larvitutils');
+const lUtils = new LUtils();
+const log    = new lUtils.Log('debug');
+
 larvitsmpp.client({
-	'host': 'smpp.somewhere.com',
-	'port': 2775,
+	'host':     'smpp.somewhere.com',
+	'port':     2775,
 	'username': 'foo',
-	'password': 'bar'
+	'password': 'bar',
+	'log':      log
 }, function(err, clientSession) {
 	if (err) {
 		throw err;
 	}
 
 	clientSession.sendSms({
-		'from': '46701113311',
-		'to': '46709771337',
+		'from':    '46701113311',
+		'to':      '46709771337',
 		'message': '«baff»',
-		'dlr': true
+		'dlr':     true
 	}, function(err, smsId, retPduObj) {
 		if (err) {
 			throw err;
@@ -82,7 +88,7 @@ larvitsmpp.client({
 This will setup a password less server on localhost, port 2775 and console.log() incomming commands.
 
 ```javascript
-var larvitsmpp = require('larvitsmpp');
+const larvitsmpp = require('larvitsmpp');
 
 larvitsmpp.server(function(err, serverSession) {
 	if (err) {
@@ -95,23 +101,29 @@ larvitsmpp.server(function(err, serverSession) {
 });
 ```
 
-### With auth, returning smsId and DLR
+### With auth and custom logging, returning smsId and DLR
 
 Example code below:
 
 ```javascript
+const larvitsmpp = require('larvitsmpp');
+const LUtils = require('larvitutils');
+const lUtils = new LUtils();
+const log    = new lUtils.Log('debug');
+
 // This should of course be replaced with your preferred auth system
-function checkuserpass(username, password, callback) {
+function checkuserpass(username, password, cb) {
 	if (username === 'foo' && password === 'bar') {
 		// The last parameter is just user meta data that will be attached to the session as "userData" and is optional
-		callback(null, true, {'username': 'foo', 'userId': 123});
+		cb(null, true, {'username': 'foo', 'userId': 123});
 	} else {
-		callback(null, false);
+		cb(null, false);
 	}
 }
 
 larvitsmpp.server({
-	'checkuserpass': checkuserpass
+	'checkuserpass': checkuserpass,
+	'log':           log
 }, function(err, serverSession) {
 	if (err) {
 		throw err;
