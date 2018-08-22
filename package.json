@@ -18,12 +18,12 @@
   },
   "description": "Simplified SMPP implementation",
   "devDependencies": {
-    "coveralls": "^3.0.1",
-    "eslint": "^4.1.0",
-    "istanbul": "^0.4.3",
-    "mocha": "^5.2.0",
-    "mocha-eslint": "^4.1.0",
-    "portfinder": "^1.0.3"
+    "coveralls": "3.0.2",
+    "eslint": "4.19.1",
+    "istanbul": "0.4.5",
+    "mocha": "5.2.0",
+    "mocha-eslint": "4.1.0",
+    "portfinder": "1.0.17"
   },
   "keywords": [
     "smpp",
