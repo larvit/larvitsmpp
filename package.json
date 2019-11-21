@@ -11,7 +11,7 @@
   "dependencies": {
     "async": "^2.4.1",
     "iconv-lite": "^0.4.18",
-    "larvitutils": "^2.1.0",
+    "larvitutils": "^4.0.0",
     "moment": "^2.18.1",
     "utils-merge": "^1.0.0",
     "uuid": "^3.2.1"
