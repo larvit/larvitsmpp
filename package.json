@@ -14,7 +14,7 @@
     "larvitutils": "^2.1.0",
     "moment": "^2.18.1",
     "utils-merge": "^1.0.0",
-    "uuid": "^3.2.1"
+    "uuid": "^8.0.0"
   },
   "description": "Simplified SMPP implementation",
   "devDependencies": {
