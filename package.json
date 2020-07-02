@@ -10,7 +10,7 @@
   "contributors": [],
   "dependencies": {
     "async": "^2.4.1",
-    "iconv-lite": "^0.4.18",
+    "iconv-lite": "^0.6.0",
     "larvitutils": "^2.1.0",
     "moment": "^2.18.1",
     "utils-merge": "^1.0.0",
