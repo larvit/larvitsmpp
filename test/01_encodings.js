@@ -1,130 +1,111 @@
 'use strict';
 
-const	encodings	= require(__dirname + '/../lib/defs.js').encodings,
-	assert	= require('assert');
+const encodings = require(__dirname + '/../lib/defs.js').encodings;
+const test = require('tape');
 
-describe('encodings', function () {
-	describe('ASCII', function () {
-		const	samples	= {},
-			ASCII	= encodings.ASCII;
+test('1. Encodings', t => t.end());
 
-		samples['@£$¥']	= [0, 1, 2, 3];
-		samples[' 1a=']	= [0x20, 0x31, 0x61, 0x3D];
-		samples['~^€']	= [0x1B, 0x3D, 0x1B, 0x14, 0x1B, 0x65];
+test('1.1. ASCII', t => {
+	const { ASCII } = encodings;
+	const samples = {
+		'@£$¥': [0, 1, 2, 3],
+		' 1a=': [0x20, 0x31, 0x61, 0x3D],
+		'~^€': [0x1B, 0x3D, 0x1B, 0x14, 0x1B, 0x65],
+	};
 
-		describe('#match()', function () {
-			it('should return true for strings that can be encoded using GSM 03.38 ASCII charset', function () {
-				assert(ASCII.match(''));
-				assert(ASCII.match('@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1BÆæßÉ !"#¤%&\''));
-				assert(ASCII.match('()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZ'));
-				assert(ASCII.match('ÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà'));
-				assert(ASCII.match('\f^{}\\[~]|€'));
-			});
+	t.comment('1.1.1. #match()');
 
-			it('should return false for strings that can not be encoded using GSM 03.38 ASCII charset', function () {
-				assert( ! ASCII.match('`'));
-				assert( ! ASCII.match('ÁáçÚUÓO'));
-				assert( ! ASCII.match('تست'));
-			});
-		});
+	t.comment('1.1.1.1. Should return true for strings that can be encoded using GSM 03.38 ASCII charset');
+	t.true(ASCII.match(''), '""');
+	t.true(ASCII.match('@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1BÆæßÉ !"#¤%&\''), '@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1BÆæßÉ !"#¤%&\'');
+	t.true(ASCII.match('()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZ'), '()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+	t.true(ASCII.match('ÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà'), 'ÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà');
+	t.true(ASCII.match('\f^{}\\[~]|€'), '\f^{}\\[~]|€');
 
-		describe('#encode', function () {
-			it('should properly encode the given string using GSM 03.38 ASCII charset', function () {
-				for (const str in samples) {
-					assert.deepEqual(ASCII.encode(str), new Buffer(samples[str]));
-				}
-			});
-		});
 
-		describe('#decode', function () {
-			it('should properly decode the given buffer using GSM 03.38 ASCII charset', function () {
-				for (const str in samples) {
-					assert.deepEqual(ASCII.decode(samples[str]), str);
-				}
-			});
-		});
-	});
+	t.comment('1.1.1.2. Should return false for strings that can not be encoded using GSM 03.38 ASCII charset');
+	t.false(ASCII.match('`'), '`');
+	t.false(ASCII.match('ÁáçÚUÓO'), 'ÁáçÚUÓO');
+	t.false(ASCII.match('تست'), 'تست');
 
-	describe('LATIN1', function () {
-		const	samples	= {},
-			LATIN1	= encodings.LATIN1;
+	t.comment('1.1.2. #encode() Should properly encode the given string using GSM 03.38 ASCII charset');
+	for (const str in samples) {
+		t.strictEqual(ASCII.encode(str).toString("hex"), Buffer.from(samples[str]).toString("hex"), str);
+	}
 
-		samples['@$`Á']	= [0x40, 0x24, 0x60, 0xC1];
-		samples['áçÚ']	= [0xE1, 0xE7, 0xDA];
-		samples['UÓO']	= [0x55, 0xD3, 0x4F];
+	t.comment('1.1.3. #decode() Should properly decode the given buffer using GSM 03.38 ASCII charset');
+	for (const str in samples) {
+		t.strictEqual(ASCII.decode(samples[str]), str, str);
+	}
 
-		describe('#match()', function () {
-			it('should return false for strings that can be encoded using LATIN1 charset', function () {
-				assert( ! LATIN1.match('`ÁáçÚUÓO'));
-			});
+	t.end();
+});
 
-			it('should return false for strings that can not be encoded using LATIN1 charset', function () {
-				assert( ! LATIN1.match('تست'));
-				assert( ! LATIN1.match('۱۲۳۴۵۶۷۸۹۰'));
-				assert( ! LATIN1.match('ʹʺʻʼʽ`'));
-			});
-		});
+test('1.2. LATIN1', t => {
+	const { LATIN1 } = encodings;
+	const samples = {
+		'@$`Á': [0x40, 0x24, 0x60, 0xC1],
+		'áçÚ': [0xE1, 0xE7, 0xDA],
+		'UÓO': [0x55, 0xD3, 0x4F],
+	}
 
-		describe('#encode', function () {
-			it('should properly encode the given string using LATIN1 charset', function () {
-				for (const str in samples) {
-					assert.deepEqual(LATIN1.encode(str), new Buffer(samples[str]));
-				}
-			});
-		});
+	t.comment('1.2.1. #match()');
 
-		describe('#decode', function () {
-			it('should properly decode the given buffer using LATIN1 charset', function () {
-				for (const str in samples) {
-					assert.deepEqual(LATIN1.decode(new Buffer(samples[str])), str);
-				}
-			});
-		});
-	});
+	t.comment('1.2.1.1. Should return false for strings that can be encoded using LATIN1 charset');
+	t.false(LATIN1.match('`ÁáçÚUÓO'), '`ÁáçÚUÓO');
 
-	describe('UCS2', function () {
-		const	samples	= {},
-			UCS2	= encodings.UCS2;
+	t.comment('1.2.1.2. Should return false for strings that can not be encoded using LATIN1 charset');
+	t.false(LATIN1.match('تست'), 'تست');
+	t.false(LATIN1.match('۱۲۳۴۵۶۷۸۹۰'), '۱۲۳۴۵۶۷۸۹۰');
+	t.false(LATIN1.match('ʹʺʻʼʽ`'), 'ʹʺʻʼʽ`');
 
-		samples[' 1a']	= [0x00, 0x20, 0x00, 0x31, 0x00, 0x61];
-		samples['۱۲۳']	= [0x06, 0xF1, 0x06, 0xF2, 0x06, 0xF3];
+	t.comment('1.2.2. #encode() Should properly encode the given string using LATIN1 charset');
+	for (const str in samples) {
+		t.strictEqual(LATIN1.encode(str).toString('hex'), Buffer.from(samples[str]).toString('hex'), str);
+	}
 
-		describe('#match()', function () {
-			it('should always return true', function () {
-				assert(UCS2.match(''));
-				assert(UCS2.match('`ÁáçÚUÓO'));
-				assert(UCS2.match('تست'));
-				assert(UCS2.match('۱۲۳۴۵۶۷۸۹۰'));
-				assert(UCS2.match('ʹʺʻʼʽ`'));
-			});
-		});
+	t.comment('1.2.3. #decode() Should properly decode the given buffer using LATIN1 charset');
+	for (const str in samples) {
+		t.strictEqual(LATIN1.decode(Buffer.from(samples[str])), str, str);
+	}
 
-		describe('#encode', function () {
-			it('should properly encode the given string using UCS2 charset', function () {
-				for (const str in samples) {
-					assert.deepEqual(UCS2.encode(str), new Buffer(samples[str]));
-				}
-			});
-		});
+	t.end();
+});
 
-		describe('#decode', function () {
-			it('should properly decode the given buffer using UCS2 charset', function () {
-				for (const str in samples) {
-					assert.deepEqual(UCS2.decode(samples[str]), str);
-				}
-			});
-		});
-	});
+test('1.3. UCS2', t => {
+	const { UCS2 } = encodings;
+	const samples = {
+ 		' 1a': [0x00, 0x20, 0x00, 0x31, 0x00, 0x61],
+ 		'۱۲۳': [0x06, 0xF1, 0x06, 0xF2, 0x06, 0xF3],
+	};
 
-	describe('#detect()', function () {
-		it('should return proper encoding for the given string', function () {
-			assert.equal(encodings.detect(''),	'ASCII');
-			assert.equal(encodings.detect('ÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà(){}[]'),	'ASCII');
-			assert.equal(encodings.detect('`ÁáçÚUÓO'),	'UCS2');
-			assert.equal(encodings.detect('«©®µ¶±»'),	'UCS2');
-			assert.equal(encodings.detect('ʹʺʻʼʽ`'),	'UCS2');
-			assert.equal(encodings.detect('تست'),	'UCS2');
-			assert.equal(encodings.detect('۱۲۳۴۵۶۷۸۹۰'),	'UCS2');
-		});
-	});
+	t.comment('1.3.1. #match() Should always return true');
+	t.true(UCS2.match(''), '""');
+	t.true(UCS2.match('`ÁáçÚUÓO'), '`ÁáçÚUÓO');
+	t.true(UCS2.match('تست'), 'تست');
+	t.true(UCS2.match('۱۲۳۴۵۶۷۸۹۰'), '۱۲۳۴۵۶۷۸۹۰');
+	t.true(UCS2.match('ʹʺʻʼʽ`'), 'ʹʺʻʼʽ`');
+
+	t.comment('1.3.2. #encode() Should properly encode the given string using UCS2 charset');
+	for (const str in samples) {
+		t.strictEqual(UCS2.encode(str).toString('hex'), Buffer.from(samples[str]).toString('hex'), str);
+	}
+
+	t.comment('1.3.3. #decode() Should properly decode the given buffer using UCS2 charset');
+	for (const str in samples) {
+		t.strictEqual(UCS2.decode(samples[str]), str, str);
+	}
+	t.end();
+});
+
+test('1.4. #detect() Should return proper encoding for the given string', t => {
+	t.strictEqual(encodings.detect(''), 'ASCII', '"" -> ASCII');
+	t.strictEqual(encodings.detect('ÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà(){}[]'), 'ASCII', 'ÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà(){}[] -> ASCII');
+	t.strictEqual(encodings.detect('`ÁáçÚUÓO'), 'UCS2', '`ÁáçÚUÓO -> UCS2');
+	t.strictEqual(encodings.detect('«©®µ¶±»'), 'UCS2', '«©®µ¶±» -> UCS2');
+	t.strictEqual(encodings.detect('ʹʺʻʼʽ`'), 'UCS2', 'ʹʺʻʼʽ` -> UCS2');
+	t.strictEqual(encodings.detect('تست'), 'UCS2', 'تست -> UCS2');
+	t.strictEqual(encodings.detect('۱۲۳۴۵۶۷۸۹۰'), 'UCS2', '۱۲۳۴۵۶۷۸۹۰ -> UCS2');
+
+	t.end();
 });

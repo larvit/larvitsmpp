@@ -1,172 +1,132 @@
 'use strict';
 
-const	assert	= require('assert'),
-	types	= require(__dirname + '/../lib/defs.js').types;
+const test = require('tape');
+const types = require(__dirname + '/../lib/defs.js').types;
 
-describe('int8', function () {
-	const	expected	= 0x65,
-		b	= new Buffer([0, 0x65]);
+test('2. Types', t => t.end());
 
-	describe('#read()', function () {
-		it('should read one byte as integer', function () {
-			const	result	= types.int8.read(b, 1);
-			assert.equal(result, expected);
-		});
-	});
+test('2.1. int8', t => {
+	const expected = 0x65;
+	const b = Buffer.from([0, 0x65]);
 
-	describe('#size()', function () {
-		it('should return 1', function () {
-			assert.equal(types.int8.size(expected),	1);
-		});
-	});
+	t.strictEqual(types.int8.read(b, 1), expected, '#read() Should read one byte as integer.');
+	t.strictEqual(types.int8.size(expected), 1, '#size() Should return 1.');
 
-	describe('#write()', function () {
-		it('should write one byte to the buffer', function () {
-			types.int8.write(expected, b, 0);
-			assert.deepEqual(new Buffer([0x65]), b.slice(0, 1));
-		});
-	});
+	types.int8.write(expected, b, 0);
+	t.strictEqual(
+		Buffer.from([0x65]).toString('hex'),
+		b.subarray(0, 1).toString('hex'),
+		'#write() Should write one byte to the buffer.',
+	);
+
+	t.end();
 });
 
-describe('int16', function () {
-	const	expected	= 0x0565,
-		b	= new Buffer([0, 0x05, 0x65]);
+test('2.2. int16', t => {
+	const expected = 0x0565;
+	const b = Buffer.from([0, 0x05, 0x65]);
 
-	describe('#read()', function () {
-		it('should read 2 bytes as integer', function () {
-			const	result	= types.int16.read(b, 1);
-			assert.equal(result, expected);
-		});
-	});
+	t.strictEqual(types.int16.read(b, 1), expected, '#read() Should read 2 bytes as integer.');
+	t.strictEqual(types.int16.size(expected), 2, '#size() Should return 2.');
 
-	describe('#size()', function () {
-		it('should return 2', function () {
-			assert.equal(types.int16.size(expected),	2);
-		});
-	});
+	types.int16.write(expected, b, 0);
+	t.strictEqual(
+		Buffer.from([0x05, 0x65]).toString('hex'),
+		b.subarray(0, 2).toString('hex'),
+		'#write() Should write 2 bytes to the buffer.',
+	);
 
-	describe('#write()', function () {
-		it('should write 2 bytes to the buffer', function () {
-			types.int16.write(expected, b, 0);
-			assert.deepEqual(new Buffer([0x05, 0x65]),	b.slice(0, 2));
-		});
-	});
+	t.end();
 });
 
-describe('int32', function () {
-	const	expected	= 0x10024045,
-		b	= new Buffer([0, 0x10, 0x02, 0x40, 0x45]);
+test('2.3. int32', t => {
+	const expected = 0x10024045;
+	const b = Buffer.from([0, 0x10, 0x02, 0x40, 0x45]);
 
-	describe('#read()', function () {
-		it('should read 4 bytes as integer', function () {
-			const	result	= types.int32.read(b, 1);
-			assert.equal(result, expected);
-		});
-	});
+	t.strictEqual(types.int32.read(b, 1), expected, '#read() Should read 4 bytes as integer.');
+	t.strictEqual(types.int32.size(expected), 4, '#size() Should return 4.');
 
-	describe('#size()', function () {
-		it('should return 4', function () {
-			assert.equal(types.int32.size(expected), 4);
-		});
-	});
+	types.int32.write(expected, b, 0);
+	t.strictEqual(
+		Buffer.from([0x10, 0x02, 0x40, 0x45]).toString('hex'),
+		b.subarray(0, 4).toString('hex'),
+		'#write() Should write 4 bytes to the buffer.',
+	);
 
-	describe('#write()', function () {
-		it('should write 4 bytes to the buffer', function () {
-			types.int32.write(expected, b, 0);
-			assert.deepEqual(new Buffer([0x10, 0x02, 0x40, 0x45]), b.slice(0, 4));
-		});
-	});
+	t.end();
 });
 
-describe('string', function () {
-	const	expected	= 'abcd1234',
-		b	= new Buffer(9);
+test('2.4. string', t => {
+	const expected = 'abcd1234';
+	const b = Buffer.alloc(9);
 
-	b[0]	= 8;
+	b[0] = 8;
 	b.write(expected, 1);
 
-	describe('#read()', function () {
-		it('should read an Octet String from the buffer', function () {
-			const	result	= types.string.read(b, 0);
-			assert.equal(result, expected);
-		});
-	});
+	t.strictEqual(types.string.read(b, 0), expected, '#read() Should read an Octet String from the buffer.');
+	t.strictEqual(types.string.size(expected), 9, '#size() Should return the length of an Octet String from its first byte.');
 
-	describe('#size()', function () {
-		it('should return the length of an Octet String from its first byte', function () {
-			assert.equal(9, types.string.size(expected));
-		});
-	});
+	const b2 = Buffer.alloc(9);
+	types.string.write(expected, b2, 0);
+	t.strictEqual(b2.toString('hex'), b.toString('hex'), '#write() Should write an Octet String to the buffer.');
 
-	describe('#write()', function () {
-		it('should write an Octet String to the buffer', function () {
-			const	b2	= new Buffer(9);
-			types.string.write(expected, b2, 0);
-			assert.deepEqual(b, b2);
-		});
-	});
+	t.end();
 });
 
-describe('cstring', function () {
-	const	expected	= 'abcd1234',
-		b	= new Buffer(9);
+test('2.5. cstring', t => {
+	const expected = 'abcd1234';
+	const b = Buffer.alloc(9);
 
-	b[8]	= 0;
+	b[8] = 0;
 	b.write(expected, 0);
 
-	describe('#read()', function () {
-		it('should read a C-Octet String (null-terminated string) from the buffer', function () {
-			const	result	= types.cstring.read(b, 0);
-			assert.equal(result, expected);
-		});
-	});
+	t.strictEqual(
+		types.cstring.read(b, 0),
+		expected,
+		'#read() Should read a C-Octet String (null-terminated string) from the buffer.',
+	);
 
-	describe('#size()', function () {
-		it('should return the length of a C-Octet String (null-terminated string)', function () {
-			assert.equal(9, types.cstring.size(expected));
-		});
-	});
+	t.strictEqual(
+		types.cstring.size(expected),
+		9,
+		'#size() Should return the length of a C-Octet String (null-terminated string).',
+	);
 
-	describe('#write()', function () {
-		it('should write a C-Octet String (null-terminated string) to the buffer', function () {
-			const	b2	= new Buffer(9);
-			types.cstring.write(expected, b2, 0);
-			assert.deepEqual(b,	b2);
-		});
-	});
+	const b2 = Buffer.alloc(9);
+	types.cstring.write(expected, b2, 0);
+	t.strictEqual(
+		b.toString('hex'),
+		b2.toString('hex'),
+		'#write() Should write a C-Octet String (null-terminated string) to the buffer.',
+	);
+
+	t.end();
 });
 
-describe('buffer', function () {
-	const	expected	= new Buffer('abcd1234'),
-		b	= new Buffer(8);
+test('2.6. buffer', t => {
+	const expected = Buffer.from('abcd1234');
+	const b = Buffer.alloc(8);
 
 	b.write(expected.toString());
 
-	describe('#read()', function () {
-		it('should read a binary field from the buffer', function () {
-			const	result	= types.buffer.read(b, 0, b.length);
-			assert.deepEqual(result, expected);
-		});
-	});
+	t.strictEqual(
+		types.buffer.read(b, 0, b.length).toString('hex'),
+		expected.toString('hex'),
+		'#read() Should read a binary field from the buffer.',
+	);
 
-	describe('#size()', function () {
-		it('should return the size of a binary field in bytes', function () {
-			assert.equal(8, types.buffer.size(expected));
-		});
-	});
+	t.strictEqual(types.buffer.size(expected), 8, '#size() Should return the size of a binary field in bytes.');
 
-	describe('#write()', function () {
-		it('should write a binary field to the buffer', function () {
-			const	b2	= new Buffer(8);
-			types.buffer.write(expected, b2, 0);
-			assert.deepEqual(b, b2);
-		});
-	});
+	const b2 = Buffer.alloc(8);
+	types.buffer.write(expected, b2, 0);
+	t.strictEqual(b.toString('hex'), b2.toString('hex'), '#write() Should write a binary field to the buffer.');
+
+	t.end();
 });
 
-describe('dest_address_array', function () {
-	const	expected	= [],
-		b	= new Buffer([0x02, 0x01, 0x01, 0x02, 0x31, 0x32, 0x33, 0x00, 0x02, 0x61, 0x62, 0x63, 0x00]);
+test('2.7. dest_address_array', t => {
+	const expected = [];
+	const b = Buffer.from([0x02, 0x01, 0x01, 0x02, 0x31, 0x32, 0x33, 0x00, 0x02, 0x61, 0x62, 0x63, 0x00]);
 
 	expected.push({
 		'dest_addr_ton':	1,
@@ -175,31 +135,32 @@ describe('dest_address_array', function () {
 	});
 	expected.push({'dl_name': 'abc'});
 
-	describe('#read()', function () {
-		it('should read all dest_address structures from the buffer', function () {
-			const	result	= types.dest_address_array.read(b, 0);
-			assert.deepEqual(result, expected);
-		});
-	});
+	t.strictEqual(
+		JSON.stringify(types.dest_address_array.read(b, 0)),
+		JSON.stringify(expected),
+		'#read() Should read all dest_address structures from the buffer.',
+	);
 
-	describe('#size()', function () {
-		it('should return the size of all dest_address structures in bytes', function () {
-			assert.equal(types.dest_address_array.size(expected), 13);
-		});
-	});
+	t.strictEqual(
+		types.dest_address_array.size(expected),
+		13,
+		'#size() Should return the size of all dest_address structures in bytes.',
+	);
 
-	describe('#write()', function () {
-		it('should write an array of dest_address structures to the buffer', function () {
-			const	b2	= new Buffer(13);
-			types.dest_address_array.write(expected, b2, 0);
-			assert.deepEqual(b, b2);
-		});
-	});
+	const b2 = Buffer.alloc(13);
+	types.dest_address_array.write(expected, b2, 0);
+	t.strictEqual(
+		b.toString('hex'),
+		b2.toString('hex'),
+		'#write() Should write an array of dest_address structures to the buffer.',
+	);
+
+	t.end();
 });
 
-describe('unsuccess_sme_array', function () {
-	const	expected	= [],
-		b	= new Buffer([0x02, 0x03, 0x04, 0x61, 0x62, 0x63, 0x00, 0x00, 0x00, 0x00, 0x07, 0x05, 0x06, 0x31, 0x32, 0x33, 0x00, 0x10, 0x00, 0x00, 0x08]);
+test('2.8. unsuccess_sme_array', t => {
+	const expected = [];
+	const b = Buffer.from([0x02, 0x03, 0x04, 0x61, 0x62, 0x63, 0x00, 0x00, 0x00, 0x00, 0x07, 0x05, 0x06, 0x31, 0x32, 0x33, 0x00, 0x10, 0x00, 0x00, 0x08]);
 
 	expected.push({
 		'dest_addr_ton':	3,
@@ -214,24 +175,24 @@ describe('unsuccess_sme_array', function () {
 		'error_status_code':	0x10000008
 	});
 
-	describe('#read()', function () {
-		it('should read all unsuccess_sme structures from the buffer', function () {
-			const	result	= types.unsuccess_sme_array.read(b, 0);
-			assert.deepEqual(result, expected);
-		});
-	});
+	t.strictEqual(
+		JSON.stringify(types.unsuccess_sme_array.read(b, 0)),
+		JSON.stringify(expected),
+		'#read() Should read all unsuccess_sme structures from the buffer.',
+	);
 
-	describe('#size()', function () {
-		it('should return the size of all unsuccess_sme structures in bytes', function () {
-			assert.equal(types.unsuccess_sme_array.size(expected), 21);
-		});
-	});
+	t.strictEqual(
+		types.unsuccess_sme_array.size(expected),
+		21,
+		'#size() Should return the size of all unsuccess_sme structures in bytes.',
+	);
 
-	describe('#write()', function () {
-		it('should write an array of unsuccess_sme structures to the buffer', function () {
-			const	b2	= new Buffer(21);
-			types.unsuccess_sme_array.write(expected, b2, 0);
-			assert.deepEqual(b, b2);
-		});
-	});
+	const b2 = Buffer.alloc(21);
+	types.unsuccess_sme_array.write(expected, b2, 0);
+	t.strictEqual(
+		b.toString('hex'), b2.toString('hex'),
+		'#write() Should write an array of unsuccess_sme structures to the buffer.',
+	);
+
+	t.end();
 });
