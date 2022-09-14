@@ -375,6 +375,8 @@ test('4.9. Should test a session fetched from Kannel on long messages with large
 	t.plan(4);
 
 	findFreePort().then(port => {
+		console.log("PORT!!!!!!!", port);
+
 		const sockInLog = []; // Log incomming socket messages
 		const sock = new net.Socket();
 
