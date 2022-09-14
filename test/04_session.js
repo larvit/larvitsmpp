@@ -3,11 +3,11 @@
 const test = require('tape');
 
 const larvitsmpp = require(__dirname + '/../index.js');
-const portfinder = require('portfinder');
 const net = require('net');
 const LUtils = require('larvitutils');
 const lUtils = new LUtils();
 const log = new lUtils.Log('error');
+const { findFreePort } = require('../test-utils/find-free-port.js');
 
 // Very advanced auth system
 function auth(username, password, cb) {
@@ -23,7 +23,7 @@ test('4. Sessions', t => t.end());
 test('4.1. Should setup a basic server and client and then directly unbinding again', async t => {
 	t.plan(1);
 
-	const port = await portfinder.getPortPromise();
+	const port = await findFreePort();
 
 	await new Promise(resolve => {
 		larvitsmpp.server({ port, log }, (err, serverSession) => {
@@ -47,9 +47,7 @@ test('4.1. Should setup a basic server and client and then directly unbinding ag
 });
 
 test('4.2. Should setup a server with auth and client trying to connect with wrong username and password.', t => {
-	portfinder.getPort((err, port) => {
-		if (err) throw err;
-
+	findFreePort().then(port => {
 		larvitsmpp.server({ port, auth, log }, (err, serverSession) => {
 			if (err) throw err;
 
@@ -66,9 +64,7 @@ test('4.2. Should setup a server with auth and client trying to connect with wro
 });
 
 test('4.3. Should setup a server with auth and client trying to connect with correct username and password.', t => {
-	portfinder.getPort((err, port) => {
-		if (err) throw err;
-
+	findFreePort().then(port => {
 		larvitsmpp.server({ log, port, auth }, (err, serverSession) => {
 			if (err) throw err;
 
@@ -88,9 +84,7 @@ test('4.3. Should setup a server with auth and client trying to connect with cor
 });
 
 test('4.4. Should try sending a simple sms.', t => {
-	portfinder.getPort((err, port) => {
-		if (err) throw err;
-
+	findFreePort().then(port => {
 		larvitsmpp.server({ port, log }, (err, serverSession) => {
 			if (err) throw err;
 
@@ -145,9 +139,7 @@ test('4.4. Should try sending a simple sms.', t => {
 test('4.5. Should try sending a long sms.', t => {
 	const message = 'Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industrys standard dummy text ever since the 1500s, when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five centuries, but also the leap into electronic typesetting, remaining essentially unchanged. It was popularised.';
 
-	portfinder.getPort((err, port) => {
-		if (err) throw err;
-
+	findFreePort().then(port => {
 		larvitsmpp.server({ log, port }, (err, serverSession) => {
 			if (err) throw err;
 
@@ -204,9 +196,7 @@ test('4.5. Should try sending a long sms.', t => {
 });
 
 test('4.6. Should try sending a weirder long sms.', t => {
-	portfinder.getPort((err, port) => {
-		if (err) throw err;
-
+	findFreePort().then(port => {
 		larvitsmpp.server({ log, port }, (err, serverSession) => {
 			if (err) throw err;
 
@@ -263,9 +253,7 @@ test('4.6. Should try sending a weirder long sms.', t => {
 });
 
 test('4.7. Should send a long sms and receive dlrs for it.', t => {
-	portfinder.getPort((err, port) => {
-		if (err) throw err;
-
+	findFreePort().then(port => {
 		larvitsmpp.server({ log, port }, (err, serverSession) => {
 			if (err) throw err;
 
@@ -328,9 +316,7 @@ test('4.7. Should send a long sms and receive dlrs for it.', t => {
 });
 
 test('4.8. Should verify dlr on readme example.', t => {
-	portfinder.getPort((err, port) => {
-		if (err) throw err;
-
+	findFreePort().then(port => {
 		larvitsmpp.server({ log, port }, (err, serverSession) => {
 			if (err) throw err;
 
@@ -388,11 +374,9 @@ test('4.8. Should verify dlr on readme example.', t => {
 test('4.9. Should test a session fetched from Kannel on long messages with large UDH.', t => {
 	t.plan(4);
 
-	portfinder.getPort((err, port) => {
+	findFreePort().then(port => {
 		const sockInLog = []; // Log incomming socket messages
 		const sock = new net.Socket();
-
-		if (err) throw err;
 
 		sock.connect(port, 'localhost', () => {
 			// bind_transceiver - initial call. Subsequent calls should be made on the sock.on('data') thingie
@@ -451,11 +435,9 @@ test('4.9. Should test a session fetched from Kannel on long messages with large
 test('4.10. Should test that a session can recreate SMS with random sequence.', t => {
 	t.plan(4);
 
-	portfinder.getPort((err, port) => {
+	findFreePort().then(port => {
 		const sockInLog = []; // Log incomming socket messages
 		const sock = new net.Socket();
-
-		if (err) throw err;
 
 		sock.connect(port, 'localhost', () => {
 			// bind_transceiver - initial call. Subsequent calls should be made on the sock.on('data') thingie
