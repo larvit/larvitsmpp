@@ -44,7 +44,7 @@
     "cover": "istanbul cover _mocha",
     "test": "yarn test-lint && yarn test-unit",
     "test-lint": "eslint lib/** test/**",
-    "test-unit": "tape test/01_encodings test/02_types.js test/03_pdu.js test/04_session.js | tap-spec"
+    "test-unit": "tape test/**/*.js | tap-spec"
   },
   "license": "MIT",
   "packageManager": "yarn@3.2.3"
