@@ -20,10 +20,12 @@ function auth(username, password, cb) {
 
 test('4. Sessions', t => t.end());
 
-test('4.1. Should setup a basic server and client and then directly unbinding again', t => {
-	portfinder.getPort((err, port) => {
-		if (err) throw err;
+test('4.1. Should setup a basic server and client and then directly unbinding again', async t => {
+	t.plan(1);
 
+	const port = await portfinder.getPortPromise();
+
+	await new Promise(resolve => {
 		larvitsmpp.server({ port, log }, (err, serverSession) => {
 			if (err) throw err;
 
@@ -39,7 +41,7 @@ test('4.1. Should setup a basic server and client and then directly unbinding ag
 			// Gracefully close connection
 			clientSession.unbind();
 
-			t.end();
+			resolve();
 		});
 	});
 });
