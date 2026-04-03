@@ -2,6 +2,56 @@
 [![Dependencies](https://david-dm.org/larvit/larvitsmpp.svg)](https://david-dm.org/larvit/larvitsmpp.svg)
 [![Coverage Status](https://coveralls.io/repos/larvit/larvitsmpp/badge.svg)](https://coveralls.io/github/larvit/larvitsmpp)
 
+
+
+This is a fork of [larvit/larvitsmpp](https://github.com/larvit/larvitsmpp) 
+with critical fixes for **Kannel SMS Gateway** + **Redis DLR** compatibility.
+
+---
+
+## What's Fixed in This Fork
+
+### 1. Missing `message_id` in `submit_sm_resp` (Single Part SMS)
+**Problem:** larvitsmpp was sending `submit_sm_resp` without a `message_id`.
+Kannel stores DLR entries in Redis using this ID. Without it, the Redis key
+was `bb_dlr:SMSC:0` and DLRs could never be matched or delivered.
+
+**Fix:** A UUID is now generated and returned as `message_id` in every
+`submit_sm_resp`, and stored as `smsId` on the `smsObj` for later DLR use.
+
+---
+
+### 2. Missing `message_id` in `submit_sm_resp` (Multipart/Long SMS)
+**Problem:** For multipart messages, the code returned early with
+`returnObj.longSms(pduObj)` before sending any `submit_sm_resp`.
+No `message_id` was ever sent back to Kannel for any part.
+
+**Fix:** `longSms()` now generates a UUID per part and sends
+`submit_sm_resp` with `message_id` immediately. The first part's ID
+is stored on the group and later set as `smsId` on the assembled `smsObj`.
+
+---
+
+### 3. `smsId` Never Set on Server-Side `smsObj`
+**Problem:** `smsDlr()` in `utils.js` checks `if (sms.smsId === undefined)`
+and bails out with a warning. On the server side, `smsId` was never
+populated on the `smsObj`, so `sendDlr()` always failed silently.
+
+**Fix:** `smsId` is now explicitly set on `smsObj` for both single
+and multipart messages.
+
+---
+
+### 4. `stat:UNDELIVERABLE` Instead of `stat:UNDELIV`
+**Problem:** The SMPP v3.4 spec requires the `stat` field in the DLR
+message body to be exactly 7 characters. larvitsmpp was sending
+`stat:UNDELIVERABLE` (13 chars). Kannel's sscanf parser rejected it
+and fell back to treating every DLR as `DELIVRD`.
+
+**Fix:** Changed to spec-compliant `stat:UNDELIV`.
+
+---
+
 # Larv IT SMPP
 
 This is a simplified implementation of the SMPP protocol.
