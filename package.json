@@ -44,12 +44,14 @@
 		"build": "tsc --project tsconfig.build.json",
 		"lint": "eslint . && tsc --noEmit",
 		"prepack": "npm run build",
-		"test": "npm run lint && node --test 'test/**/*.test.ts'"
+		"test": "npm run lint && node --test 'test/**/*.test.ts'",
+		"test:compiled": "tsc --project tsconfig.test.json && node --test dist-test/test/"
 	},
 	"devDependencies": {
 		"@eslint/js": "10.0.1",
 		"@types/node": "22.20.1",
 		"eslint": "10.9.1",
+		"smpp": "0.6.0-rc.4",
 		"typescript": "6.0.3",
 		"typescript-eslint": "8.68.0"
 	},

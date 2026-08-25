@@ -1,3 +1,4 @@
 .claude
 dist
+dist-test
 node_modules
