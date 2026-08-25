@@ -1,0 +1,10 @@
+services:
+  node:
+    image: node:24.18.0-bookworm-slim
+    init: true
+    user: "1000:1000"
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      NPM_CONFIG_CACHE: /tmp/npm-cache

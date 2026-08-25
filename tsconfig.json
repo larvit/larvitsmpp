@@ -1,0 +1,27 @@
+{
+	"compilerOptions": {
+		"allowImportingTsExtensions": true,
+		"declaration": true,
+		"declarationMap": true,
+		"erasableSyntaxOnly": true,
+		"exactOptionalPropertyTypes": true,
+		"isolatedModules": true,
+		"lib": ["ES2023"],
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"noEmit": true,
+		"noFallthroughCasesInSwitch": true,
+		"noImplicitOverride": true,
+		"noImplicitReturns": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"rewriteRelativeImportExtensions": true,
+		"skipLibCheck": true,
+		"sourceMap": true,
+		"strict": true,
+		"target": "ES2023",
+		"types": ["node"],
+		"verbatimModuleSyntax": true
+	},
+	"include": ["eslint.config.ts", "src", "test"]
+}

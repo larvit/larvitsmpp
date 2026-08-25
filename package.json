@@ -1,0 +1,59 @@
+{
+	"name": "@larvit/smpp",
+	"version": "1.0.0",
+	"description": "Simplified SMPP implementation",
+	"keywords": [
+		"esm",
+		"pdu",
+		"sms",
+		"smpp",
+		"typescript"
+	],
+	"homepage": "https://github.com/larvit/larvitsmpp",
+	"bugs": {
+		"url": "https://github.com/larvit/larvitsmpp/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/larvit/larvitsmpp.git"
+	},
+	"license": "MIT",
+	"author": {
+		"name": "Mikael 'Lilleman' Göransson",
+		"email": "lilleman@larvit.se",
+		"url": "http://github.com/larvit/larvitsmpp"
+	},
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"engines": {
+		"node": ">=18.0.0"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
+	"scripts": {
+		"build": "tsc --project tsconfig.build.json",
+		"lint": "eslint . && tsc --noEmit",
+		"prepack": "npm run build",
+		"test": "npm run lint && node --test 'test/**/*.test.ts'"
+	},
+	"devDependencies": {
+		"@eslint/js": "10.0.1",
+		"@types/node": "22.20.1",
+		"eslint": "10.9.1",
+		"typescript": "6.0.3",
+		"typescript-eslint": "8.68.0"
+	},
+	"dependencies": {
+		"@larvit/log": "2.3.0"
+	}
+}
