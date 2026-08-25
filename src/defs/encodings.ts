@@ -15,21 +15,31 @@ const gsmRegex =
 const gsmExtended = /[\f^{}\\[~\]|€]/g;
 const gsmEscaped = /\x1B([\nΛ()/<=>¡e])/g;
 
+// Characters reachable only via an ESC prefix, paired with the base character that follows it.
+const gsmExtendedPairs: [string, string][] = [
+	['\f', '\n'],
+	['^', 'Λ'],
+	['{', '('],
+	['}', ')'],
+	['\\', '/'],
+	['[', '<'],
+	['~', '='],
+	[']', '>'],
+	['|', '¡'],
+	['€', 'e'],
+];
+
 const gsmCharCodes = new Map<string, number>();
 const gsmExtChars = new Map<string, string>();
 
-for (let i = 0; i < gsmChars.length; i++) {
-	gsmCharCodes.set(gsmChars[i], i);
+// Indexed by code unit rather than code point: every entry in the table is one octet on the wire.
+for (let code = 0; code < gsmChars.length; code++) {
+	gsmCharCodes.set(gsmChars.charAt(code), code);
 }
 
-{
-	const from = '\f^{}\\[~]|€';
-	const to = '\nΛ()/<=>¡e';
-
-	for (let i = 0; i < from.length; i++) {
-		gsmExtChars.set(from[i], to[i]);
-		gsmExtChars.set(to[i], from[i]);
-	}
+for (const [extended, base] of gsmExtendedPairs) {
+	gsmExtChars.set(extended, base);
+	gsmExtChars.set(base, extended);
 }
 
 const ascii: Encoding = {

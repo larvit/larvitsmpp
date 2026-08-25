@@ -13,28 +13,106 @@ export type UnsuccessSme = {
 
 export type ParamValue = Buffer | DestAddress[] | UnsuccessSme[] | number | string;
 
-export type WireType<TRead extends ParamValue, TWrite extends ParamValue = TRead> = {
-	default: TRead;
-	read: (buffer: Buffer, offset: number, length?: number) => Result<{ value: TRead }>;
-	size: (value: TWrite) => number;
-	write: (value: TWrite, buffer: Buffer, offset: number) => VoidResult;
+/**
+ * One field on the wire. `read` reports how many octets it consumed so callers never have to
+ * re-derive a length that could disagree with what was actually written.
+ */
+export type WireType<T extends ParamValue = ParamValue> = {
+	default: T;
+	read: (buffer: Buffer, offset: number, length?: number) => Result<{ bytesRead: number; value: T }>;
+	size: (value: ParamValue) => Result<{ size: number }>;
+	write: (value: ParamValue, buffer: Buffer, offset: number) => VoidResult;
 };
 
 function outOfRange(buffer: Buffer, offset: number, needed: number): Error | undefined {
 	if (offset < 0 || needed < 0 || offset + needed > buffer.length) {
 		return new Error(
-			`Out of range: need ${String(needed)} bytes at offset ${String(offset)} of a ${String(buffer.length)} byte buffer`,
+			`Out of range: need ${String(needed)} octets at offset ${String(offset)} of a ${String(buffer.length)} octet buffer`,
 		);
 	}
 
 	return undefined;
 }
 
-function asString(value: number | string): string {
-	return typeof value === 'number' ? value.toString() : value;
+function wantInt(value: ParamValue, max: number): Result<{ int: number }> {
+	if (typeof value !== 'number' || !Number.isInteger(value)) {
+		return { err: new Error(`Expected an integer, got ${JSON.stringify(value)}`) };
+	}
+
+	if (value < 0 || value > max) {
+		return { err: new Error(`Integer ${String(value)} out of range 0-${String(max)}`) };
+	}
+
+	return { int: value };
 }
 
-function readCstring(buffer: Buffer, offset: number): Result<{ value: string }> {
+function wantText(value: ParamValue): Result<{ text: string }> {
+	if (typeof value === 'string') return { text: value };
+	if (typeof value === 'number') return { text: value.toString() };
+
+	return { err: new Error(`Expected a string, got ${typeof value}`) };
+}
+
+function wantBytes(value: ParamValue): Result<{ bytes: Buffer }> {
+	if (Buffer.isBuffer(value)) return { bytes: value };
+
+	const { err, text } = wantText(value);
+
+	return err ? { err } : { bytes: Buffer.from(text, 'ascii') };
+}
+
+function isDestAddress(value: unknown): value is DestAddress {
+	if (typeof value !== 'object' || value === null) return false;
+
+	if ('dl_name' in value) return typeof value.dl_name === 'string';
+
+	return 'destination_addr' in value && typeof value.destination_addr === 'string';
+}
+
+function isUnsuccessSme(value: unknown): value is UnsuccessSme {
+	return typeof value === 'object'
+		&& value !== null
+		&& 'destination_addr' in value && typeof value.destination_addr === 'string'
+		&& 'error_status_code' in value && typeof value.error_status_code === 'number';
+}
+
+function wantDestAddresses(value: ParamValue): Result<{ addresses: DestAddress[] }> {
+	if (!Array.isArray(value)) {
+		return { err: new Error('Expected an array of dest_address structures') };
+	}
+
+	const addresses: DestAddress[] = [];
+
+	for (const entry of value) {
+		if (!isDestAddress(entry)) {
+			return { err: new Error('Expected an array of dest_address structures') };
+		}
+
+		addresses.push(entry);
+	}
+
+	return { addresses };
+}
+
+function wantUnsuccessSmes(value: ParamValue): Result<{ smes: UnsuccessSme[] }> {
+	if (!Array.isArray(value)) {
+		return { err: new Error('Expected an array of unsuccess_sme structures') };
+	}
+
+	const smes: UnsuccessSme[] = [];
+
+	for (const entry of value) {
+		if (!isUnsuccessSme(entry)) {
+			return { err: new Error('Expected an array of unsuccess_sme structures') };
+		}
+
+		smes.push(entry);
+	}
+
+	return { smes };
+}
+
+function readCstring(buffer: Buffer, offset: number): Result<{ bytesRead: number; value: string }> {
 	let length = 0;
 
 	while (buffer[offset + length]) {
@@ -45,90 +123,53 @@ function readCstring(buffer: Buffer, offset: number): Result<{ value: string }> 
 		}
 	}
 
-	return { value: buffer.toString('ascii', offset, offset + length) };
+	return { bytesRead: length + 1, value: buffer.toString('ascii', offset, offset + length) };
 }
 
-function writeCstring(value: number | string, buffer: Buffer, offset: number): VoidResult {
-	const str = asString(value);
-	const err = outOfRange(buffer, offset, str.length + 1);
+function writeCstring(text: string, buffer: Buffer, offset: number): VoidResult {
+	const err = outOfRange(buffer, offset, text.length + 1);
 
 	if (err) return { err };
 
-	buffer.write(str, offset, 'ascii');
-	buffer[offset + str.length] = 0;
+	buffer.write(text, offset, 'ascii');
+	buffer[offset + text.length] = 0;
 
 	return {};
 }
 
-function sizeCstring(value: number | string): number {
-	return asString(value).length + 1;
+function intType(octets: number, max: number, readAt: (b: Buffer, o: number) => number, writeAt: (b: Buffer, v: number, o: number) => void): WireType<number> {
+	return {
+		default: 0,
+		read(buffer, offset) {
+			const err = outOfRange(buffer, offset, octets);
+
+			return err ? { err } : { bytesRead: octets, value: readAt(buffer, offset) };
+		},
+		size() {
+			return { size: octets };
+		},
+		write(value, buffer, offset) {
+			const rangeErr = outOfRange(buffer, offset, octets);
+
+			if (rangeErr) return { err: rangeErr };
+
+			const { err, int } = wantInt(value, max);
+
+			if (err) return { err };
+
+			writeAt(buffer, int, offset);
+
+			return {};
+		},
+	};
 }
 
-export const int8: WireType<number> = {
-	default: 0,
-	read(buffer, offset) {
-		const err = outOfRange(buffer, offset, 1);
+export const int8 = intType(1, 0xFF, (b, o) => b.readUInt8(o), (b, v, o) => b.writeUInt8(v, o));
+export const int16 = intType(2, 0xFFFF, (b, o) => b.readUInt16BE(o), (b, v, o) => b.writeUInt16BE(v, o));
+export const int32 = intType(4, 0xFFFFFFFF, (b, o) => b.readUInt32BE(o), (b, v, o) => b.writeUInt32BE(v, o));
 
-		return err ? { err } : { value: buffer.readUInt8(offset) };
-	},
-	size() {
-		return 1;
-	},
-	write(value, buffer, offset) {
-		const err = outOfRange(buffer, offset, 1);
-
-		if (err) return { err };
-
-		buffer.writeUInt8(value || 0, offset);
-
-		return {};
-	},
-};
-
-export const int16: WireType<number> = {
-	default: 0,
-	read(buffer, offset) {
-		const err = outOfRange(buffer, offset, 2);
-
-		return err ? { err } : { value: buffer.readUInt16BE(offset) };
-	},
-	size() {
-		return 2;
-	},
-	write(value, buffer, offset) {
-		const err = outOfRange(buffer, offset, 2);
-
-		if (err) return { err };
-
-		buffer.writeUInt16BE(value || 0, offset);
-
-		return {};
-	},
-};
-
-export const int32: WireType<number> = {
-	default: 0,
-	read(buffer, offset) {
-		const err = outOfRange(buffer, offset, 4);
-
-		return err ? { err } : { value: buffer.readUInt32BE(offset) };
-	},
-	size() {
-		return 4;
-	},
-	write(value, buffer, offset) {
-		const err = outOfRange(buffer, offset, 4);
-
-		if (err) return { err };
-
-		buffer.writeUInt32BE(value || 0, offset);
-
-		return {};
-	},
-};
-
-/** Octet String: a length byte followed by that many octets. */
-export const string: WireType<string, number | string> = {
+/** Octet String: a length octet followed by that many octets. */
+export const string: WireType<string> = {
 	default: '',
 	read(buffer, offset) {
 		const lengthErr = outOfRange(buffer, offset, 1);
@@ -140,57 +181,81 @@ export const string: WireType<string, number | string> = {
 
 		if (err) return { err };
 
-		return { value: buffer.toString('ascii', offset + 1, offset + 1 + length) };
+		return { bytesRead: length + 1, value: buffer.toString('ascii', offset + 1, offset + 1 + length) };
 	},
 	size(value) {
-		return asString(value).length + 1;
+		const { err, text } = wantText(value);
+
+		return err ? { err } : { size: text.length + 1 };
 	},
 	write(value, buffer, offset) {
-		const str = asString(value);
-		const err = outOfRange(buffer, offset, str.length + 1);
+		const { err, text } = wantText(value);
 
 		if (err) return { err };
 
-		buffer.writeUInt8(str.length, offset);
-		buffer.write(str, offset + 1, 'ascii');
+		const rangeErr = outOfRange(buffer, offset, text.length + 1);
+
+		if (rangeErr) return { err: rangeErr };
+
+		buffer.writeUInt8(text.length, offset);
+		buffer.write(text, offset + 1, 'ascii');
 
 		return {};
 	},
 };
 
 /** C-Octet String: NULL-terminated. */
-export const cstring: WireType<string, number | string> = {
+export const cstring: WireType<string> = {
 	default: '',
 	read: readCstring,
-	size: sizeCstring,
-	write: writeCstring,
+	size(value) {
+		const { err, text } = wantText(value);
+
+		return err ? { err } : { size: text.length + 1 };
+	},
+	write(value, buffer, offset) {
+		const { err, text } = wantText(value);
+
+		return err ? { err } : writeCstring(text, buffer, offset);
+	},
 };
 
-export const buffer: WireType<Buffer, Buffer | number | string> = {
+export const buffer: WireType<Buffer> = {
 	default: Buffer.alloc(0),
 	read(buf, offset, length = 0) {
 		const err = outOfRange(buf, offset, length);
 
-		return err ? { err } : { value: buf.subarray(offset, offset + length) };
+		return err ? { err } : { bytesRead: length, value: buf.subarray(offset, offset + length) };
 	},
-	// A trailing NULL octet is not counted, mirroring how peers that append one to short_message
-	// report sm_length. pduToObj relies on this when deciding whether to retry a parse.
 	size(value) {
-		const buf = Buffer.isBuffer(value) ? value : Buffer.from(asString(value), 'ascii');
+		const { bytes, err } = wantBytes(value);
 
-		return buf[buf.length - 1] === 0x00 ? buf.length - 1 : buf.length;
+		return err ? { err } : { size: bytes.length };
 	},
 	write(value, buf, offset) {
-		const source = Buffer.isBuffer(value) ? value : Buffer.from(asString(value), 'ascii');
-		const err = outOfRange(buf, offset, source.length);
+		const { bytes, err } = wantBytes(value);
 
 		if (err) return { err };
 
-		source.copy(buf, offset);
+		const rangeErr = outOfRange(buf, offset, bytes.length);
+
+		if (rangeErr) return { err: rangeErr };
+
+		bytes.copy(buf, offset);
 
 		return {};
 	},
 };
+
+function sizeDestAddresses(addresses: DestAddress[]): number {
+	let size = 1;
+
+	for (const dest of addresses) {
+		size += 'dl_name' in dest ? dest.dl_name.length + 2 : dest.destination_addr.length + 4;
+	}
+
+	return size;
+}
 
 export const dest_address_array: WireType<DestAddress[]> = {
 	default: [],
@@ -199,7 +264,8 @@ export const dest_address_array: WireType<DestAddress[]> = {
 
 		if (countErr) return { err: countErr };
 
-		const result: DestAddress[] = [];
+		const start = offset;
+		const value: DestAddress[] = [];
 		let remaining = buf.readUInt8(offset++);
 
 		while (remaining-- > 0) {
@@ -216,59 +282,67 @@ export const dest_address_array: WireType<DestAddress[]> = {
 
 				const dest_addr_ton = buf.readUInt8(offset++);
 				const dest_addr_npi = buf.readUInt8(offset++);
-				const { err, value } = readCstring(buf, offset);
+				const address = readCstring(buf, offset);
 
-				if (err) return { err };
+				if (address.err) return { err: address.err };
 
-				offset += sizeCstring(value);
-				result.push({ dest_addr_npi, dest_addr_ton, destination_addr: value });
+				offset += address.bytesRead;
+				value.push({ dest_addr_npi, dest_addr_ton, destination_addr: address.value });
 			} else {
-				const { err, value } = readCstring(buf, offset);
+				const name = readCstring(buf, offset);
 
-				if (err) return { err };
+				if (name.err) return { err: name.err };
 
-				offset += sizeCstring(value);
-				result.push({ dl_name: value });
+				offset += name.bytesRead;
+				value.push({ dl_name: name.value });
 			}
 		}
 
-		return { value: result };
+		return { bytesRead: offset - start, value };
 	},
 	size(value) {
-		let size = 1;
+		const { addresses, err } = wantDestAddresses(value);
 
-		for (const dest of value) {
-			size += 'dl_name' in dest
-				? sizeCstring(dest.dl_name) + 1
-				: sizeCstring(dest.destination_addr) + 3;
-		}
-
-		return size;
+		return err ? { err } : { size: sizeDestAddresses(addresses) };
 	},
 	write(value, buf, offset) {
-		const err = outOfRange(buf, offset, dest_address_array.size(value));
+		const { addresses, err } = wantDestAddresses(value);
 
 		if (err) return { err };
 
-		buf.writeUInt8(value.length, offset++);
+		const rangeErr = outOfRange(buf, offset, sizeDestAddresses(addresses));
 
-		for (const dest of value) {
+		if (rangeErr) return { err: rangeErr };
+
+		buf.writeUInt8(addresses.length, offset++);
+
+		for (const dest of addresses) {
 			if ('dl_name' in dest) {
 				buf.writeUInt8(2, offset++);
 				writeCstring(dest.dl_name, buf, offset);
-				offset += sizeCstring(dest.dl_name);
+				offset += dest.dl_name.length + 1;
 			} else {
 				buf.writeUInt8(1, offset++);
-				buf.writeUInt8(dest.dest_addr_ton || 0, offset++);
-				buf.writeUInt8(dest.dest_addr_npi || 0, offset++);
+				buf.writeUInt8(dest.dest_addr_ton, offset++);
+				buf.writeUInt8(dest.dest_addr_npi, offset++);
 				writeCstring(dest.destination_addr, buf, offset);
-				offset += sizeCstring(dest.destination_addr);
+				offset += dest.destination_addr.length + 1;
 			}
 		}
 
 		return {};
 	},
 };
+
+function sizeUnsuccessSmes(smes: UnsuccessSme[]): number {
+	let size = 1;
+
+	for (const sme of smes) {
+		size += sme.destination_addr.length + 7;
+	}
+
+	return size;
+}
 
 export const unsuccess_sme_array: WireType<UnsuccessSme[]> = {
 	default: [],
@@ -277,7 +351,8 @@ export const unsuccess_sme_array: WireType<UnsuccessSme[]> = {
 
 		if (countErr) return { err: countErr };
 
-		const result: UnsuccessSme[] = [];
+		const start = offset;
+		const value: UnsuccessSme[] = [];
 		let remaining = buf.readUInt8(offset++);
 
 		while (remaining-- > 0) {
@@ -287,48 +362,48 @@ export const unsuccess_sme_array: WireType<UnsuccessSme[]> = {
 
 			const dest_addr_ton = buf.readUInt8(offset++);
 			const dest_addr_npi = buf.readUInt8(offset++);
-			const { err, value } = readCstring(buf, offset);
+			const address = readCstring(buf, offset);
 
-			if (err) return { err };
+			if (address.err) return { err: address.err };
 
-			offset += sizeCstring(value);
+			offset += address.bytesRead;
 
 			const statusErr = outOfRange(buf, offset, 4);
 
 			if (statusErr) return { err: statusErr };
 
-			result.push({
+			value.push({
 				dest_addr_npi,
 				dest_addr_ton,
-				destination_addr: value,
+				destination_addr: address.value,
 				error_status_code: buf.readUInt32BE(offset),
 			});
 			offset += 4;
 		}
 
-		return { value: result };
+		return { bytesRead: offset - start, value };
 	},
 	size(value) {
-		let size = 1;
+		const { err, smes } = wantUnsuccessSmes(value);
 
-		for (const sme of value) {
-			size += sizeCstring(sme.destination_addr) + 6;
-		}
-
-		return size;
+		return err ? { err } : { size: sizeUnsuccessSmes(smes) };
 	},
 	write(value, buf, offset) {
-		const err = outOfRange(buf, offset, unsuccess_sme_array.size(value));
+		const { err, smes } = wantUnsuccessSmes(value);
 
 		if (err) return { err };
 
-		buf.writeUInt8(value.length, offset++);
+		const rangeErr = outOfRange(buf, offset, sizeUnsuccessSmes(smes));
 
-		for (const sme of value) {
-			buf.writeUInt8(sme.dest_addr_ton || 0, offset++);
-			buf.writeUInt8(sme.dest_addr_npi || 0, offset++);
+		if (rangeErr) return { err: rangeErr };
+
+		buf.writeUInt8(smes.length, offset++);
+
+		for (const sme of smes) {
+			buf.writeUInt8(sme.dest_addr_ton, offset++);
+			buf.writeUInt8(sme.dest_addr_npi, offset++);
 			writeCstring(sme.destination_addr, buf, offset);
-			offset += sizeCstring(sme.destination_addr);
+			offset += sme.destination_addr.length + 1;
 			buf.writeUInt32BE(sme.error_status_code, offset);
 			offset += 4;
 		}
@@ -337,45 +412,39 @@ export const unsuccess_sme_array: WireType<UnsuccessSme[]> = {
 	},
 };
 
-/** TLV variants are length-prefixed by the TLV header, so they carry no length of their own. */
+/** TLV variants carry no length of their own; the TLV header supplies it. */
 export const tlv = {
-	buffer: {
-		default: Buffer.alloc(0),
-		read(buf: Buffer, offset: number, length = 0): Result<{ value: Buffer }> {
-			const err = outOfRange(buf, offset, length);
-
-			return err ? { err } : { value: buf.subarray(offset, offset + length) };
-		},
-		size(value: Buffer | number | string): number {
-			return Buffer.isBuffer(value) ? value.length : asString(value).length;
-		},
-		write: buffer.write,
-	} satisfies WireType<Buffer, Buffer | number | string>,
+	buffer,
 	cstring,
 	int8,
 	int16,
 	int32,
 	string: {
 		default: '',
-		read(buf: Buffer, offset: number, length = 0): Result<{ value: string }> {
+		read(buf: Buffer, offset: number, length = 0) {
 			const err = outOfRange(buf, offset, length);
 
-			return err ? { err } : { value: buf.toString('ascii', offset, offset + length) };
+			return err ? { err } : { bytesRead: length, value: buf.toString('ascii', offset, offset + length) };
 		},
-		size(value: number | string): number {
-			return asString(value).length;
+		size(value: ParamValue) {
+			const { err, text } = wantText(value);
+
+			return err ? { err } : { size: text.length };
 		},
-		write(value: number | string, buf: Buffer, offset: number): VoidResult {
-			const str = asString(value);
-			const err = outOfRange(buf, offset, str.length);
+		write(value: ParamValue, buf: Buffer, offset: number) {
+			const { err, text } = wantText(value);
 
 			if (err) return { err };
 
-			buf.write(str, offset, 'ascii');
+			const rangeErr = outOfRange(buf, offset, text.length);
+
+			if (rangeErr) return { err: rangeErr };
+
+			buf.write(text, offset, 'ascii');
 
 			return {};
 		},
-	} satisfies WireType<string, number | string>,
+	} satisfies WireType<string>,
 };
 
 export const types = {

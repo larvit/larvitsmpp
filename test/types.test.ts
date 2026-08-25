@@ -8,30 +8,36 @@ describe('integers', () => {
 		const source = Buffer.from([0, 0x65]);
 		const target = Buffer.alloc(1);
 
-		assert.deepEqual(types.int8.read(source, 1), { value: 0x65 });
-		assert.equal(types.int8.size(0x65), 1);
+		assert.deepEqual(types.int8.read(source, 1), { bytesRead: 1, value: 0x65 });
+		assert.deepEqual(types.int8.size(0x65), { size: 1 });
 		assert.deepEqual(types.int8.write(0x65, target, 0), {});
 		assert.deepEqual(target, Buffer.from([0x65]));
 	});
 
-	test('int16 reads, sizes and writes two octets big-endian', () => {
+	test('int16 reads and writes two octets big-endian', () => {
 		const source = Buffer.from([0, 0x05, 0x65]);
 		const target = Buffer.alloc(2);
 
-		assert.deepEqual(types.int16.read(source, 1), { value: 0x0565 });
-		assert.equal(types.int16.size(0x0565), 2);
+		assert.deepEqual(types.int16.read(source, 1), { bytesRead: 2, value: 0x0565 });
 		types.int16.write(0x0565, target, 0);
 		assert.deepEqual(target, Buffer.from([0x05, 0x65]));
 	});
 
-	test('int32 reads, sizes and writes four octets big-endian', () => {
+	test('int32 reads and writes four octets big-endian', () => {
 		const source = Buffer.from([0, 0x10, 0x02, 0x40, 0x45]);
 		const target = Buffer.alloc(4);
 
-		assert.deepEqual(types.int32.read(source, 1), { value: 0x10024045 });
-		assert.equal(types.int32.size(0x10024045), 4);
+		assert.deepEqual(types.int32.read(source, 1), { bytesRead: 4, value: 0x10024045 });
 		types.int32.write(0x10024045, target, 0);
 		assert.deepEqual(target, Buffer.from([0x10, 0x02, 0x40, 0x45]));
+	});
+
+	// 0.4.0 let Node throw straight out of writeUInt8 for these.
+	test('rejects values the field cannot hold', () => {
+		assert.ok(types.int8.write(256, Buffer.alloc(1), 0).err instanceof Error);
+		assert.ok(types.int8.write(-1, Buffer.alloc(1), 0).err instanceof Error);
+		assert.ok(types.int16.write(1.5, Buffer.alloc(2), 0).err instanceof Error);
+		assert.ok(types.int8.write('nope', Buffer.alloc(1), 0).err instanceof Error);
 	});
 });
 
@@ -40,11 +46,11 @@ describe('string (Octet String)', () => {
 	const encoded = Buffer.concat([Buffer.from([8]), Buffer.from(expected)]);
 
 	test('reads a length-prefixed string', () => {
-		assert.deepEqual(types.string.read(encoded, 0), { value: expected });
+		assert.deepEqual(types.string.read(encoded, 0), { bytesRead: 9, value: expected });
 	});
 
 	test('sizes as the string plus its length octet', () => {
-		assert.equal(types.string.size(expected), 9);
+		assert.deepEqual(types.string.size(expected), { size: 9 });
 	});
 
 	test('writes a length-prefixed string', () => {
@@ -61,11 +67,11 @@ describe('cstring (C-Octet String)', () => {
 	const encoded = Buffer.concat([Buffer.from(expected), Buffer.from([0])]);
 
 	test('reads a NULL-terminated string', () => {
-		assert.deepEqual(types.cstring.read(encoded, 0), { value: expected });
+		assert.deepEqual(types.cstring.read(encoded, 0), { bytesRead: 9, value: expected });
 	});
 
 	test('sizes as the string plus its NULL terminator', () => {
-		assert.equal(types.cstring.size(expected), 9);
+		assert.deepEqual(types.cstring.size(expected), { size: 9 });
 	});
 
 	test('writes a NULL-terminated string', () => {
@@ -82,13 +88,11 @@ describe('cstring (C-Octet String)', () => {
 		types.cstring.write(123, target, 0);
 
 		assert.deepEqual(target, Buffer.from([0x31, 0x32, 0x33, 0x00]));
-		assert.equal(types.cstring.size(123), 4);
+		assert.deepEqual(types.cstring.size(123), { size: 4 });
 	});
 
 	test('refuses a string with no terminator rather than running off the end', () => {
-		const { err } = types.cstring.read(Buffer.from('abcd'), 0);
-
-		assert.ok(err instanceof Error);
+		assert.ok(types.cstring.read(Buffer.from('abcd'), 0).err instanceof Error);
 	});
 });
 
@@ -96,11 +100,21 @@ describe('buffer', () => {
 	const expected = Buffer.from('abcd1234');
 
 	test('reads a binary field of the given length', () => {
-		assert.deepEqual(types.buffer.read(expected, 0, expected.length), { value: expected });
+		assert.deepEqual(types.buffer.read(expected, 0, expected.length), {
+			bytesRead: 8,
+			value: expected,
+		});
 	});
 
 	test('sizes a binary field in octets', () => {
-		assert.equal(types.buffer.size(expected), 8);
+		assert.deepEqual(types.buffer.size(expected), { size: 8 });
+	});
+
+	// 0.4.0 subtracted one whenever the last octet was 0x00, so a UCS2 message ending in a
+	// character like U+4E00 was allocated one octet short while sm_length still reported the full
+	// length — the PDU went out corrupt.
+	test('counts a trailing NULL octet like any other', () => {
+		assert.deepEqual(types.buffer.size(Buffer.from([0x4E, 0x00])), { size: 2 });
 	});
 
 	test('writes a binary field', () => {
@@ -124,11 +138,14 @@ describe('dest_address_array', () => {
 	];
 
 	test('reads every dest_address structure', () => {
-		assert.deepEqual(types.dest_address_array.read(encoded, 0), { value: expected });
+		assert.deepEqual(types.dest_address_array.read(encoded, 0), {
+			bytesRead: 13,
+			value: expected,
+		});
 	});
 
 	test('sizes every dest_address structure', () => {
-		assert.equal(types.dest_address_array.size(expected), 13);
+		assert.deepEqual(types.dest_address_array.size(expected), { size: 13 });
 	});
 
 	test('writes every dest_address structure', () => {
@@ -152,11 +169,14 @@ describe('unsuccess_sme_array', () => {
 	];
 
 	test('reads every unsuccess_sme structure', () => {
-		assert.deepEqual(types.unsuccess_sme_array.read(encoded, 0), { value: expected });
+		assert.deepEqual(types.unsuccess_sme_array.read(encoded, 0), {
+			bytesRead: 21,
+			value: expected,
+		});
 	});
 
 	test('sizes every unsuccess_sme structure', () => {
-		assert.equal(types.unsuccess_sme_array.size(expected), 21);
+		assert.deepEqual(types.unsuccess_sme_array.size(expected), { size: 21 });
 	});
 
 	test('writes every unsuccess_sme structure', () => {
@@ -174,6 +194,7 @@ describe('bounds checking', () => {
 		assert.ok(types.int32.read(Buffer.alloc(2), 0).err instanceof Error);
 		assert.ok(types.int8.read(Buffer.alloc(1), 5).err instanceof Error);
 		assert.ok(types.string.read(Buffer.from([10, 0x61]), 0).err instanceof Error);
+		assert.ok(types.dest_address_array.read(Buffer.from([0x05, 0x01]), 0).err instanceof Error);
 	});
 
 	test('writing past the end returns an error instead of throwing', () => {
