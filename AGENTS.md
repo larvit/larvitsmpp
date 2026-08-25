@@ -102,6 +102,18 @@ implementation (see todo.md).
 | Dormant filters | `defs.filters` is declared on commands and TLVs but never invoked anywhere. Dropped in the rewrite; SMPP time formatting is exported as `smppTime` instead |
 | Unchecked reads | Wire reads index straight into the buffer, so a short or malformed PDU throws out of the codec. Reads are bounds-checked and return results now |
 | Unrangechecked writes | Integer params are handed to `writeUInt8`/`writeUInt16BE` unvalidated, so an out-of-range value throws from inside Node |
+| `submit_multi` missing `sm_length` | The field is commented out of the command table, so `short_message` never round-trips for that command |
+| Per-parameter defaults never applied | `calcCmdLength` reads `paramType.default` (the wire type's) rather than the parameter's, so `interface_version: 0x50` on the bind commands did nothing and every bind declared version 0x00 |
+| `ESME_RINVBCASTCHANIND` typo | Defined as `0x011`, three hex digits; the spec value is `0x0112` |
+
+## Multipart sends and the send window
+
+`sendSms` puts every segment of a message on the wire together instead of waiting for each response
+in turn. This is not an optimisation: this library's own server holds segments until the whole
+message is reassembled before it answers any of them, so sending them one-after-a-response
+deadlocks. It follows that a message with more segments than `maxOutstanding` cannot be delivered to
+a server that defers responses that way — real SMSCs answer each `submit_sm` immediately, so this
+only bites when both ends are this library.
 
 ## GSM 7-bit is sent unpacked
 
@@ -123,3 +135,7 @@ exactly 140.
   preambles or restate what the code says.
 - Test data uses real randomised UUID v7 values, never `aaaa-0000` placeholders.
 - `message_id` values the library generates are UUID v7.
+- A test that needs a dummy peer must `resume()` its sockets. An unread socket never processes the
+  peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
+- `assert.equal` from `node:assert/strict` narrows its first argument, so a following `?.` on the
+  same value is flagged as unnecessary. Assert once with `assert.ok(x)` and use plain access after.

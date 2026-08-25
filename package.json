@@ -44,8 +44,8 @@
 		"build": "tsc --project tsconfig.build.json",
 		"lint": "eslint . && tsc --noEmit",
 		"prepack": "npm run build",
-		"test": "npm run lint && node --test 'test/**/*.test.ts'",
-		"test:compiled": "tsc --project tsconfig.test.json && node --test dist-test/test/"
+		"test": "npm run lint && node --test test/*.test.ts",
+		"test:compiled": "tsc --project tsconfig.test.json && node --test dist-test/test/*.test.js"
 	},
 	"devDependencies": {
 		"@eslint/js": "10.0.1",
