@@ -15,10 +15,6 @@ describe('command table', () => {
 		assert.equal(Object.keys(cmds).length, 33);
 	});
 
-	test('bind commands default interface_version to 0x50', () => {
-		assert.equal(cmds.bind_transceiver?.defaults?.interface_version, 0x50);
-	});
-
 	// Wire order, not alphabetical order — reordering these corrupts every PDU.
 	test('submit_sm parameters are in wire order', () => {
 		assert.deepEqual(Object.keys(cmds.submit_sm?.params ?? {}), [

@@ -1,8 +1,7 @@
-import type { ParamValue, WireType } from './types.ts';
+import type { WireType } from './types.ts';
 import { buffer, cstring, dest_address_array, int8, unsuccess_sme_array } from './types.ts';
 
 type CommandSpec = {
-	defaults?: Record<string, ParamValue>;
 	id: number;
 	params?: Record<string, WireType>;
 	tlvMap?: Record<string, string>;
@@ -34,11 +33,11 @@ const specs = {
 			esme_addr: cstring,
 		},
 	},
-	bind_receiver: { defaults: { interface_version: 0x50 }, id: 0x00000001, params: bindParams },
+	bind_receiver: { id: 0x00000001, params: bindParams },
 	bind_receiver_resp: { id: 0x80000001, params: { system_id: cstring } },
-	bind_transmitter: { defaults: { interface_version: 0x50 }, id: 0x00000002, params: bindParams },
+	bind_transmitter: { id: 0x00000002, params: bindParams },
 	bind_transmitter_resp: { id: 0x80000002, params: { system_id: cstring } },
-	bind_transceiver: { defaults: { interface_version: 0x50 }, id: 0x00000009, params: bindParams },
+	bind_transceiver: { id: 0x00000009, params: bindParams },
 	bind_transceiver_resp: { id: 0x80000009, params: { system_id: cstring } },
 	broadcast_sm: {
 		id: 0x00000111,
@@ -191,6 +190,7 @@ const specs = {
 			replace_if_present_flag: int8,
 			data_coding: int8,
 			sm_default_msg_id: int8,
+			sm_length: int8,
 			short_message: buffer,
 		},
 	},
@@ -238,7 +238,9 @@ export type PduParams<C extends CommandName = CommandName> = {
 /** Parameters callers supply: all optional, and numbers are accepted for the string fields. */
 export type PduParamsInput<C extends CommandName = CommandName> = {
 	[K in keyof ParamsSpecOf<C>]?: ParamsSpecOf<C>[K] extends WireType<infer V>
-		? V extends string ? number | string : V
+		? V extends string ? number | string
+			: V extends Buffer ? Buffer | string
+				: V
 		: never;
 };
 

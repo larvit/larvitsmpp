@@ -136,29 +136,27 @@ All done, with tests in `test/encodings.test.ts`, `test/types.test.ts` and `test
 
 ### 2. Message helpers — `src/message.ts`
 
-- [ ] `bitCount(msg, encoding?)`, `encodeMessage`, `decodeMessage`, `smppDate`, `splitMessage`.
-- [ ] `smppTime.encode(value)` / `smppTime.decode(value)` — absolute and relative SMPP time formats,
-      replacing the dormant `filters.time`. Used by `validityPeriod` and `scheduleDeliveryTime`.
-- [ ] **Fix:** segments carry 153 GSM characters or 67 UCS2 characters. 0.4.0 produces 152/66,
-      because it pushes `msgPart.slice(0, -1)` after accumulating a full segment. Read the
-      "GSM 7-bit is sent unpacked" section of AGENTS.md before touching these numbers.
-- [ ] **Fix:** `smppDate` must add 1 to `getMonth()` and zero-pad correctly.
-- [ ] **Fix:** `decodeMessage` must resolve the alphabet through `encodingByDataCoding` (already
-      written and tested) rather than scanning the alias table, which is what broke LATIN1.
-- [ ] The concatenation reference counter is per session, not module-global. `splitMessage` therefore
-      takes the reference as an argument instead of owning a counter.
+Done, tested in `test/message.test.ts`. Segments are 153 GSM / 67 UCS2 characters, `smppDate` is
+UTC and one-based, `decodeMessage` goes through `encodingByDataCoding`, and `splitMessage` takes the
+concatenation reference as an argument rather than owning a module-global counter.
+
+- [x] `bitCount`, `encodeMessage`, `decodeMessage`, `smppDate`, `splitMessage`, `smppTime`.
 
 ### 3. PDU codec — `src/pdu.ts`
 
-- [ ] `pduToObj(buffer)` → `{ err?, pduObj? }`, `objToPdu(obj)` → `{ err?, buffer? }`,
-      `pduReturn(pdu, status?, params?, tlvs?)` → `{ err?, buffer? }`, `isResp(pduObj)`.
-- [ ] Keep the trailing-NULL-octet retry for `short_message` that 0.4.0 has — real peers send it.
-      It is now an explicit decision in the parser: `types.buffer.size()` no longer silently drops a
-      trailing `0x00`, because that corrupted every UCS2 message ending in one (see AGENTS.md).
-- [ ] Guard `cmdLength` against a maximum before allocating, so a hostile peer cannot ask for a 4 GiB
-      buffer. 0.4.0 has no such guard.
-- [ ] Per-command typed params: `pduToObj` returns a union discriminated on `cmdName`, and
-      `objToPdu` narrows `params` to the named command's fields.
+Done, tested in `test/pdu.test.ts` — which includes the two byte-for-byte comparisons against 0.4.0's
+output and the real captured SMSC PDUs from its suite.
+
+- [x] `pduToObj`, `objToPdu`, `pduReturn`, `isResp`, `isCommand`.
+- [x] Trailing-NULL retry kept, now an explicit second parse rather than a side effect of a length
+      function.
+- [x] `cmdLength` guarded by `maxPduLength` (1 MiB) before anything is allocated.
+- [x] `objToPdu` narrows `params` to the named command. `pduToObj` returns loosely-typed params —
+      the command is only known at runtime — and `isCommand(pduObj, 'submit_sm')` narrows them.
+
+The encoder measures each field, allocates exactly that, and writes into it, so a `size`/`write`
+disagreement surfaces as an error instead of a corrupt PDU. That class of bug is what the trailing
+NULL defect was.
 
 ### 4. Session — `src/session.ts`
 

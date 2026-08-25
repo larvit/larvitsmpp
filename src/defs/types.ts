@@ -415,7 +415,32 @@ export const unsuccess_sme_array: WireType<UnsuccessSme[]> = {
 /** TLV variants carry no length of their own; the TLV header supplies it. */
 export const tlv = {
 	buffer,
-	cstring,
+	// Bounded by the TLV header length, and tolerant of peers that omit the NULL terminator.
+	cstring: {
+		default: '',
+		read(buf: Buffer, offset: number, length = 0) {
+			const err = outOfRange(buf, offset, length);
+
+			if (err) return { err };
+
+			const terminator = buf.indexOf(0, offset);
+			const end = terminator === -1 || terminator > offset + length
+				? offset + length
+				: terminator;
+
+			return { bytesRead: length, value: buf.toString('ascii', offset, end) };
+		},
+		size(value: ParamValue) {
+			const { err, text } = wantText(value);
+
+			return err ? { err } : { size: text.length + 1 };
+		},
+		write(value: ParamValue, buf: Buffer, offset: number) {
+			const { err, text } = wantText(value);
+
+			return err ? { err } : writeCstring(text, buf, offset);
+		},
+	} satisfies WireType<string>,
 	int8,
 	int16,
 	int32,
