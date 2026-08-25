@@ -87,7 +87,7 @@ implementation (see todo.md).
 | Defect | 0.4.0 behaviour |
 | --- | --- |
 | LATIN1 never decodes | `decodeMsg` loops `consts.ENCODING` without breaking, so `data_coding` 0x03 lands on the alias `ISO_8859_1`, which has no decoder, and silently falls back to ASCII |
-| Oversized segments | `splitMsg` emits 152 GSM chars + 6-byte UDH = 158 octets, over the 140-octet limit; UCS2 gets 66 chars where 67 fit |
+| Short segments | `splitMsg` accumulates a full segment then pushes `msgPart.slice(0, -1)`, so every segment is one character short: 152 GSM characters instead of 153, 66 UCS2 instead of 67. Long messages are split into more segments than they need, and each extra segment is billed |
 | DLR month off by one | `smppDate()` uses `getMonth()` (0-based) without `+1`, so January renders as `00` |
 | Non-standard DLR status | Receipts emit `stat:UNDELIVERABLE`; the spec's field is 7 characters (`UNDELIV`) |
 | Flash destroys UCS2 | `flash: true` overwrites `data_coding` with 0x10, discarding the UCS2 alphabet, which needs 0x18 |
@@ -102,6 +102,17 @@ implementation (see todo.md).
 | Dormant filters | `defs.filters` is declared on commands and TLVs but never invoked anywhere. Dropped in the rewrite; SMPP time formatting is exported as `smppTime` instead |
 | Unchecked reads | Wire reads index straight into the buffer, so a short or malformed PDU throws out of the codec. Reads are bounds-checked and return results now |
 | Unrangechecked writes | Integer params are handed to `writeUInt8`/`writeUInt16BE` unvalidated, so an out-of-range value throws from inside Node |
+
+## GSM 7-bit is sent unpacked
+
+Over SMPP the ESME puts one GSM character per octet in `short_message` and the SMSC packs it into
+septets. The 140-octet limit applies to that packed result, not to what goes on the wire here, which
+is why a concatenated segment is 153 characters plus a 6-octet UDH — 159 octets in `short_message`,
+and entirely correct. Do not "fix" this to 134; that number is the packed payload size and would
+truncate every long message by a fifth.
+
+UCS2 is not packed, so there the two coincide: 67 characters = 134 octets, plus the 6-octet UDH is
+exactly 140.
 
 ## Conventions
 

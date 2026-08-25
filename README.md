@@ -180,7 +180,9 @@ commands the codec knows, not just the four the session handles natively.
 0.4.0 had a number of protocol defects. Fixing them changes the bytes it puts on the wire, so if you
 have worked around any of these, remove the workaround:
 
-- Multipart segments were 158 octets, over the 140-octet limit. They are now correctly sized.
+- Every multipart segment was one character short (152 GSM characters instead of 153, 66 UCS2
+  instead of 67), so long messages were split into more segments than necessary — and each extra
+  segment costs a message.
 - LATIN1 (`data_coding` 0x03) was silently decoded as ASCII, corrupting the message.
 - Delivery receipt dates were a month off, and the status field read `UNDELIVERABLE` where the spec
   defines the 7-character `UNDELIV`.

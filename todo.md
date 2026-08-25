@@ -139,8 +139,9 @@ All done, with tests in `test/encodings.test.ts`, `test/types.test.ts` and `test
 - [ ] `bitCount(msg, encoding?)`, `encodeMessage`, `decodeMessage`, `smppDate`, `splitMessage`.
 - [ ] `smppTime.encode(value)` / `smppTime.decode(value)` — absolute and relative SMPP time formats,
       replacing the dormant `filters.time`. Used by `validityPeriod` and `scheduleDeliveryTime`.
-- [ ] **Fix:** segments are 134 GSM characters or 67 UCS2 characters, so that segment + 6-byte UDH
-      is exactly 140 octets. 0.4.0 produces 152/66.
+- [ ] **Fix:** segments carry 153 GSM characters or 67 UCS2 characters. 0.4.0 produces 152/66,
+      because it pushes `msgPart.slice(0, -1)` after accumulating a full segment. Read the
+      "GSM 7-bit is sent unpacked" section of AGENTS.md before touching these numbers.
 - [ ] **Fix:** `smppDate` must add 1 to `getMonth()` and zero-pad correctly.
 - [ ] **Fix:** `decodeMessage` must resolve the alphabet through `encodingByDataCoding` (already
       written and tested) rather than scanning the alias table, which is what broke LATIN1.
