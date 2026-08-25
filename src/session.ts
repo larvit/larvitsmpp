@@ -122,7 +122,7 @@ export class Session extends EventEmitter<SessionEvents> {
 	private readonly options: SessionOptions;
 	private readonly pending = new Map<number, Pending>();
 	private readonly reassembly = new Map<string, Reassembly>();
-	private readonly segmentDlrs = new Map<string, Map<number, Dlr>>();
+	private readonly segmentDlrs = new Map<string, { expected: number; parts: Map<number, Dlr> }>();
 	private readonly waiting: (() => void)[] = [];
 
 	private closed = false;
@@ -258,6 +258,8 @@ export class Session extends EventEmitter<SessionEvents> {
 			smsIds.push(paramText(one.pduObj.params.message_id));
 		}
 
+		this.expectSegmentDlrs(smsIds);
+
 		return { pduObjs, smsIds };
 	}
 
@@ -296,6 +298,7 @@ export class Session extends EventEmitter<SessionEvents> {
 
 		this.reassembly.clear();
 		this.sock.destroy();
+		this.emit('close');
 	}
 
 	private nextSeqNr(): number {
@@ -603,31 +606,53 @@ export class Session extends EventEmitter<SessionEvents> {
 		await this.sendReturn(pduObj);
 	}
 
-	/** Segment ids look like `<uuid>-<n>`; once every segment is in, report on the whole message. */
+	/**
+	 * Registers a multipart message for merged reporting, but only when the peer numbered its ids
+	 * `<base>-<n>` off one base — the convention this library's own server follows. An SMSC that
+	 * hands out unrelated ids per segment cannot be merged, so no messageDlr is emitted for it.
+	 */
+	private expectSegmentDlrs(smsIds: string[]): void {
+		if (smsIds.length < 2) return;
+
+		const bases = new Set<string>();
+
+		for (const smsId of smsIds) {
+			const match = /^(.*)-(\d+)$/.exec(smsId);
+
+			if (!match?.[1]) return;
+
+			bases.add(match[1]);
+		}
+
+		if (bases.size !== 1) return;
+
+		for (const base of bases) {
+			this.segmentDlrs.set(base, { expected: smsIds.length, parts: new Map() });
+		}
+	}
+
+	/** Collects per-segment receipts and reports once on the whole message. */
 	private collectSegmentDlr(dlr: Dlr): void {
 		const match = /^(.*)-(\d+)$/.exec(dlr.smsId);
+		const base = match?.[1];
+		const part = match?.[2];
 
-		if (!match) return;
+		if (base === undefined || part === undefined) return;
 
-		const [, smsId, part] = match;
+		const group = this.segmentDlrs.get(base);
 
-		if (smsId === undefined || part === undefined) return;
+		if (!group) return;
 
-		const segments = this.segmentDlrs.get(smsId) ?? new Map<number, Dlr>();
+		group.parts.set(Number(part), dlr);
 
-		segments.set(Number(part), dlr);
-		this.segmentDlrs.set(smsId, segments);
+		if (group.parts.size < group.expected) return;
 
-		const highest = Math.max(...segments.keys());
+		this.segmentDlrs.delete(base);
 
-		if (segments.size < highest) return;
-
-		this.segmentDlrs.delete(smsId);
-
-		const ordered = [...segments.entries()].sort(([a], [b]) => a - b).map(([, one]) => one);
+		const ordered = [...group.parts.entries()].sort(([a], [b]) => a - b).map(([, one]) => one);
 		const worst = ordered.reduce((carry, one) => (one.statusId > carry.statusId ? one : carry));
 
-		this.emit('messageDlr', { ...worst, segments: ordered, smsId });
+		this.emit('messageDlr', { ...worst, segments: ordered, smsId: base });
 	}
 
 	private resetTimers(): void {
@@ -662,11 +687,7 @@ export class Session extends EventEmitter<SessionEvents> {
 	}
 
 	private onClose(): void {
-		const wasOpen = !this.closed;
-
 		this.teardown();
-
-		if (wasOpen) this.emit('close');
 
 		if (!this.stopped && this.options.reconnect) this.scheduleReconnect();
 	}
