@@ -107,7 +107,8 @@ smpp.on('session', session => {
 - **Named exports only.** No default export. `defs` stays as a grouped export alongside the
   individual tables (`cmds`, `consts`, `encodings`, `errors`, `tlvs`, `types`, and the `*ById` maps).
 - **`utils` is gone.** Its contents are named exports: `bitCount`, `decodeMessage`, `encodeMessage`,
-  `objToPdu`, `pduReturn`, `pduToObj`, `smppDate`, `splitMessage`.
+  `objToPdu`, `pduReturn`, `pduToObj`, `smppDate`, `smppTime`, `splitMessage`.
+- **`defs.filters` is gone** — it never did anything. `smppTime` replaces the one useful part.
 - **The PDU codec is synchronous** and returns `{ err?, pduObj? }` / `{ err?, buffer? }`.
 - **Low-level surface stays public**, including `session.sock`, `session.send()` and
   `session.sendReturn()` — that is how the other 29 commands are reached.
@@ -117,29 +118,32 @@ smpp.on('session', session => {
 
 ### 1. Definition tables — `src/defs/`
 
+All done, with tests in `test/encodings.test.ts`, `test/types.test.ts` and `test/commands.test.ts`.
+
 - [x] `constants.ts` — `consts` + `constsById`.
-- [x] `errors.ts` — all `ESME_*` codes plus `errorsById`.
-- [ ] `types.ts` — wire types `int8`, `int16`, `int32`, `string`, `cstring`, `buffer`,
-      `dest_address_array`, `unsuccess_sme_array`, and the `tlv` variants. Each is
-      `{ default, read(buffer, offset, length?), size(value), write(value, buffer, offset) }`.
-      `read` must be bounds-checked and return a result rather than throwing.
-- [ ] `encodings.ts` — GSM 03.38 (`ASCII`), `LATIN1`, `UCS2`, `FLASH` (alias of ASCII) and `detect`.
-      Drop `iconv-lite`: LATIN1 is `Buffer.from(str, 'latin1')`, UCS2 is `Buffer.from(str,
-      'utf16le').swap16()` (copy before swapping, and reject odd-length input on decode).
-- [ ] `filters.ts` — `time`, `message`, `billing_identification`, `broadcast_area_identifier`,
-      `broadcast_content_type`, `broadcast_frequency_interval`, `callback_num`, `callback_num_atag`.
-- [ ] `tlvs.ts` — the 67 TLV definitions plus `tlvsById` and the two aliases
-      (`alert_on_msg_delivery`, `failed_broadcast_area_identifier`).
-- [ ] `commands.ts` — all 33 commands with ids and **wire-ordered** parameter lists, plus `cmdsById`.
+- [x] `errors.ts` — all `ESME_*` codes plus `errorsById`, `isErrorName`, `errorNameById`.
+- [x] `types.ts` — wire types. `read` is bounds-checked and reports `bytesRead`, so no caller has to
+      re-derive a length that could disagree with what was written. `size` and `write` validate their
+      input and return results.
+- [x] `encodings.ts` — GSM 03.38, LATIN1, UCS2, FLASH, `detect` and `encodingByDataCoding`.
+      `iconv-lite` is gone; Buffer does it natively.
+- [x] `tlvs.ts` — 67 TLV definitions, `tlvsById`, and the two aliases.
+- [x] `commands.ts` — all 33 commands, wire-ordered, plus `cmdsById` and the `PduParams<C>` /
+      `PduParamsInput<C>` per-command types.
+- [x] `filters.ts` — **not ported.** `defs.filters` was declared on commands and TLVs but never
+      invoked anywhere in 0.4.0. The one piece that is genuinely needed, SMPP time formatting, is
+      task 2's `smppTime`.
 
 ### 2. Message helpers — `src/message.ts`
 
 - [ ] `bitCount(msg, encoding?)`, `encodeMessage`, `decodeMessage`, `smppDate`, `splitMessage`.
+- [ ] `smppTime.encode(value)` / `smppTime.decode(value)` — absolute and relative SMPP time formats,
+      replacing the dormant `filters.time`. Used by `validityPeriod` and `scheduleDeliveryTime`.
 - [ ] **Fix:** segments are 134 GSM characters or 67 UCS2 characters, so that segment + 6-byte UDH
       is exactly 140 octets. 0.4.0 produces 152/66.
 - [ ] **Fix:** `smppDate` must add 1 to `getMonth()` and zero-pad correctly.
-- [ ] **Fix:** LATIN1 must actually decode — resolve `data_coding` to a concrete encoding, not to
-      whichever alias happens to sort last.
+- [ ] **Fix:** `decodeMessage` must resolve the alphabet through `encodingByDataCoding` (already
+      written and tested) rather than scanning the alias table, which is what broke LATIN1.
 - [ ] The concatenation reference counter is per session, not module-global. `splitMessage` therefore
       takes the reference as an argument instead of owning a counter.
 
@@ -148,6 +152,8 @@ smpp.on('session', session => {
 - [ ] `pduToObj(buffer)` → `{ err?, pduObj? }`, `objToPdu(obj)` → `{ err?, buffer? }`,
       `pduReturn(pdu, status?, params?, tlvs?)` → `{ err?, buffer? }`, `isResp(pduObj)`.
 - [ ] Keep the trailing-NULL-octet retry for `short_message` that 0.4.0 has — real peers send it.
+      It is now an explicit decision in the parser: `types.buffer.size()` no longer silently drops a
+      trailing `0x00`, because that corrupted every UCS2 message ending in one (see AGENTS.md).
 - [ ] Guard `cmdLength` against a maximum before allocating, so a hostile peer cannot ask for a 4 GiB
       buffer. 0.4.0 has no such guard.
 - [ ] Per-command typed params: `pduToObj` returns a union discriminated on `cmdName`, and

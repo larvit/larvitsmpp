@@ -166,9 +166,11 @@ commands the codec knows, not just the four the session handles natively.
   `{ userData }`.
 - **Renamed options:** `enqLinkTiming` → `enquireLinkInterval`, server `timeout` → `idleTimeout`.
 - **`larvitsmpp.utils` is gone.** Its contents are named exports: `bitCount`, `decodeMessage`,
-  `encodeMessage`, `objToPdu`, `pduReturn`, `pduToObj`, `smppDate`, `splitMessage`. The PDU codec is
+  `encodeMessage`, `objToPdu`, `pduReturn`, `pduToObj`, `smppDate`, `smppTime`, `splitMessage`. The PDU codec is
   synchronous and returns `{ err, pduObj }` / `{ err, buffer }`.
 - **`pduObj.isResp()` is now the standalone `isResp(pduObj)`.**
+- **`defs.filters` is gone.** It was declared on every command and TLV but never invoked, so it did
+  nothing. SMPP time formatting, the one part worth keeping, is exported as `smppTime`.
 - **The `error` event is `sessionError`** (and `serverError` on the server handle).
 - **`log`** takes a [`@larvit/log`](https://www.npmjs.com/package/@larvit/log) instance instead of a
   `larvitutils` one, and is silent by default.
@@ -188,6 +190,10 @@ have worked around any of these, remove the workaround:
 - Alphanumeric senders were sent with TON 1 (international) instead of TON 5.
 - Delivery receipts carrying only the standard receipt text, with no TLVs — what Kannel and several
   other SMSCs send — were rejected outright. They are now parsed.
+- A message whose last octet was `0x00` was allocated one octet short while `sm_length` still
+  reported the full length, so it went out corrupt. In UCS2 that is any message ending in a
+  character like 一 (U+4E00), which made the bug routine for CJK text.
+- Short or malformed PDUs threw out of the codec instead of being reported as a parse failure.
 
 ## Development
 

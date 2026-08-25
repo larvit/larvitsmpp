@@ -27,7 +27,9 @@ These are not preferences. Breaking one is a defect.
 3. **No `error` event.** Node makes an unhandled `error` event throw, which would break rule 1.
    Sessions emit `sessionError`, servers emit `serverError`.
 4. **No casts, no non-null assertions.** `as`, `as unknown as` and `!` are all banned. Parse untyped
-   input once through a type guard at the boundary; everything past it is typed.
+   input once through a type guard at the boundary; everything past it is typed. `noUncheckedIndexedAccess`
+   is on, so every lookup into a record or buffer is `T | undefined` until you handle it — that is the
+   point, not an obstacle to route around.
 
 ## Architecture
 
@@ -40,12 +42,12 @@ src/
 	sms.ts            The live handle emitted as the 'sms' event (sendResp/sendDlr)
 	message.ts        Encoding detection, splitting, bit counting, SMPP date formatting
 	pdu.ts            pduToObj / objToPdu / pduReturn — synchronous, result-returning
+	result.ts         Result<T> — the shape every fallible call returns
 	defs/
 		commands.ts   The 33 commands, their ids and ordered parameter lists
 		constants.ts  consts + constsById (TON, NPI, ENCODING, MESSAGE_STATE, …)
-		encodings.ts  GSM 03.38, LATIN1, UCS2 and detection
+		encodings.ts  GSM 03.38, LATIN1, UCS2, detection, data_coding resolution
 		errors.ts     errors + errorsById (ESME_*)
-		filters.ts    Per-field encode/decode hooks (time, message, callback_num, …)
 		tlvs.ts       TLV definitions, tlvsById
 		types.ts      Wire types: int8/int16/int32/string/cstring/buffer/arrays
 ```
@@ -96,11 +98,16 @@ implementation (see todo.md).
 | Text-only DLRs refused | `deliver_sm` without both `message_state` and `receipted_message_id` TLVs is rejected with `ESME_RINVTLVSTREAM`, so Kannel-style receipts are unusable |
 | Unbounded reassembly | Incomplete long-SMS groups are capped by nothing and swept only when other traffic arrives, after 24 hours |
 | Dead DLR aggregation | `longSmsDlrs` is allocated to merge per-segment receipts and then never used |
+| Trailing NULL truncation | `types.buffer.size()` subtracts one whenever the value's last octet is `0x00`, so the PDU is allocated one octet short while `sm_length` still reports the full length. Any UCS2 message ending in a character like U+4E00 or U+3000 goes out corrupt |
+| Dormant filters | `defs.filters` is declared on commands and TLVs but never invoked anywhere. Dropped in the rewrite; SMPP time formatting is exported as `smppTime` instead |
+| Unchecked reads | Wire reads index straight into the buffer, so a short or malformed PDU throws out of the codec. Reads are bounds-checked and return results now |
+| Unrangechecked writes | Integer params are handed to `writeUInt8`/`writeUInt16BE` unvalidated, so an out-of-range value throws from inside Node |
 
 ## Conventions
 
-- Hard tabs. Alphabetical ordering for keys, imports and lists unless order is logic-significant
-  (see the wire-order note above).
+- Hard tabs. Alphabetical ordering for keys, imports and lists unless order is logic-significant.
+  Two deliberate exceptions: command parameters are in wire order (above), and the `errors` and TLV
+  tables are ordered by their numeric id so they can be diffed against the spec and gaps stay visible.
 - Comments are the exception, not the default — see the root `CLAUDE.md` rules. Do not write file
   preambles or restate what the code says.
 - Test data uses real randomised UUID v7 values, never `aaaa-0000` placeholders.
