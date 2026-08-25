@@ -24,6 +24,15 @@ export type WireType<T extends ParamValue = ParamValue> = {
 	write: (value: ParamValue, buffer: Buffer, offset: number) => VoidResult;
 };
 
+/** Renders a parameter as text without ever falling back to "[object Object]". */
+export function paramText(value: ParamValue | undefined): string {
+	if (typeof value === 'string') return value;
+	if (typeof value === 'number') return value.toString();
+	if (Buffer.isBuffer(value)) return value.toString('ascii');
+
+	return '';
+}
+
 function outOfRange(buffer: Buffer, offset: number, needed: number): Error | undefined {
 	if (offset < 0 || needed < 0 || offset + needed > buffer.length) {
 		return new Error(
