@@ -118,9 +118,7 @@ smpp.on('session', session => {
 ### 1. Definition tables — `src/defs/`
 
 - [x] `constants.ts` — `consts` + `constsById`.
-- [ ] `errors.ts` — all `ESME_*` codes plus `errorsById`. Port from 0.4.0 `lib/defs.js`; note that
-      0.4.0 has a typo, `ESME_RINVBCASTCHANIND = 0x011` (three digits), which should be `0x0111`.
-      Verify every code against the SMPP 3.4/5.0 spec while porting.
+- [x] `errors.ts` — all `ESME_*` codes plus `errorsById`.
 - [ ] `types.ts` — wire types `int8`, `int16`, `int32`, `string`, `cstring`, `buffer`,
       `dest_address_array`, `unsuccess_sme_array`, and the `tlv` variants. Each is
       `{ default, read(buffer, offset, length?), size(value), write(value, buffer, offset) }`.
