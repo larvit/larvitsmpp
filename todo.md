@@ -5,7 +5,7 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 144 tests, lint and typecheck clean, verified on Node
+The rewrite is **feature complete and green**: 155 tests, lint and typecheck clean, verified on Node
 18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
@@ -74,6 +74,11 @@ Every defect listed in the AGENTS.md table has a regression test naming the beha
 - [ ] **In-flight sends across a reconnect.** They currently fail with "Session closed before a
       response arrived" and the caller retries. Re-queueing them automatically would be friendlier
       but risks duplicate delivery, so it needs a decision before it is built.
+- [ ] **`session.ts` is 459 lines.** The one seam left in it is a socket-to-PDU transport, which
+      would move the deliberately public `sock` field out of `Session` or turn it into a getter —
+      a public-surface change, so it waits for a decision.
+- [ ] **`buildPdu` and `dlrFromPdu` carry a complexity of 22.** `eslint.config.js` holds them at
+      that ceiling rather than below the repo-wide 10, so neither can grow but neither shrinks.
 - [ ] **`submit_multi` and the broadcast commands** encode and decode, but nothing exercises them
       end to end. The interop suite is the natural place.
 - [ ] **Move to TypeScript 7** once `typescript-eslint` supports it; `renovate.json` pins TypeScript

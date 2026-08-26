@@ -61,8 +61,8 @@ describe('parseReceipt()', () => {
 describe('dlrFromPdu()', () => {
 	test('prefers the TLVs when the peer sends them', () => {
 		const dlr = dlrFromPdu(deliverSm(receiptText, {
-			message_state: { tagId: 0x0427, tagValue: 5 },
-			receipted_message_id: { tagId: 0x001E, tagValue: 'from-the-tlv' },
+			message_state: { tagValue: 5 },
+			receipted_message_id: { tagValue: 'from-the-tlv' },
 		}));
 
 		assert.ok(dlr);

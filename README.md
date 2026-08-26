@@ -166,6 +166,8 @@ await smpp.close();      // stop listening and close every live session
 | --- | --- | --- |
 | `host` / `port` | all interfaces / `2775` | Where to listen. Pass `0` for any free port. |
 | `authenticate` | accept everything | `({ password, session, systemId, systemType }) => false \| { userData }`, sync or async. |
+| `systemId` | `''` | The SMSC identity returned to the ESME in the bind response. |
+| `interfaceVersion` | `0x34` | The SMPP version advertised in the bind response. The floor for sending a peer optional parameters stays `0x34`, whatever this is set to. |
 | `tls` | `false` | A `tls.TlsOptions` object with your certificate and key. |
 | `idleTimeout` | `40000` | Drop a peer that has been silent this long. |
 | `maxReassembly` | `1000` | Incomplete multipart messages held per session. |
@@ -275,6 +277,10 @@ have worked around any of these, remove the workaround:
 - A message whose last octet was `0x00` was allocated one octet short while `sm_length` still
   reported the full length, so it went out corrupt. In UCS2 that is any message ending in a
   character like 一 (U+4E00), which made the bug routine for CJK text.
+- Binary TLVs (`message_payload`, `network_error_code`, `callback_num` and the rest) were parsed
+  into a hex string and written back as the ASCII of that string, so every one that made a round
+  trip went out corrupt. They are `Buffer`s in both directions now, so drop any hex encoding of
+  your own.
 - Short or malformed PDUs threw out of the codec instead of being reported as a parse failure.
 - Binds now declare `interface_version` 0x34. 0.4.0 declared 0x00, which tells the SMSC the ESME
   speaks SMPP 3.3 or earlier — and a spec-following SMSC then withholds every optional parameter,

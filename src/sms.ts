@@ -1,6 +1,6 @@
 import type { ErrorName } from './defs/errors.ts';
 import type { MessageState } from './defs/constants.ts';
-import type { PduObject } from './pdu.ts';
+import type { PduObject, TlvInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
 import { consts } from './defs/constants.ts';
@@ -80,44 +80,47 @@ async function sendResp(sms: Sms, status: ErrorName = 'ESME_ROK'): Promise<VoidR
 	return results.find(result => result.err) ?? {};
 }
 
+/** The receipt as text, which is all of it a peer below SMPP 3.4 is allowed to be sent. */
+function receiptText(sms: Sms, smsId: string, status: MessageState): string {
+	const delivered = status === 'DELIVERED';
+
+	return [
+		`id:${smsId}`,
+		'sub:001',
+		`dlvrd:${delivered ? '001' : '000'}`,
+		`submit date:${smppDate(sms.submitTime)}`,
+		`done date:${smppDate(new Date())}`,
+		`stat:${receiptCodes[status]}`,
+		`err:${delivered ? '000' : '001'}`,
+		'text:',
+	].join(' ');
+}
+
+function receiptTlvs(smsId: string, status: MessageState): Record<string, TlvInput> {
+	return {
+		message_state: { tagValue: consts.MESSAGE_STATE[status] },
+		receipted_message_id: { tagValue: smsId },
+	};
+}
+
 async function sendDlr(
 	sms: Sms,
 	status: MessageState = 'DELIVERED',
 ): Promise<Result<{ pduObjs: PduObject[] }>> {
-	const statusId = consts.MESSAGE_STATE[status];
 	const total = sms.pduObjs.length;
 	const pduObjs: PduObject[] = [];
 
 	for (let index = 0; index < total; index++) {
 		const smsId = segmentId(sms.smsId, index, total);
-		const delivered = status === 'DELIVERED';
-		const message = [
-			`id:${smsId}`,
-			'sub:001',
-			`dlvrd:${delivered ? '001' : '000'}`,
-			`submit date:${smppDate(sms.submitTime)}`,
-			`done date:${smppDate(new Date())}`,
-			`stat:${receiptCodes[status]}`,
-			`err:${delivered ? '000' : '001'}`,
-			'text:',
-		].join(' ');
-
 		const sent = await sms.session.send({
 			cmdName: 'deliver_sm',
 			params: {
 				destination_addr: sms.from,
 				esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
-				short_message: message,
+				short_message: receiptText(sms, smsId, status),
 				source_addr: sms.to,
 			},
-			tlvs: {
-				message_state: { tagId: 0x0427, tagName: 'message_state', tagValue: statusId },
-				receipted_message_id: {
-					tagId: 0x001E,
-					tagName: 'receipted_message_id',
-					tagValue: smsId,
-				},
-			},
+			...(sms.session.acceptsOptionalParams() ? { tlvs: receiptTlvs(smsId, status) } : {}),
 		});
 
 		if (sent.err) return { err: sent.err };

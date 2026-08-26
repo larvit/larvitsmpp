@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import test, { describe } from 'node:test';
-import type { PduObject } from '../src/pdu.ts';
+import type { PduObject, PduObjectInput } from '../src/pdu.ts';
 import type { Session } from '../src/session.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
+import { PduFramer } from '../src/pdu-framer.ts';
 import { client } from '../src/client.ts';
 import { isCommand, objToPdu, pduToObj } from '../src/pdu.ts';
+import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
 
 async function startServer(options: Parameters<typeof server>[0] = {}): Promise<SmppServer> {
@@ -26,28 +28,73 @@ function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
 	return new Promise<T>(resolve => { register(resolve); });
 }
 
-/** Binds off a raw socket, which is the only way to declare a version the client cannot. */
-async function bindRaw(smpp: SmppServer, interfaceVersion: number): Promise<PduObject> {
-	const { buffer } = objToPdu({
+type RawPeer = {
+	close: () => void;
+	/** The next PDU the server sends, queued so none is missed between reads. */
+	next: () => Promise<PduObject>;
+	write: (input: PduObjectInput) => void;
+};
+
+/** A peer driven PDU by PDU, which is the only way to say things the client never says. */
+function rawPeer(port: number): RawPeer {
+	const framer = new PduFramer();
+	const queue: PduObject[] = [];
+	const waiting: ((pduObj: PduObject) => void)[] = [];
+	const sock = net.connect({ port });
+
+	sock.on('data', chunk => {
+		framer.push(chunk);
+
+		const { pdus } = framer.next();
+
+		for (const pdu of pdus ?? []) {
+			const { pduObj } = pduToObj(pdu);
+
+			if (!pduObj) continue;
+
+			const next = waiting.shift();
+
+			if (next) next(pduObj);
+			else queue.push(pduObj);
+		}
+	});
+
+	return {
+		close: () => { sock.destroy(); },
+		next: () => {
+			const queued = queue.shift();
+
+			return queued
+				? Promise.resolve(queued)
+				: once<PduObject>(resolve => waiting.push(resolve));
+		},
+		write: input => {
+			const { buffer } = objToPdu(input);
+
+			assert.ok(buffer);
+			sock.write(buffer);
+		},
+	};
+}
+
+function bindOf(interfaceVersion: number, seqNr = 1): PduObjectInput {
+	return {
 		cmdName: 'bind_transceiver',
 		params: { interface_version: interfaceVersion, password: 'pass', system_id: 'user' },
-	});
+		seqNr,
+	};
+}
 
-	assert.ok(buffer);
+async function bindRaw(smpp: SmppServer, interfaceVersion: number): Promise<PduObject> {
+	const peer = rawPeer(smpp.port);
 
-	const sock = net.connect({ port: smpp.port });
-	const response = await once<Buffer>(resolve => {
-		sock.on('connect', () => { sock.write(buffer); });
-		sock.once('data', resolve);
-	});
+	peer.write(bindOf(interfaceVersion));
 
-	sock.destroy();
+	const response = await peer.next();
 
-	const { pduObj } = pduToObj(response);
+	peer.close();
 
-	assert.ok(pduObj);
-
-	return pduObj;
+	return response;
 }
 
 describe('bind', () => {
@@ -161,6 +208,41 @@ describe('bind', () => {
 		await smpp.close();
 	});
 
+	test('advertises the version the server is configured with', async () => {
+		const smpp = await startServer({ interfaceVersion: 0x50 });
+		const asThreeFour = await bindRaw(smpp, 0x34);
+
+		assert.equal(asThreeFour.tlvs.sc_interface_version?.tagValue, 0x50);
+
+		// The threshold for sending optional parameters is 3.4 whatever the server advertises.
+		const asThreeThree = await bindRaw(smpp, 0x33);
+
+		assert.deepEqual(asThreeThree.tlvs, {});
+
+		await smpp.close();
+	});
+
+	test('answers a bind with its own system_id, not the one the ESME sent', async () => {
+		const anonymous = await startServer();
+		const named = await startServer({ systemId: 'the-smsc' });
+
+		assert.equal((await bindRaw(anonymous, 0x34)).params.system_id, '');
+		assert.equal((await bindRaw(named, 0x34)).params.system_id, 'the-smsc');
+
+		await anonymous.close();
+		await named.close();
+	});
+
+	test('answers a refused bind with its own system_id too', async () => {
+		const smpp = await startServer({ authenticate: () => false, systemId: 'the-smsc' });
+		const refused = await bindRaw(smpp, 0x34);
+
+		assert.equal(refused.cmdStatus, 'ESME_RBINDFAIL');
+		assert.equal(refused.params.system_id, 'the-smsc');
+
+		await smpp.close();
+	});
+
 	test('sends no optional parameters to a peer declaring less than 3.4', async () => {
 		const smpp = await startServer();
 		const bound = await bindRaw(smpp, 0x00);
@@ -168,6 +250,23 @@ describe('bind', () => {
 		assert.equal(bound.cmdStatus, 'ESME_ROK');
 		assert.deepEqual(bound.tlvs, {});
 
+		await smpp.close();
+	});
+
+	test('answers a second bind with ESME_RALYBND and its own system_id', async () => {
+		const smpp = await startServer({ systemId: 'the-smsc' });
+		const peer = rawPeer(smpp.port);
+
+		peer.write(bindOf(0x34));
+		await peer.next();
+		peer.write(bindOf(0x34, 2));
+
+		const again = await peer.next();
+
+		assert.equal(again.cmdStatus, 'ESME_RALYBND');
+		assert.equal(again.params.system_id, 'the-smsc');
+
+		peer.close();
 		await smpp.close();
 	});
 });
@@ -302,8 +401,8 @@ describe('delivery reports', () => {
 
 		assert.ok(session);
 
-		const dlr = once<{ smsId: string; statusMsg: string }>(resolve => {
-			session.on('dlr', resolve);
+		const dlr = once<[{ smsId: string; statusMsg: string }, PduObject]>(resolve => {
+			session.on('dlr', (report, pduObj) => { resolve([report, pduObj]); });
 		});
 
 		const [sms] = await Promise.all([
@@ -319,10 +418,12 @@ describe('delivery reports', () => {
 		assert.ok(sms.dlr);
 		await sms.sendDlr();
 
-		const report = await dlr;
+		const [report, receipt] = await dlr;
 
 		assert.equal(report.smsId, 'dlr-id');
 		assert.equal(report.statusMsg, 'DELIVERED');
+		assert.equal(receipt.tlvs.receipted_message_id?.tagValue, 'dlr-id');
+		assert.equal(receipt.tlvs.message_state?.tagValue, 2);
 
 		session.close();
 		await smpp.close();
@@ -363,6 +464,46 @@ describe('delivery reports', () => {
 		assert.match(await raw, /stat:UNDELIV /);
 
 		session.close();
+		await smpp.close();
+	});
+
+	test('sends a text-only receipt to a peer that declared less than 3.4', async () => {
+		const smpp = await startServer();
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', session => session.on('sms', resolve));
+		});
+		const peer = rawPeer(smpp.port);
+
+		peer.write(bindOf(0x33));
+		await peer.next();
+		peer.write({
+			cmdName: 'submit_sm',
+			params: {
+				data_coding: 0,
+				destination_addr: '46709771337',
+				registered_delivery: 1,
+				short_message: 'hi',
+				sm_length: 2,
+				source_addr: '46701113311',
+			},
+			seqNr: 2,
+		});
+
+		const sms = await incoming;
+
+		await sms.sendResp();
+		await peer.next();
+
+		// A raw peer answers no deliver_sm, so this only settles once the session closes.
+		void sms.sendDlr();
+
+		const receipt = await peer.next();
+
+		assert.equal(receipt.cmdName, 'deliver_sm');
+		assert.deepEqual(receipt.tlvs, {});
+		assert.match(paramText(receipt.params.short_message), /stat:DELIVRD/);
+
+		peer.close();
 		await smpp.close();
 	});
 });

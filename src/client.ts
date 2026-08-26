@@ -5,6 +5,7 @@ import type { Socket } from 'node:net';
 import { Session } from './session.ts';
 import { connect as netConnect } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
+import { defaultInterfaceVersion } from './defs/constants.ts';
 import { silentLog } from './log.ts';
 
 export type BindType = 'receiver' | 'transceiver' | 'transmitter';
@@ -33,8 +34,7 @@ const defaults = {
 	bindType: 'transceiver',
 	enquireLinkInterval: 20_000,
 	host: 'localhost',
-	/** SMPP 3.4. The 3.4 spec reserves every value above it, so 0x50 is undefined to a 3.4 SMSC. */
-	interfaceVersion: 0x34,
+	interfaceVersion: defaultInterfaceVersion,
 	password: 'pass',
 	port: 2775,
 	username: 'user',
@@ -45,9 +45,12 @@ const defaults = {
  * handshake, so those connections were not encrypted at all.
  */
 function openSocket(options: ClientOptions): Promise<Result<{ sock: Socket }>> {
+	const host = options.host ?? defaults.host;
+	const port = options.port ?? defaults.port;
+	const secure = options.tls !== undefined && options.tls !== false;
+	const tlsOptions = typeof options.tls === 'object' ? options.tls : undefined;
+
 	return new Promise(resolve => {
-		const host = options.host ?? defaults.host;
-		const port = options.port ?? defaults.port;
 		const signal = options.signal;
 
 		if (signal?.aborted === true) {
@@ -56,13 +59,7 @@ function openSocket(options: ClientOptions): Promise<Result<{ sock: Socket }>> {
 			return;
 		}
 
-		const sock = options.tls === undefined || options.tls === false
-			? netConnect({ host, port })
-			: tlsConnect({
-				host,
-				port,
-				...(typeof options.tls === 'object' ? options.tls : {}),
-			});
+		const sock = secure ? tlsConnect({ host, port, ...tlsOptions }) : netConnect({ host, port });
 
 		const settle = (result: Result<{ sock: Socket }>): void => {
 			sock.removeListener('error', onError);
@@ -81,10 +78,22 @@ function openSocket(options: ClientOptions): Promise<Result<{ sock: Socket }>> {
 
 		sock.once('error', onError);
 		signal?.addEventListener('abort', onAbort, { once: true });
-		sock.once(options.tls === undefined || options.tls === false ? 'connect' : 'secureConnect', () => {
+		sock.once(secure ? 'secureConnect' : 'connect', () => {
 			settle({ sock });
 		});
 	});
+}
+
+function bindParams(options: ClientOptions, systemId: string) {
+	return {
+		address_range: options.addressRange ?? '',
+		addr_npi: options.addrNpi ?? 0,
+		addr_ton: options.addrTon ?? 0,
+		interface_version: options.interfaceVersion ?? defaults.interfaceVersion,
+		password: options.password ?? defaults.password,
+		system_id: systemId,
+		system_type: options.systemType ?? '',
+	};
 }
 
 async function bind(session: Session, options: ClientOptions): Promise<VoidResult> {
@@ -92,15 +101,7 @@ async function bind(session: Session, options: ClientOptions): Promise<VoidResul
 	const systemId = options.username ?? defaults.username;
 	const sent = await session.send({
 		cmdName: `bind_${bindType}`,
-		params: {
-			address_range: options.addressRange ?? '',
-			addr_npi: options.addrNpi ?? 0,
-			addr_ton: options.addrTon ?? 0,
-			interface_version: options.interfaceVersion ?? defaults.interfaceVersion,
-			password: options.password ?? defaults.password,
-			system_id: systemId,
-			system_type: options.systemType ?? '',
-		},
+		params: bindParams(options, systemId),
 		...(options.signal ? { signal: options.signal } : {}),
 	});
 

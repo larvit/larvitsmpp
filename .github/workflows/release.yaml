@@ -19,6 +19,14 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - run: npm ci
+      - name: The tag must match the version being published
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          packaged="$(node -p 'require("./package.json").version')"
+          test "$tagged" = "$packaged" || {
+            echo "tag $GITHUB_REF_NAME does not match package.json $packaged"
+            exit 1
+          }
       - run: npm run lint
       - run: npm test
       - run: npm publish --provenance --access public

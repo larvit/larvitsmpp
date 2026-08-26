@@ -195,22 +195,90 @@ describe('TLVs', () => {
 			},
 			seqNr: 393,
 			tlvs: {
-				5142: { tagId: 5142, tagName: 'Nils', tagValue: Buffer.from('blajfoo', 'ascii') },
-				receipted_message_id: {
-					tagId: 0x001E,
-					tagName: 'receipted_message_id',
-					tagValue: '293f293',
-				},
+				5142: { tagId: 5142, tagValue: Buffer.from('blajfoo', 'ascii') },
+				receipted_message_id: { tagValue: '293f293' },
 			},
 		}));
 
 		assert.equal(pduObj.tlvs.receipted_message_id?.tagValue, '293f293');
-		assert.equal(pduObj.tlvs['5142']?.tagName, undefined);
 
-		const unknown = pduObj.tlvs['5142']?.tagValue;
+		const unknown = pduObj.tlvs['5142'];
 
-		assert.equal(typeof unknown, 'string');
-		assert.equal(Buffer.from(typeof unknown === 'string' ? unknown : '', 'hex').toString('ascii'), 'blajfoo');
+		assert.ok(unknown);
+		assert.equal(unknown.tagName, undefined);
+		assert.deepEqual(unknown.tagValue, Buffer.from('blajfoo', 'ascii'));
+	});
+
+	test('keeps a binary TLV byte for byte through pduToObj and back', () => {
+		const payload = Buffer.from('deadbeef00ff', 'hex');
+		const params = {
+			destination_addr: '46709771337',
+			esm_class: 4,
+			short_message: 'binary payload follows',
+			source_addr: '46701113311',
+		};
+		const parsed = decode(encode({
+			cmdName: 'deliver_sm',
+			params,
+			seqNr: 7,
+			tlvs: { message_payload: { tagValue: payload } },
+		}));
+		const carried = parsed.tlvs.message_payload;
+
+		assert.ok(carried);
+		assert.deepEqual(carried.tagValue, payload);
+
+		const rebuilt = decode(encode({
+			cmdName: 'deliver_sm',
+			params,
+			seqNr: 7,
+			tlvs: { message_payload: { tagValue: carried.tagValue } },
+		}));
+
+		assert.deepEqual(rebuilt.tlvs.message_payload?.tagValue, payload);
+	});
+
+	test('takes the tag id from the record key when the caller gives none', () => {
+		const pduObj = decode(encode({
+			cmdName: 'deliver_sm',
+			params: { destination_addr: '46709771337', short_message: 'hi', source_addr: '46701113311' },
+			seqNr: 11,
+			tlvs: { message_state: { tagValue: 6 }, source_port: { tagValue: 1234 } },
+		}));
+
+		assert.deepEqual(pduObj.tlvs.message_state, { tagId: 0x0427, tagName: 'message_state', tagValue: 6 });
+		assert.deepEqual(pduObj.tlvs.source_port, { tagId: 0x020A, tagName: 'source_port', tagValue: 1234 });
+	});
+
+	test('refuses an unknown tag name rather than putting a wrong tag on the wire', () => {
+		const { buffer, err } = objToPdu({
+			cmdName: 'deliver_sm',
+			params: { destination_addr: '46709771337', short_message: 'hi', source_addr: '46701113311' },
+			tlvs: { nils: { tagValue: 'blajfoo' } },
+		});
+
+		assert.equal(buffer, undefined);
+		assert.ok(err instanceof Error);
+	});
+
+	test('refuses a tag id that does not fit the two octet field', () => {
+		const { err } = objToPdu({
+			cmdName: 'deliver_sm',
+			params: { destination_addr: '46709771337', short_message: 'hi', source_addr: '46701113311' },
+			tlvs: { nils: { tagId: 0x10000, tagValue: 'blajfoo' } },
+		});
+
+		assert.ok(err instanceof Error);
+	});
+
+	test('refuses a TLV too long for the two octet length field', () => {
+		const { err } = objToPdu({
+			cmdName: 'deliver_sm',
+			params: { destination_addr: '46709771337', short_message: 'hi', source_addr: '46701113311' },
+			tlvs: { message_payload: { tagValue: Buffer.alloc(0x10000) } },
+		});
+
+		assert.ok(err instanceof Error);
 	});
 
 	test('round-trips a receipt with message_state and receipted_message_id', () => {
@@ -225,8 +293,8 @@ describe('TLVs', () => {
 			},
 			seqNr: 323,
 			tlvs: {
-				message_state: { tagId: 1063, tagName: 'message_state', tagValue: 2 },
-				receipted_message_id: { tagId: 30, tagName: 'receipted_message_id', tagValue: 450 },
+				message_state: { tagId: 1063, tagValue: 2 },
+				receipted_message_id: { tagId: 30, tagValue: 450 },
 			},
 		}));
 

@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import test, { describe } from 'node:test';
 import type { MessageDlr } from '../src/session.ts';
+import type { PduObject } from '../src/pdu.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
+import { Reassembler } from '../src/reassembly.ts';
 import { client } from '../src/client.ts';
-import { objToPdu } from '../src/pdu.ts';
 import { server } from '../src/server.ts';
+import { silentLog } from '../src/log.ts';
 
 async function startServer(options: Parameters<typeof server>[0] = {}): Promise<SmppServer> {
 	const { err, server: smpp } = await server({ ...options, port: 0 });
@@ -171,95 +173,77 @@ describe('reconnect', () => {
 });
 
 describe('reassembly bounds', () => {
-	function segment(reference: number, part: number, total: number, seqNr: number): Buffer {
-		const body = Buffer.concat([
-			Buffer.from([0x05, 0x00, 0x03, reference, total, part]),
-			Buffer.from('fragment'),
-		]);
-		const { buffer } = objToPdu({
+	function segment(reference: number, part: number, total: number): PduObject {
+		const udh = Buffer.from([0x05, 0x00, 0x03, reference, total, part]);
+
+		return {
+			cmdId: 0x00000004,
+			cmdLength: 0,
 			cmdName: 'submit_sm',
+			cmdStatus: 'ESME_ROK',
+			cmdStatusId: 0,
 			params: {
 				data_coding: 0,
 				destination_addr: '46709771337',
 				esm_class: 0x40,
-				short_message: body,
-				sm_length: body.length,
+				short_message: Buffer.concat([udh, Buffer.from('fragment')]),
 				source_addr: '46701113311',
 			},
-			seqNr,
-		});
-
-		assert.ok(buffer);
-
-		return buffer;
+			seqNr: part,
+			tlvs: {},
+		};
 	}
 
-	// 0.4.0 held incomplete groups without limit and swept them only when other traffic arrived.
-	test('drops the oldest incomplete message once the cap is reached', async () => {
-		const smpp = await startServer({ maxReassembly: 2, reassemblyTimeout: 60_000 });
+	function collect(
+		reassembler: Reassembler,
+		reference: number,
+		part: number,
+		total: number,
+	): PduObject[] | undefined {
+		return reassembler.collect(segment(reference, part, total), { part, reference, total });
+	}
 
-		let delivered = 0;
+	test('hands back every segment in order once the last one arrives', () => {
+		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
 
-		smpp.on('session', session => session.on('sms', () => { delivered++; }));
+		assert.equal(collect(reassembler, 4, 2, 3), undefined);
+		assert.equal(collect(reassembler, 4, 3, 3), undefined);
 
-		const sock = net.connect({ port: smpp.port }, () => {
-			sock.write(Buffer.from('0000002100000009000000000000002f666f6f0062617200736d70700034000000', 'hex'));
-		});
+		const whole = collect(reassembler, 4, 1, 3);
 
-		let bound = false;
-
-		sock.on('data', () => {
-			if (bound) return;
-
-			bound = true;
-
-			// Three different messages, each only ever sending part 1 of 2.
-			sock.write(segment(1, 1, 2, 10));
-			sock.write(segment(2, 1, 2, 11));
-			sock.write(segment(3, 1, 2, 12));
-			// Completing the first one must not produce a message: it was evicted.
-			sock.write(segment(1, 2, 2, 13));
-		});
-
-		await new Promise(resolve => setTimeout(resolve, 200));
-
-		assert.equal(delivered, 0, 'an evicted message must not be delivered');
-
-		sock.destroy();
-		await smpp.close();
+		assert.ok(whole);
+		assert.deepEqual(whole.map(pduObj => pduObj.seqNr), [1, 2, 3]);
+		assert.equal(reassembler.size, 0);
 	});
 
-	test('expires an incomplete message on its own timer', async () => {
-		const smpp = await startServer({ reassemblyTimeout: 60 });
+	// 0.4.0 held incomplete groups without limit and swept them only when other traffic arrived.
+	test('drops the oldest incomplete message once the cap is reached', () => {
+		const reassembler = new Reassembler({ log: silentLog, max: 2, now: () => 0, timeout: 60_000 });
 
-		let delivered = 0;
+		for (const reference of [1, 2, 3]) {
+			assert.equal(collect(reassembler, reference, 1, 2), undefined);
+		}
 
-		smpp.on('session', session => session.on('sms', () => { delivered++; }));
+		// Completing the first one must not produce a message: it was evicted.
+		assert.equal(collect(reassembler, 1, 2, 2), undefined);
+		assert.equal(reassembler.size, 2);
 
-		const sock = net.connect({ port: smpp.port }, () => {
-			sock.write(Buffer.from('0000002100000009000000000000002f666f6f0062617200736d70700034000000', 'hex'));
-		});
+		reassembler.clear();
+	});
 
-		let bound = false;
+	test('expires an incomplete message once its timeout has passed', () => {
+		let now = 0;
+		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => now, timeout: 60 });
 
-		sock.on('data', () => {
-			if (bound) return;
+		assert.equal(collect(reassembler, 9, 1, 2), undefined);
 
-			bound = true;
-			sock.write(segment(9, 1, 2, 20));
-		});
-
-		await new Promise(resolve => setTimeout(resolve, 200));
+		now = 61;
 
 		// The other half arrives after the group expired, so it starts a new, still-incomplete one.
-		sock.write(segment(9, 2, 2, 21));
+		assert.equal(collect(reassembler, 9, 2, 2), undefined);
+		assert.equal(reassembler.size, 1);
 
-		await new Promise(resolve => setTimeout(resolve, 100));
-
-		assert.equal(delivered, 0);
-
-		sock.destroy();
-		await smpp.close();
+		reassembler.clear();
 	});
 });
 

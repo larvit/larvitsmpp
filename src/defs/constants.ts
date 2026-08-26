@@ -1,3 +1,9 @@
+/** The version declared on the wire. The tables below cover 5.0, which is a superset of it. */
+export const defaultInterfaceVersion = 0x34;
+
+/** Spec rule, not a preference: a peer declaring less than 3.4 is sent no optional parameters. */
+export const optionalParamsMinVersion = 0x34;
+
 export const consts = {
 	BROADCAST_AREA_FORMAT: {
 		ALIAS: 0x00,

@@ -35,21 +35,33 @@ These are not preferences. Breaking one is a defect.
 
 ```
 src/
-	index.ts          Public surface. Named exports only, no default export.
-	client.ts         client() -> { err, session }
-	server.ts         server() -> { err, server }, server owns the listener + close()
-	session.ts        Session: framing, sequence numbers, the send window, events
-	sms.ts            The live handle emitted as the 'sms' event (sendResp/sendDlr)
-	message.ts        Encoding detection, splitting, bit counting, SMPP date formatting
-	pdu.ts            pduToObj / objToPdu / pduReturn — synchronous, result-returning
-	result.ts         Result<T> — the shape every fallible call returns
+	index.ts             Public surface. Named exports only, no default export.
+	client.ts            client() -> { err, session }
+	server.ts            server() -> { err, server }, server owns the listener + close()
+	session.ts           Session: dispatch, events, and the collaborators below
+	sms.ts               The live handle emitted as the 'sms' event (sendResp/sendDlr)
+	dlr.ts               Delivery receipts: text and TLV parsing, receipt status codes
+	dlr-merger.ts        DlrMerger: per-segment receipts counted into one MessageDlr
+	link-timers.ts       LinkTimers: the enquire_link heartbeat and the idle timeout
+	log.ts               silentLog — the default when the application passes none
+	message.ts           Encoding detection, splitting, bit counting, SMPP date formatting
+	pdu.ts               pduToObj / objToPdu / pduReturn — synchronous, result-returning
+	pdu-framer.ts        PduFramer: a byte stream cut into complete PDUs
+	pending-requests.ts  PendingRequests: sequence numbers, correlation, timeout, abort
+	reassembly.ts        Reassembler: capped, expiring multipart groups
+	reconnect-loop.ts    ReconnectLoop: backoff, retry timer, stopped-ness
+	result.ts            Result<T> — the shape every fallible call returns
+	send-sms.ts          submitSms composition and the submitSmParams builder
+	send-window.ts       SendWindow: the maxOutstanding semaphore
+	udh.ts               User data header: the concatenation fields of a long SMS
+	uuid.ts              uuidv7() — the ids the library generates for messages
 	defs/
-		commands.ts   The 33 commands, their ids and ordered parameter lists
-		constants.ts  consts + constsById (TON, NPI, ENCODING, MESSAGE_STATE, …)
-		encodings.ts  GSM 03.38, LATIN1, UCS2, detection, data_coding resolution
-		errors.ts     errors + errorsById (ESME_*)
-		tlvs.ts       TLV definitions, tlvsById
-		types.ts      Wire types: int8/int16/int32/string/cstring/buffer/arrays
+		commands.ts      The 33 commands, their ids and ordered parameter lists
+		constants.ts     consts + constsById, and the SMPP version constants
+		encodings.ts     GSM 03.38, LATIN1, UCS2, detection, data_coding resolution
+		errors.ts        errors + errorsById (ESME_*)
+		tlvs.ts          TLV definitions, tlvsById
+		types.ts         Wire types: int8/int16/int32/string/cstring/buffer/arrays
 ```
 
 Dependency direction is one way: `defs` knows nothing above it, `pdu` uses `defs`, `session` uses
@@ -142,6 +154,12 @@ exactly 140.
 
 ## Decisions
 
+- **The library speaks SMPP 3.4 on the wire, and `defs/` keeps the 5.0 tables as a superset.**
+  Maintainer's call, 2026-08-26: 3.4 is what SMSCs actually run, while the wider tables let the codec
+  parse and build whatever a peer sends. The declared version is an option on both `client()` and
+  `server()`, so an implementation that needs 5.0 throughout can have it. The threshold at or above
+  which a peer may be sent optional parameters is fixed at 0x34 by the spec and is not the same
+  constant as the declared version.
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image
   `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI

@@ -1,25 +1,31 @@
 import type { Dlr } from './dlr.ts';
-import type { EncodingName } from './defs/encodings.ts';
 import type { ErrorName } from './defs/errors.ts';
 import type { LogInt } from '@larvit/log';
+import type { MessageDlr } from './dlr-merger.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
+import type { SendSmsOptions, SendSmsResult } from './send-sms.ts';
 import type { Sms } from './sms.ts';
 import type { Socket } from 'node:net';
+import { DlrMerger } from './dlr-merger.ts';
 import { EventEmitter } from 'node:events';
+import { LinkTimers } from './link-timers.ts';
 import { PduFramer } from './pdu-framer.ts';
+import { PendingRequests } from './pending-requests.ts';
+import { ReconnectLoop } from './reconnect-loop.ts';
+import { Reassembler, decodeSegments } from './reassembly.ts';
+import { SendWindow } from './send-window.ts';
 import { concatInfo } from './udh.ts';
-import { consts } from './defs/constants.ts';
+import { consts, optionalParamsMinVersion } from './defs/constants.ts';
 import { createSms } from './sms.ts';
-import { decodeMessage, smppTime, splitMessage } from './message.ts';
-import { detect } from './defs/encodings.ts';
 import { dlrFromPdu } from './dlr.ts';
-import { isResp, maxSeqNr, objToPdu, pduReturn, pduToObj } from './pdu.ts';
+import { isResp, objToPdu, pduReturn, pduToObj } from './pdu.ts';
 import { paramText } from './defs/types.ts';
 import { silentLog } from './log.ts';
+import { submitSms } from './send-sms.ts';
 
-export type MessageDlr = Dlr & { segments: Dlr[] };
+export type { MessageDlr, SendSmsOptions };
 
 export type SessionEvents = {
 	close: [];
@@ -46,21 +52,6 @@ export type ReconnectOptions = {
 	onConnected: (session: Session) => Promise<VoidResult>;
 };
 
-export type SendSmsOptions = {
-	dlr?: boolean;
-	destinationAddrNpi?: number;
-	destinationAddrTon?: number;
-	encoding?: EncodingName;
-	flash?: boolean;
-	from: string;
-	message: string;
-	scheduleDeliveryTime?: Date | number | string;
-	sourceAddrNpi?: number;
-	sourceAddrTon?: number;
-	to: string;
-	validityPeriod?: Date | number | string;
-};
-
 export type SessionOptions = {
 	enquireLinkInterval?: number | undefined;
 	idleTimeout?: number | undefined;
@@ -77,16 +68,8 @@ export type SessionOptions = {
 	reconnect?: ReconnectOptions | undefined;
 	responseTimeout?: number | undefined;
 	sock: Socket;
-};
-
-type Pending = {
-	settle: (result: Result<{ pduObj: PduObject }>) => void;
-};
-
-type Reassembly = {
-	parts: Map<number, PduObject>;
-	timer: NodeJS.Timeout;
-	total: number;
+	/** This end's own identity, answered to the peer in place of the one it sent. */
+	systemId?: string | undefined;
 };
 
 const defaults = {
@@ -96,19 +79,14 @@ const defaults = {
 	minDelay: 1000,
 	reassemblyTimeout: 300_000,
 	responseTimeout: 30_000,
+	systemId: '',
 };
 
-/** Alphanumeric senders must be TON 5; 0.4.0 sent everything as TON 1 (international). */
-function addressTon(address: string): number {
-	return /^\+?\d+$/.test(address) ? consts.TON.INTERNATIONAL : consts.TON.ALPHANUMERIC;
-}
-
-function dataCodingFor(encoding: EncodingName, flash: boolean): number {
-	if (!flash) return consts.ENCODING[encoding];
-
-	// Message class present (0x10) plus the alphabet bits, so flash survives UCS2.
-	return encoding === 'UCS2' ? 0x18 : 0x10;
-}
+export const bindCommands: readonly string[] = [
+	'bind_receiver',
+	'bind_transceiver',
+	'bind_transmitter',
+];
 
 export class Session extends EventEmitter<SessionEvents> {
 	/** Replaced on reconnect, so hold the session rather than this. */
@@ -116,50 +94,52 @@ export class Session extends EventEmitter<SessionEvents> {
 	readonly log: LogInt;
 
 	loggedIn = false;
+	/** The interface_version the peer declared when binding; undefined until a bind is accepted. */
+	peerInterfaceVersion: number | undefined = undefined;
 	userData: unknown = undefined;
 
-	private framer = new PduFramer();
+	private readonly dlrMerger = new DlrMerger();
 	private readonly options: SessionOptions;
-	private readonly pending = new Map<number, Pending>();
-	private readonly reassembly = new Map<string, Reassembly>();
-	private readonly segmentDlrs = new Map<string, { expected: number; parts: Map<number, Dlr> }>();
-	private readonly waiting: (() => void)[] = [];
+	private readonly pending: PendingRequests;
+	private readonly reassembler: Reassembler;
+	private readonly reconnectLoop: ReconnectLoop | undefined;
+	private readonly timers: LinkTimers;
+	private readonly window: SendWindow;
 
 	private closed = false;
 	private concatReference = 0;
-	private enquireLinkTimer: NodeJS.Timeout | undefined;
-	private idleTimer: NodeJS.Timeout | undefined;
-	private inFlight = 0;
-	private ourSeqNr = 1;
-	private reconnectDelay: number;
-	private reconnectTimer: NodeJS.Timeout | undefined;
-	private stopped = false;
+	private framer = new PduFramer();
 
 	constructor(options: SessionOptions) {
 		super();
 
-		this.options = options;
 		this.log = options.log ?? silentLog;
+		this.options = options;
+		this.pending = new PendingRequests(this.log);
+		this.reassembler = new Reassembler({
+			log: this.log,
+			max: options.maxReassembly ?? defaults.maxReassembly,
+			timeout: options.reassemblyTimeout ?? defaults.reassemblyTimeout,
+		});
+		this.reconnectLoop = this.loopFor(options.reconnect);
 		this.sock = options.sock;
-		this.reconnectDelay = options.reconnect?.minDelay ?? defaults.minDelay;
+		this.timers = new LinkTimers({
+			enquireLinkInterval: options.enquireLinkInterval,
+			idleTimeout: options.idleTimeout,
+			log: this.log,
+			onEnquireLink: () => { void this.send({ cmdName: 'enquire_link' }); },
+			onIdle: () => { this.close(); },
+		});
+		this.window = new SendWindow(options.maxOutstanding ?? defaults.maxOutstanding);
 
 		this.attach(options.sock);
 		this.resetTimers();
 	}
 
-	/** Wires a freshly opened socket into this session, replacing any previous one. */
-	private attach(sock: Socket): void {
-		this.sock = sock;
-		this.framer = new PduFramer();
-		this.closed = false;
-
-		sock.on('data', chunk => { this.onData(chunk); });
-		sock.on('close', () => { this.onClose(); });
-		sock.on('error', err => {
-			this.log.warn('session - socket error', { message: err.message });
-			this.emit('sessionError', err);
-			this.onClose();
-		});
+	/** SMPP 3.4 forbids sending optional parameters to a peer that declared an older version. */
+	acceptsOptionalParams(): boolean {
+		return this.peerInterfaceVersion === undefined
+			|| this.peerInterfaceVersion >= optionalParamsMinVersion;
 	}
 
 	/** Sends a request and resolves with the peer's response. */
@@ -173,26 +153,12 @@ export class Session extends EventEmitter<SessionEvents> {
 
 		if (this.closed) return { err: new Error('Session is closed') };
 
-		await this.acquire();
+		await this.window.acquire();
 
 		try {
-			const seqNr = this.nextSeqNr();
-			const built = objToPdu({ ...input, seqNr });
-
-			if (built.err) return { err: built.err };
-
-			const response = this.awaitResponse(seqNr, options.signal);
-			const written = this.write(built.buffer);
-
-			if (written.err) {
-				this.settle(seqNr, { err: written.err });
-
-				return { err: written.err };
-			}
-
-			return await response;
+			return await this.request(input, options);
 		} finally {
-			this.release();
+			this.window.release();
 		}
 	}
 
@@ -210,57 +176,16 @@ export class Session extends EventEmitter<SessionEvents> {
 		return Promise.resolve(this.write(built.buffer));
 	}
 
-	async sendSms(
-		sms: SendSmsOptions,
-		options: SendOptions = {},
-	): Promise<Result<{ pduObjs: PduObject[]; smsIds: string[] }>> {
-		const encoding = sms.encoding ?? detect(sms.message);
-		const segments = splitMessage(sms.message, {
-			encoding,
+	async sendSms(sms: SendSmsOptions, options: SendOptions = {}): Promise<SendSmsResult> {
+		const sent = await submitSms({
+			log: this.log,
 			reference: this.nextConcatReference(),
-		});
-		const pduObjs: PduObject[] = [];
-		const smsIds: string[] = [];
+			send: input => this.send(input, options),
+		}, sms);
 
-		this.log.debug('sendSms() - sending', { encoding, segments: segments.length, to: sms.to });
+		if (!sent.err) this.dlrMerger.expect(sent.smsIds);
 
-		// Segments go out together rather than one-after-a-response: a receiver that waits for every
-		// segment before answering — this library's own server does — would otherwise deadlock.
-		const sent = await Promise.all(segments.map(segment => {
-			const params: Record<string, ParamValue> = {
-				data_coding: dataCodingFor(encoding, sms.flash === true),
-				destination_addr: sms.to,
-				dest_addr_npi: sms.destinationAddrNpi ?? 0,
-				dest_addr_ton: sms.destinationAddrTon ?? addressTon(sms.to),
-				short_message: segment,
-				sm_length: segment.length,
-				source_addr: sms.from,
-				source_addr_npi: sms.sourceAddrNpi ?? 0,
-				source_addr_ton: sms.sourceAddrTon ?? addressTon(sms.from),
-			};
-
-			if (segments.length > 1) params.esm_class = consts.ESM_CLASS.UDH_INDICATOR;
-			if (sms.dlr === true) params.registered_delivery = consts.REGISTERED_DELIVERY.FINAL;
-			if (sms.validityPeriod !== undefined) {
-				params.validity_period = smppTime.encode(sms.validityPeriod);
-			}
-			if (sms.scheduleDeliveryTime !== undefined) {
-				params.schedule_delivery_time = smppTime.encode(sms.scheduleDeliveryTime);
-			}
-
-			return this.send({ cmdName: 'submit_sm', params }, options);
-		}));
-
-		for (const one of sent) {
-			if (one.err) return { err: one.err };
-
-			pduObjs.push(one.pduObj);
-			smsIds.push(paramText(one.pduObj.params.message_id));
-		}
-
-		this.expectSegmentDlrs(smsIds);
-
-		return { pduObjs, smsIds };
+		return sent;
 	}
 
 	/** Unbinds politely, then closes. */
@@ -274,69 +199,97 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	/** Closes for good. A session closed this way never reconnects. */
 	close(): void {
-		this.stopped = true;
-
-		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-
-		this.reconnectTimer = undefined;
+		this.reconnectLoop?.stop();
 		this.teardown();
+	}
+
+	private loopFor(reconnect: ReconnectOptions | undefined): ReconnectLoop | undefined {
+		if (!reconnect) return undefined;
+
+		return new ReconnectLoop({
+			connect: reconnect.connect,
+			log: this.log,
+			maxDelay: reconnect.maxDelay ?? defaults.maxDelay,
+			minDelay: reconnect.minDelay ?? defaults.minDelay,
+			onConnected: sock => this.comeBackUp(sock, reconnect.onConnected),
+		});
+	}
+
+	private async comeBackUp(
+		sock: Socket,
+		bind: (session: Session) => Promise<VoidResult>,
+	): Promise<VoidResult> {
+		this.attach(sock);
+
+		const bound = await bind(this);
+
+		if (bound.err) {
+			this.teardown();
+
+			return { err: bound.err };
+		}
+
+		this.resetTimers();
+		this.log.info('session - reconnected');
+		this.emit('reconnected');
+
+		return {};
+	}
+
+	/** Wires a freshly opened socket into this session, replacing any previous one. */
+	private attach(sock: Socket): void {
+		this.sock = sock;
+		this.framer = new PduFramer();
+		this.closed = false;
+
+		sock.on('data', chunk => { this.onData(chunk); });
+		sock.on('close', () => { this.onClose(); });
+		sock.on('error', err => {
+			this.log.warn('session - socket error', { message: err.message });
+			this.emit('sessionError', err);
+			this.onClose();
+		});
+	}
+
+	private async request(
+		input: PduObjectInput,
+		options: SendOptions,
+	): Promise<Result<{ pduObj: PduObject }>> {
+		const seqNr = this.pending.nextSeqNr();
+		const built = objToPdu({ ...input, seqNr });
+
+		if (built.err) return { err: built.err };
+
+		const response = this.pending.wait(seqNr, {
+			signal: options.signal,
+			timeout: this.options.responseTimeout ?? defaults.responseTimeout,
+		});
+		const written = this.write(built.buffer);
+
+		if (written.err) {
+			this.pending.settle(seqNr, { err: written.err });
+
+			return { err: written.err };
+		}
+
+		return response;
 	}
 
 	private teardown(): void {
 		if (this.closed) return;
 
 		this.closed = true;
-		this.clearTimers();
-
-		for (const [seqNr] of this.pending) {
-			this.settle(seqNr, { err: new Error('Session closed before a response arrived') });
-		}
-
-		for (const group of this.reassembly.values()) {
-			clearTimeout(group.timer);
-		}
-
-		this.reassembly.clear();
+		this.timers.clear();
+		this.pending.settleAll(new Error('Session closed before a response arrived'));
+		this.reassembler.clear();
 		this.sock.destroy();
 		this.emit('close');
-	}
-
-	private nextSeqNr(): number {
-		const seqNr = this.ourSeqNr;
-
-		this.ourSeqNr = this.ourSeqNr >= maxSeqNr ? 1 : this.ourSeqNr + 1;
-
-		return seqNr;
 	}
 
 	private nextConcatReference(): number {
 		this.concatReference = this.concatReference >= 255 ? 1 : this.concatReference + 1;
 
 		return this.concatReference;
-	}
-
-	private async acquire(): Promise<void> {
-		const limit = this.options.maxOutstanding ?? defaults.maxOutstanding;
-
-		if (this.inFlight < limit) {
-			this.inFlight++;
-
-			return;
-		}
-
-		return new Promise<void>(resolve => this.waiting.push(resolve));
-	}
-
-	private release(): void {
-		const next = this.waiting.shift();
-
-		if (next) {
-			next();
-
-			return;
-		}
-
-		this.inFlight--;
 	}
 
 	private write(pdu: Buffer): VoidResult {
@@ -347,49 +300,6 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.sock.write(pdu);
 
 		return {};
-	}
-
-	private awaitResponse(
-		seqNr: number,
-		signal: AbortSignal | undefined,
-	): Promise<Result<{ pduObj: PduObject }>> {
-		return new Promise(resolve => {
-			const timeout = this.options.responseTimeout ?? defaults.responseTimeout;
-			let timer: NodeJS.Timeout | undefined;
-
-			const onAbort = (): void => {
-				this.settle(seqNr, { err: new Error('Aborted before a response arrived') });
-			};
-
-			const settle = (result: Result<{ pduObj: PduObject }>): void => {
-				if (timer) clearTimeout(timer);
-				signal?.removeEventListener('abort', onAbort);
-				this.pending.delete(seqNr);
-				resolve(result);
-			};
-
-			this.pending.set(seqNr, { settle });
-
-			if (signal?.aborted === true) {
-				settle({ err: new Error('Aborted before a response arrived') });
-
-				return;
-			}
-
-			signal?.addEventListener('abort', onAbort, { once: true });
-
-			if (timeout > 0) {
-				timer = setTimeout(() => {
-					this.log.warn('session - no response before the timeout', { seqNr, timeout });
-					this.settle(seqNr, { err: new Error(`No response to seqNr ${String(seqNr)}`) });
-				}, timeout);
-				timer.unref();
-			}
-		});
-	}
-
-	private settle(seqNr: number, result: Result<{ pduObj: PduObject }>): void {
-		this.pending.get(seqNr)?.settle(result);
 	}
 
 	private onData(chunk: Buffer): void {
@@ -408,35 +318,36 @@ export class Session extends EventEmitter<SessionEvents> {
 		}
 
 		for (const pdu of framed.pdus) {
-			this.emit('incomingPdu', pdu);
-
-			const parsed = pduToObj(pdu);
-
-			if (parsed.err) {
-				this.log.warn('session - could not parse an incoming PDU, closing', {
-					message: parsed.err.message,
-				});
-				this.emit('sessionError', parsed.err);
-				this.close();
-
-				return;
-			}
-
-			this.dispatch(parsed.pduObj);
+			if (!this.receive(pdu)) return;
 		}
+	}
+
+	/** False means the PDU could not be read and the session has been closed. */
+	private receive(pdu: Buffer): boolean {
+		this.emit('incomingPdu', pdu);
+
+		const parsed = pduToObj(pdu);
+
+		if (parsed.err) {
+			this.log.warn('session - could not parse an incoming PDU, closing', {
+				message: parsed.err.message,
+			});
+			this.emit('sessionError', parsed.err);
+			this.close();
+
+			return false;
+		}
+
+		this.dispatch(parsed.pduObj);
+
+		return true;
 	}
 
 	private dispatch(pduObj: PduObject): void {
 		if (isResp(pduObj)) {
-			const pending = this.pending.get(pduObj.seqNr);
-
-			if (!pending) {
+			if (!this.pending.deliver(pduObj)) {
 				this.log.debug('session - response with no matching request', { seqNr: pduObj.seqNr });
-
-				return;
 			}
-
-			pending.settle({ pduObj });
 
 			return;
 		}
@@ -450,27 +361,32 @@ export class Session extends EventEmitter<SessionEvents> {
 
 		if (onRequest && await onRequest(this, pduObj)) return;
 
-		if (pduObj.cmdName === 'enquire_link') {
-			await this.sendReturn(pduObj);
-
-			return;
+		switch (pduObj.cmdName) {
+			case 'deliver_sm':
+				await this.onDeliverSm(pduObj);
+				break;
+			case 'enquire_link':
+				await this.sendReturn(pduObj);
+				break;
+			case 'submit_sm':
+				this.onSubmitSm(pduObj);
+				break;
+			case 'unbind':
+				await this.sendReturn(pduObj);
+				this.close();
+				break;
+			default:
+				await this.unhandled(pduObj);
 		}
+	}
 
-		if (pduObj.cmdName === 'unbind') {
-			await this.sendReturn(pduObj);
-			this.close();
-
-			return;
-		}
-
-		if (pduObj.cmdName === 'submit_sm') {
-			this.onSubmitSm(pduObj);
-
-			return;
-		}
-
-		if (pduObj.cmdName === 'deliver_sm') {
-			await this.onDeliverSm(pduObj);
+	private async unhandled(pduObj: PduObject): Promise<void> {
+		if (bindCommands.includes(pduObj.cmdName)) {
+			this.log.info('session - bind on an already bound session', { cmdName: pduObj.cmdName });
+			// Explicit, or pduReturn's echo answers the peer with its own system_id instead of ours.
+			await this.sendReturn(pduObj, 'ESME_RALYBND', {
+				system_id: this.options.systemId ?? defaults.systemId,
+			});
 
 			return;
 		}
@@ -484,14 +400,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		const esmClass = pduObj.params.esm_class;
 		const hasUdh = typeof esmClass === 'number'
 			&& (esmClass & consts.ESM_CLASS.UDH_INDICATOR) === consts.ESM_CLASS.UDH_INDICATOR;
-
-		if (!hasUdh || !Buffer.isBuffer(message)) {
-			this.emitSms([pduObj]);
-
-			return;
-		}
-
-		const concat = concatInfo(message);
+		const concat = hasUdh && Buffer.isBuffer(message) ? concatInfo(message) : undefined;
 
 		if (!concat) {
 			this.emitSms([pduObj]);
@@ -499,66 +408,9 @@ export class Session extends EventEmitter<SessionEvents> {
 			return;
 		}
 
-		this.collectSegment(pduObj, concat);
-	}
+		const whole = this.reassembler.collect(pduObj, concat);
 
-	private collectSegment(
-		pduObj: PduObject,
-		concat: { part: number; reference: number; total: number },
-	): void {
-		const key = [
-			paramText(pduObj.params.source_addr),
-			paramText(pduObj.params.destination_addr),
-			String(concat.reference),
-		].join('_');
-
-		let group = this.reassembly.get(key);
-
-		if (!group) {
-			const limit = this.options.maxReassembly ?? defaults.maxReassembly;
-
-			if (this.reassembly.size >= limit) {
-				const oldest = this.reassembly.keys().next();
-
-				if (!oldest.done) {
-					this.log.warn('session - reassembly buffer full, dropping the oldest message', {
-						limit,
-					});
-					this.dropReassembly(oldest.value);
-				}
-			}
-
-			const timer = setTimeout(() => {
-				this.log.info('session - incomplete message expired', { key, total: concat.total });
-				this.dropReassembly(key);
-			}, this.options.reassemblyTimeout ?? defaults.reassemblyTimeout);
-
-			timer.unref();
-			group = { parts: new Map(), timer, total: concat.total };
-			this.reassembly.set(key, group);
-		}
-
-		group.parts.set(concat.part, pduObj);
-
-		if (group.parts.size < group.total) return;
-
-		clearTimeout(group.timer);
-		this.reassembly.delete(key);
-
-		const ordered = [...group.parts.entries()]
-			.sort(([a], [b]) => a - b)
-			.map(([, part]) => part);
-
-		this.emitSms(ordered);
-	}
-
-	private dropReassembly(key: string): void {
-		const group = this.reassembly.get(key);
-
-		if (!group) return;
-
-		clearTimeout(group.timer);
-		this.reassembly.delete(key);
+		if (whole) this.emitSms(whole);
 	}
 
 	private emitSms(pduObjs: PduObject[]): void {
@@ -566,25 +418,9 @@ export class Session extends EventEmitter<SessionEvents> {
 
 		if (!first) return;
 
-		let message = '';
-
-		for (const pduObj of pduObjs) {
-			const part = pduObj.params.short_message;
-			const dataCoding = pduObj.params.data_coding;
-			const esmClass = pduObj.params.esm_class;
-
-			message += Buffer.isBuffer(part)
-				? decodeMessage(
-					part,
-					typeof dataCoding === 'number' ? dataCoding : 0,
-					typeof esmClass === 'number' ? esmClass : 0,
-				).message
-				: paramText(part);
-		}
-
 		this.emit('sms', createSms({
 			from: paramText(first.params.source_addr),
-			message,
+			message: decodeSegments(pduObjs),
 			pduObjs,
 			session: this,
 			to: paramText(first.params.destination_addr),
@@ -602,158 +438,22 @@ export class Session extends EventEmitter<SessionEvents> {
 		}
 
 		this.emit('dlr', dlr, pduObj);
-		this.collectSegmentDlr(dlr);
+
+		const merged = this.dlrMerger.collect(dlr);
+
+		if (merged) this.emit('messageDlr', merged);
+
 		await this.sendReturn(pduObj);
-	}
-
-	/**
-	 * Registers a multipart message for merged reporting, but only when the peer numbered its ids
-	 * `<base>-<n>` off one base — the convention this library's own server follows. An SMSC that
-	 * hands out unrelated ids per segment cannot be merged, so no messageDlr is emitted for it.
-	 */
-	private expectSegmentDlrs(smsIds: string[]): void {
-		if (smsIds.length < 2) return;
-
-		const bases = new Set<string>();
-
-		for (const smsId of smsIds) {
-			const match = /^(.*)-(\d+)$/.exec(smsId);
-
-			if (!match?.[1]) return;
-
-			bases.add(match[1]);
-		}
-
-		if (bases.size !== 1) return;
-
-		for (const base of bases) {
-			this.segmentDlrs.set(base, { expected: smsIds.length, parts: new Map() });
-		}
-	}
-
-	/** Collects per-segment receipts and reports once on the whole message. */
-	private collectSegmentDlr(dlr: Dlr): void {
-		const match = /^(.*)-(\d+)$/.exec(dlr.smsId);
-		const base = match?.[1];
-		const part = match?.[2];
-
-		if (base === undefined || part === undefined) return;
-
-		const group = this.segmentDlrs.get(base);
-
-		if (!group) return;
-
-		group.parts.set(Number(part), dlr);
-
-		if (group.parts.size < group.expected) return;
-
-		this.segmentDlrs.delete(base);
-
-		const ordered = [...group.parts.entries()].sort(([a], [b]) => a - b).map(([, one]) => one);
-		const worst = ordered.reduce((carry, one) => (one.statusId > carry.statusId ? one : carry));
-
-		this.emit('messageDlr', { ...worst, segments: ordered, smsId: base });
 	}
 
 	private resetTimers(): void {
 		if (this.closed) return;
 
-		this.clearTimers();
-
-		const { enquireLinkInterval, idleTimeout } = this.options;
-
-		if (enquireLinkInterval !== undefined && enquireLinkInterval > 0) {
-			this.enquireLinkTimer = setTimeout(() => {
-				void this.send({ cmdName: 'enquire_link' });
-			}, enquireLinkInterval);
-			this.enquireLinkTimer.unref();
-		}
-
-		if (idleTimeout !== undefined && idleTimeout > 0) {
-			this.idleTimer = setTimeout(() => {
-				this.log.info('session - closing an idle peer', { idleTimeout });
-				this.close();
-			}, idleTimeout);
-			this.idleTimer.unref();
-		}
-	}
-
-	private clearTimers(): void {
-		if (this.enquireLinkTimer) clearTimeout(this.enquireLinkTimer);
-		if (this.idleTimer) clearTimeout(this.idleTimer);
-
-		this.enquireLinkTimer = undefined;
-		this.idleTimer = undefined;
+		this.timers.reset();
 	}
 
 	private onClose(): void {
 		this.teardown();
-
-		if (!this.stopped && this.options.reconnect) this.scheduleReconnect();
-	}
-
-	private scheduleReconnect(): void {
-		if (this.reconnectTimer) return;
-
-		const reconnect = this.options.reconnect;
-
-		if (!reconnect) return;
-
-		const delay = this.reconnectDelay;
-
-		this.log.info('session - reconnecting after a drop', { delay });
-
-		this.reconnectTimer = setTimeout(() => {
-			this.reconnectTimer = undefined;
-			void this.reconnect();
-		}, delay);
-		this.reconnectTimer.unref();
-
-		this.reconnectDelay = Math.min(delay * 2, reconnect.maxDelay ?? defaults.maxDelay);
-	}
-
-	/** Read through a method: close() can land while a reconnect is awaiting. */
-	private isStopped(): boolean {
-		return this.stopped;
-	}
-
-	private async reconnect(): Promise<void> {
-		const reconnect = this.options.reconnect;
-
-		if (!reconnect || this.isStopped()) return;
-
-		const opened = await reconnect.connect();
-
-		if (opened.err) {
-			this.log.warn('session - reconnect failed to open a socket', {
-				message: opened.err.message,
-			});
-			this.scheduleReconnect();
-
-			return;
-		}
-
-		if (this.isStopped()) {
-			opened.sock.destroy();
-
-			return;
-		}
-
-		this.attach(opened.sock);
-
-		const bound = await reconnect.onConnected(this);
-
-		if (bound.err) {
-			this.log.warn('session - reconnect failed to bind', { message: bound.err.message });
-			this.teardown();
-			this.scheduleReconnect();
-
-			return;
-		}
-
-		this.reconnectDelay = reconnect.minDelay ?? defaults.minDelay;
-		this.resetTimers();
-		this.log.info('session - reconnected');
-		this.emit('reconnected');
+		this.reconnectLoop?.schedule();
 	}
 }

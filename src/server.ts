@@ -4,12 +4,12 @@ import type { Result } from './result.ts';
 import type { Server as NetServer, Socket } from 'node:net';
 import type { Server as TlsServer, TlsOptions } from 'node:tls';
 import { EventEmitter } from 'node:events';
-import { Session } from './session.ts';
+import { Session, bindCommands } from './session.ts';
 import { createServer as createNetServer } from 'node:net';
 import { createServer as createTlsServer } from 'node:tls';
+import { defaultInterfaceVersion } from './defs/constants.ts';
 import { paramText } from './defs/types.ts';
 import { silentLog } from './log.ts';
-import { tlvs } from './defs/tlvs.ts';
 
 export type AuthenticateResult = { userData?: unknown } | boolean;
 
@@ -24,6 +24,7 @@ export type ServerOptions = {
 	authenticate?: (input: AuthenticateInput) => Promise<AuthenticateResult> | AuthenticateResult;
 	host?: string;
 	idleTimeout?: number;
+	interfaceVersion?: number;
 	log?: LogInt;
 	maxOutstanding?: number;
 	maxReassembly?: number;
@@ -31,6 +32,7 @@ export type ServerOptions = {
 	reassemblyTimeout?: number;
 	responseTimeout?: number;
 	signal?: AbortSignal;
+	systemId?: string;
 	tls?: TlsOptions | boolean;
 };
 
@@ -41,11 +43,10 @@ export type ServerEvents = {
 
 const defaults = {
 	idleTimeout: 40_000,
+	interfaceVersion: defaultInterfaceVersion,
 	port: 2775,
+	systemId: '',
 };
-
-const bindCommands = ['bind_receiver', 'bind_transceiver', 'bind_transmitter'];
-const scInterfaceVersion = 0x34;
 
 /** A listening SMPP server. Sessions arrive as `session` events; `close()` stops listening. */
 export class SmppServer extends EventEmitter<ServerEvents> {
@@ -102,23 +103,44 @@ async function authenticate(
 	return true;
 }
 
-/**
- * A peer that declared below 0x34 must not be sent optional parameters at all; above it, an ESME
- * reads a missing sc_interface_version as this SMSC having none.
- */
-function bindRespTlvs(pduObj: PduObject): Record<string, TlvInput> | undefined {
-	const declared = pduObj.params.interface_version;
-	const definition = tlvs.sc_interface_version;
-
-	if (!definition || typeof declared !== 'number' || declared < scInterfaceVersion) return undefined;
+/** An ESME reads a missing sc_interface_version as this SMSC having none. */
+function bindRespTlvs(session: Session, options: ServerOptions): Record<string, TlvInput> | undefined {
+	if (!session.acceptsOptionalParams()) return undefined;
 
 	return {
-		sc_interface_version: {
-			tagId: definition.id,
-			tagName: definition.tag,
-			tagValue: scInterfaceVersion,
-		},
+		sc_interface_version: { tagValue: options.interfaceVersion ?? defaults.interfaceVersion },
 	};
+}
+
+async function acceptBind(
+	session: Session,
+	pduObj: PduObject,
+	options: ServerOptions,
+	identity: Record<string, string>,
+): Promise<void> {
+	const declared = pduObj.params.interface_version;
+
+	session.loggedIn = true;
+	session.peerInterfaceVersion = typeof declared === 'number' ? declared : undefined;
+
+	await session.sendReturn(pduObj, 'ESME_ROK', identity, bindRespTlvs(session, options));
+}
+
+async function onBind(session: Session, pduObj: PduObject, options: ServerOptions): Promise<void> {
+	const log = options.log ?? silentLog;
+	// Explicit, or pduReturn's echo answers the ESME with its own system_id instead of ours.
+	const identity = { system_id: options.systemId ?? defaults.systemId };
+	const systemId = paramText(pduObj.params.system_id);
+
+	if (!await authenticate(session, pduObj, options)) {
+		log.info('server - bind refused', { systemId });
+		await session.sendReturn(pduObj, 'ESME_RBINDFAIL', identity);
+
+		return;
+	}
+
+	await acceptBind(session, pduObj, options, identity);
+	log.verbose('server - bound', { systemId });
 }
 
 /**
@@ -130,27 +152,18 @@ async function onRequest(
 	pduObj: PduObject,
 	options: ServerOptions,
 ): Promise<boolean> {
-	const log = options.log ?? silentLog;
-
 	if (session.loggedIn || pduObj.cmdName === 'unbind') return false;
 
 	if (!bindCommands.includes(pduObj.cmdName)) {
+		const log = options.log ?? silentLog;
+
 		log.debug('server - command before bind', { cmdName: pduObj.cmdName });
 		await session.sendReturn(pduObj, 'ESME_RINVBNDSTS');
 
 		return true;
 	}
 
-	if (!await authenticate(session, pduObj, options)) {
-		log.info('server - bind refused', { systemId: paramText(pduObj.params.system_id) });
-		await session.sendReturn(pduObj, 'ESME_RBINDFAIL');
-
-		return true;
-	}
-
-	session.loggedIn = true;
-	await session.sendReturn(pduObj, 'ESME_ROK', {}, bindRespTlvs(pduObj));
-	log.verbose('server - bound', { systemId: paramText(pduObj.params.system_id) });
+	await onBind(session, pduObj, options);
 
 	return true;
 }
@@ -166,6 +179,7 @@ function onConnection(sock: Socket, options: ServerOptions, server: SmppServer):
 		reassemblyTimeout: options.reassemblyTimeout,
 		responseTimeout: options.responseTimeout,
 		sock,
+		systemId: options.systemId ?? defaults.systemId,
 	});
 
 	server.sessions.add(session);
@@ -190,28 +204,58 @@ function createSecureListener(tlsOptions: TlsOptions, log: LogInt): TlsServer {
 	return listener;
 }
 
+function createListener(
+	options: ServerOptions,
+	log: LogInt,
+	port: number,
+): Result<{ listener: NetServer | TlsServer; useTls: boolean }> {
+	const useTls = options.tls !== undefined && options.tls !== false;
+	const tlsOptions = typeof options.tls === 'object' ? options.tls : undefined;
+
+	if (useTls && !tlsOptions) {
+		log.warn('server - tls without a certificate', { port });
+
+		return { err: new Error('Listening over TLS needs tls: { cert, key }') };
+	}
+
+	return {
+		listener: tlsOptions ? createSecureListener(tlsOptions, log) : createNetServer(),
+		useTls,
+	};
+}
+
+function onListening(listener: NetServer, smpp: SmppServer, options: ServerOptions): void {
+	const log = options.log ?? silentLog;
+
+	// Past startup, a listener error is a runtime event, not a failed start.
+	listener.on('error', (err: Error) => {
+		log.warn('server - error', { message: err.message });
+		smpp.emit('serverError', err);
+	});
+
+	log.info('server - listening', { host: options.host ?? '*', port: smpp.port });
+
+	if (options.signal) {
+		options.signal.addEventListener('abort', () => { void smpp.close(); }, { once: true });
+	}
+}
+
 /** Starts listening for SMPP connections. Resolves once the socket is bound. */
 export function server(options: ServerOptions = {}): Promise<Result<{ server: SmppServer }>> {
+	const log = options.log ?? silentLog;
+	const port = options.port ?? defaults.port;
+	const created = createListener(options, log, port);
+
+	if (created.err) return Promise.resolve({ err: created.err });
+
+	const listener = created.listener;
+	const smpp = new SmppServer(listener);
+
+	listener.on(created.useTls ? 'secureConnection' : 'connection', (sock: Socket) => {
+		onConnection(sock, options, smpp);
+	});
+
 	return new Promise(resolve => {
-		const log = options.log ?? silentLog;
-		const port = options.port ?? defaults.port;
-		const useTls = options.tls !== undefined && options.tls !== false;
-		const tlsOptions = typeof options.tls === 'object' ? options.tls : undefined;
-
-		if (useTls && !tlsOptions) {
-			log.warn('server - tls without a certificate', { port });
-			resolve({ err: new Error('Listening over TLS needs tls: { cert, key }') });
-
-			return;
-		}
-
-		const listener = tlsOptions ? createSecureListener(tlsOptions, log) : createNetServer();
-		const smpp = new SmppServer(listener);
-
-		listener.on(useTls ? 'secureConnection' : 'connection', (sock: Socket) => {
-			onConnection(sock, options, smpp);
-		});
-
 		const onStartupError = (err: Error): void => {
 			listener.removeListener('error', onStartupError);
 			log.warn('server - could not listen', { message: err.message, port });
@@ -222,19 +266,7 @@ export function server(options: ServerOptions = {}): Promise<Result<{ server: Sm
 
 		listener.listen(port, options.host, () => {
 			listener.removeListener('error', onStartupError);
-
-			// Past startup, a listener error is a runtime event, not a failed start.
-			listener.on('error', (err: Error) => {
-				log.warn('server - error', { message: err.message });
-				smpp.emit('serverError', err);
-			});
-
-			log.info('server - listening', { host: options.host ?? '*', port: smpp.port });
-
-			if (options.signal) {
-				options.signal.addEventListener('abort', () => { void smpp.close(); }, { once: true });
-			}
-
+			onListening(listener, smpp, options);
 			resolve({ server: smpp });
 		});
 	});

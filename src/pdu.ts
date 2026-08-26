@@ -8,7 +8,7 @@ import { consts } from './defs/constants.ts';
 import { decodeMessage, encodeMessage } from './message.ts';
 import { detect, encodingByDataCoding } from './defs/encodings.ts';
 import { errorNameById, errors, isErrorName } from './defs/errors.ts';
-import { tlvDefault, tlvsById } from './defs/tlvs.ts';
+import { tlvDefault, tlvs, tlvsById } from './defs/tlvs.ts';
 
 /** Sequence numbers are a 31-bit field; 0x7fffffff is reserved. */
 export const maxSeqNr = 2147483646;
@@ -17,8 +17,8 @@ export const maxSeqNr = 2147483646;
 export const maxPduLength = 1024 * 1024;
 
 export type TlvInput = {
-	tagId: number;
-	tagName?: string | undefined;
+	/** Resolved from the record key; pass it for a tag the TLV table does not define. */
+	tagId?: number | undefined;
 	tagValue: ParamValue;
 };
 
@@ -63,6 +63,20 @@ export function isCommand<C extends CommandName>(
 
 function numberOr(value: ParamValue | undefined, fallback: number): number {
 	return typeof value === 'number' ? value : fallback;
+}
+
+function tagIdOf(name: string, input: TlvInput): Result<{ tagId: number }> {
+	const tagId = input.tagId ?? tlvs[name]?.id;
+
+	if (tagId === undefined) {
+		return { err: new Error(`TLV "${name}": unknown tag name, give it a tagId`) };
+	}
+
+	if (!Number.isInteger(tagId) || tagId < 0 || tagId > 0xFFFF) {
+		return { err: new Error(`TLV "${name}": tagId ${String(tagId)} out of range 0-65535`) };
+	}
+
+	return { tagId };
 }
 
 function buildPdu(
@@ -126,16 +140,24 @@ function buildPdu(
 	}
 
 	for (const [name, tlv] of Object.entries(tlvs ?? {})) {
-		const type = tlvsById[tlv.tagId]?.type ?? tlvDefault;
+		const tag = tagIdOf(name, tlv);
+
+		if (tag.err) return { err: tag.err };
+
+		const type = tlvsById[tag.tagId]?.type ?? tlvDefault;
 		const sized = type.size(tlv.tagValue);
 
 		if (sized.err) {
 			return { err: new Error(`TLV "${name}": ${sized.err.message}`) };
 		}
 
+		if (sized.size > 0xffff) {
+			return { err: new Error(`TLV "${name}": ${String(sized.size)} octets overflow the two octet length`) };
+		}
+
 		const chunk = Buffer.alloc(sized.size + 4);
 
-		chunk.writeUInt16BE(tlv.tagId, 0);
+		chunk.writeUInt16BE(tag.tagId, 0);
 		chunk.writeUInt16BE(sized.size, 2);
 
 		const written = type.write(tlv.tagValue, chunk, 4);
@@ -192,7 +214,7 @@ function parseTlvs(
 		tlvs[definition?.tag ?? tagId.toString()] = {
 			tagId,
 			tagName: definition?.tag,
-			tagValue: Buffer.isBuffer(read.value) ? read.value.toString('hex') : read.value,
+			tagValue: read.value,
 		};
 
 		offset += 4 + tagLength;
