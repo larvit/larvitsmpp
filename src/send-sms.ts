@@ -6,7 +6,7 @@ import type { Result } from './result.ts';
 import { consts } from './defs/constants.ts';
 import { detect } from './defs/encodings.ts';
 import { paramText } from './defs/types.ts';
-import { smppTime, splitMessage } from './message.ts';
+import { maxSegments, smppTime, splitMessage } from './message.ts';
 
 export type SendSmsOptions = {
 	dlr?: boolean;
@@ -23,7 +23,8 @@ export type SendSmsOptions = {
 	validityPeriod?: Date | number | string;
 };
 
-export type SendSmsResult = Result<{ pduObjs: PduObject[]; smsIds: string[] }>;
+/** Both arrays hold what the peer accepted, so a partial failure names what is already delivered. */
+export type SendSmsResult = { err?: Error; pduObjs: PduObject[]; smsIds: string[] };
 
 /** What sending needs from the session: a concat reference and a way onto the wire. */
 export type SendSmsDeps = {
@@ -37,7 +38,7 @@ type SegmentOptions = {
 	multipart: boolean;
 };
 
-/** Alphanumeric senders must be TON 5; 0.4.0 sent everything as TON 1 (international). */
+/** Alphanumeric senders must be TON 5. */
 function addressTon(address: string): number {
 	return /^\+?\d+$/.test(address) ? consts.TON.INTERNATIONAL : consts.TON.ALPHANUMERIC;
 }
@@ -82,6 +83,15 @@ export function submitSmParams(
 export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise<SendSmsResult> {
 	const encoding = sms.encoding ?? detect(sms.message);
 	const segments = splitMessage(sms.message, { encoding, reference: deps.reference });
+
+	if (segments.length === 0) {
+		return {
+			err: new Error(`Message needs more than ${String(maxSegments)} segments, the concatenation limit`),
+			pduObjs: [],
+			smsIds: [],
+		};
+	}
+
 	const multipart = segments.length > 1;
 	const pduObjs: PduObject[] = [];
 	const smsIds: string[] = [];
@@ -95,12 +105,20 @@ export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise
 		params: submitSmParams(sms, segment, { encoding, multipart }),
 	})));
 
-	for (const one of sent) {
-		if (one.err) return { err: one.err };
+	let failure: Error | undefined;
 
-		pduObjs.push(one.pduObj);
-		smsIds.push(paramText(one.pduObj.params.message_id));
+	for (const one of sent) {
+		if (one.err) {
+			failure ??= one.err;
+		} else if (one.pduObj.cmdStatus === 'ESME_ROK') {
+			pduObjs.push(one.pduObj);
+			smsIds.push(paramText(one.pduObj.params.message_id));
+		} else {
+			const refusal = one.pduObj.cmdStatus ?? String(one.pduObj.cmdStatusId);
+
+			failure ??= new Error(`submit_sm refused by the peer: ${refusal}`);
+		}
 	}
 
-	return { pduObjs, smsIds };
+	return failure ? { err: failure, pduObjs, smsIds } : { pduObjs, smsIds };
 }

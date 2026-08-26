@@ -55,6 +55,26 @@ function wantInt(value: ParamValue, max: number): Result<{ int: number }> {
 	return { int: value };
 }
 
+function writeInt8(value: ParamValue, buf: Buffer, offset: number): VoidResult {
+	const { err, int } = wantInt(value, 0xFF);
+
+	if (err) return { err };
+
+	buf.writeUInt8(int, offset);
+
+	return {};
+}
+
+function writeInt32(value: ParamValue, buf: Buffer, offset: number): VoidResult {
+	const { err, int } = wantInt(value, 0xFFFFFFFF);
+
+	if (err) return { err };
+
+	buf.writeUInt32BE(int, offset);
+
+	return {};
+}
+
 function wantText(value: ParamValue): Result<{ text: string }> {
 	if (typeof value === 'string') return { text: value };
 	if (typeof value === 'number') return { text: value.toString() };
@@ -323,7 +343,9 @@ export const dest_address_array: WireType<DestAddress[]> = {
 
 		if (rangeErr) return { err: rangeErr };
 
-		buf.writeUInt8(addresses.length, offset++);
+		const count = writeInt8(addresses.length, buf, offset++);
+
+		if (count.err) return { err: count.err };
 
 		for (const dest of addresses) {
 			if ('dl_name' in dest) {
@@ -332,8 +354,15 @@ export const dest_address_array: WireType<DestAddress[]> = {
 				offset += dest.dl_name.length + 1;
 			} else {
 				buf.writeUInt8(1, offset++);
-				buf.writeUInt8(dest.dest_addr_ton, offset++);
-				buf.writeUInt8(dest.dest_addr_npi, offset++);
+
+				const ton = writeInt8(dest.dest_addr_ton, buf, offset++);
+
+				if (ton.err) return { err: ton.err };
+
+				const npi = writeInt8(dest.dest_addr_npi, buf, offset++);
+
+				if (npi.err) return { err: npi.err };
+
 				writeCstring(dest.destination_addr, buf, offset);
 				offset += dest.destination_addr.length + 1;
 			}
@@ -406,14 +435,26 @@ export const unsuccess_sme_array: WireType<UnsuccessSme[]> = {
 
 		if (rangeErr) return { err: rangeErr };
 
-		buf.writeUInt8(smes.length, offset++);
+		const count = writeInt8(smes.length, buf, offset++);
+
+		if (count.err) return { err: count.err };
 
 		for (const sme of smes) {
-			buf.writeUInt8(sme.dest_addr_ton, offset++);
-			buf.writeUInt8(sme.dest_addr_npi, offset++);
+			const ton = writeInt8(sme.dest_addr_ton, buf, offset++);
+
+			if (ton.err) return { err: ton.err };
+
+			const npi = writeInt8(sme.dest_addr_npi, buf, offset++);
+
+			if (npi.err) return { err: npi.err };
+
 			writeCstring(sme.destination_addr, buf, offset);
 			offset += sme.destination_addr.length + 1;
-			buf.writeUInt32BE(sme.error_status_code, offset);
+
+			const status = writeInt32(sme.error_status_code, buf, offset);
+
+			if (status.err) return { err: status.err };
+
 			offset += 4;
 		}
 

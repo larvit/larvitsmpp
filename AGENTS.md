@@ -42,6 +42,7 @@ src/
 	sms.ts               The live handle emitted as the 'sms' event (sendResp/sendDlr)
 	dlr.ts               Delivery receipts: text and TLV parsing, receipt status codes
 	dlr-merger.ts        DlrMerger: per-segment receipts counted into one MessageDlr
+	expiring-groups.ts   ExpiringGroups: the capped, expiring store both of those share
 	link-timers.ts       LinkTimers: the enquire_link heartbeat and the idle timeout
 	log.ts               silentLog — the default when the application passes none
 	message.ts           Encoding detection, splitting, bit counting, SMPP date formatting
@@ -53,6 +54,7 @@ src/
 	result.ts            Result<T> — the shape every fallible call returns
 	send-sms.ts          submitSms composition and the submitSmParams builder
 	send-window.ts       SendWindow: the maxOutstanding semaphore
+	session-options.ts   SessionOptions, ReconnectOptions and the session defaults
 	udh.ts               User data header: the concatenation fields of a long SMS
 	uuid.ts              uuidv7() — the ids the library generates for messages
 	defs/

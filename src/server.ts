@@ -128,7 +128,6 @@ async function acceptBind(
 
 async function onBind(session: Session, pduObj: PduObject, options: ServerOptions): Promise<void> {
 	const log = options.log ?? silentLog;
-	// Explicit, or pduReturn's echo answers the ESME with its own system_id instead of ours.
 	const identity = { system_id: options.systemId ?? defaults.systemId };
 	const systemId = paramText(pduObj.params.system_id);
 
@@ -211,11 +210,19 @@ function createListener(
 ): Result<{ listener: NetServer | TlsServer; useTls: boolean }> {
 	const useTls = options.tls !== undefined && options.tls !== false;
 	const tlsOptions = typeof options.tls === 'object' ? options.tls : undefined;
+	const version = options.interfaceVersion ?? defaults.interfaceVersion;
 
 	if (useTls && !tlsOptions) {
 		log.warn('server - tls without a certificate', { port });
 
 		return { err: new Error('Listening over TLS needs tls: { cert, key }') };
+	}
+
+	// An int8 TLV on every bind response: out of range here means no ESME can ever bind.
+	if (!Number.isInteger(version) || version < 0 || version > 0xFF) {
+		log.warn('server - interface version out of range', { interfaceVersion: version });
+
+		return { err: new Error(`interfaceVersion must be 0-255, got ${String(version)}`) };
 	}
 
 	return {
@@ -235,9 +242,15 @@ function onListening(listener: NetServer, smpp: SmppServer, options: ServerOptio
 
 	log.info('server - listening', { host: options.host ?? '*', port: smpp.port });
 
-	if (options.signal) {
-		options.signal.addEventListener('abort', () => { void smpp.close(); }, { once: true });
-	}
+	// close() runs the application's own 'close' listeners, so a throw from one lands here.
+	options.signal?.addEventListener('abort', () => {
+		void smpp.close().catch((thrown: unknown) => {
+			const err = thrown instanceof Error ? thrown : new Error(String(thrown));
+
+			log.warn('server - could not close on abort', { message: err.message });
+			smpp.emit('serverError', err);
+		});
+	}, { once: true });
 }
 
 /** Starts listening for SMPP connections. Resolves once the socket is bound. */
@@ -264,10 +277,14 @@ export function server(options: ServerOptions = {}): Promise<Result<{ server: Sm
 
 		listener.once('error', onStartupError);
 
-		listener.listen(port, options.host, () => {
-			listener.removeListener('error', onStartupError);
-			onListening(listener, smpp, options);
-			resolve({ server: smpp });
-		});
+		try {
+			listener.listen(port, options.host, () => {
+				listener.removeListener('error', onStartupError);
+				onListening(listener, smpp, options);
+				resolve({ server: smpp });
+			});
+		} catch (thrown: unknown) {
+			onStartupError(thrown instanceof Error ? thrown : new Error(String(thrown)));
+		}
 	});
 }

@@ -17,6 +17,7 @@ export type ClientOptions = {
 	bindType?: BindType;
 	enquireLinkInterval?: number;
 	host?: string;
+	idleTimeout?: number;
 	interfaceVersion?: number;
 	log?: LogInt;
 	maxOutstanding?: number;
@@ -34,16 +35,14 @@ const defaults = {
 	bindType: 'transceiver',
 	enquireLinkInterval: 20_000,
 	host: 'localhost',
+	/** The idle timeout is what notices a dead link, so it has to outlast one silent probe. */
+	idleTimeoutFactor: 2,
 	interfaceVersion: defaultInterfaceVersion,
 	password: 'pass',
 	port: 2775,
 	username: 'user',
 } as const;
 
-/**
- * Opens the socket. 0.4.0 built a bare `new tls.Socket()` for `tls: true`, which never performs a
- * handshake, so those connections were not encrypted at all.
- */
 function openSocket(options: ClientOptions): Promise<Result<{ sock: Socket }>> {
 	const host = options.host ?? defaults.host;
 	const port = options.port ?? defaults.port;
@@ -59,7 +58,15 @@ function openSocket(options: ClientOptions): Promise<Result<{ sock: Socket }>> {
 			return;
 		}
 
-		const sock = secure ? tlsConnect({ host, port, ...tlsOptions }) : netConnect({ host, port });
+		let sock: Socket;
+
+		try {
+			sock = secure ? tlsConnect({ host, port, ...tlsOptions }) : netConnect({ host, port });
+		} catch (thrown: unknown) {
+			resolve({ err: thrown instanceof Error ? thrown : new Error(String(thrown)) });
+
+			return;
+		}
 
 		const settle = (result: Result<{ sock: Socket }>): void => {
 			sock.removeListener('error', onError);
@@ -122,6 +129,29 @@ async function bind(session: Session, options: ClientOptions): Promise<VoidResul
 	return {};
 }
 
+function createSession(options: ClientOptions, log: LogInt, sock: Socket): Session {
+	const enquireLinkInterval = options.enquireLinkInterval ?? defaults.enquireLinkInterval;
+
+	return new Session({
+		enquireLinkInterval,
+		idleTimeout: options.idleTimeout ?? enquireLinkInterval * defaults.idleTimeoutFactor,
+		log,
+		maxOutstanding: options.maxOutstanding,
+		responseTimeout: options.responseTimeout,
+		sock,
+		...(options.reconnect
+			? {
+				reconnect: {
+					connect: () => openSocket(options),
+					maxDelay: options.reconnect.maxDelay,
+					minDelay: options.reconnect.minDelay,
+					onConnected: reconnected => bind(reconnected, options),
+				},
+			}
+			: {}),
+	});
+}
+
 /** Connects to an SMSC and binds. */
 export async function client(options: ClientOptions = {}): Promise<Result<{ session: Session }>> {
 	const log = options.log ?? silentLog;
@@ -137,23 +167,17 @@ export async function client(options: ClientOptions = {}): Promise<Result<{ sess
 		return { err: opened.err };
 	}
 
-	const session = new Session({
-		enquireLinkInterval: options.enquireLinkInterval ?? defaults.enquireLinkInterval,
-		log,
-		maxOutstanding: options.maxOutstanding,
-		responseTimeout: options.responseTimeout,
-		sock: opened.sock,
-		...(options.reconnect
-			? {
-				reconnect: {
-					connect: () => openSocket(options),
-					maxDelay: options.reconnect.maxDelay,
-					minDelay: options.reconnect.minDelay,
-					onConnected: reconnected => bind(reconnected, options),
-				},
-			}
-			: {}),
-	});
+	const session = createSession(options, log, opened.sock);
+	const signal = options.signal;
+
+	if (signal?.aborted === true) {
+		session.close();
+
+		return { err: new Error('Aborted before binding') };
+	}
+
+	// Registered before the bind: an abort landing while it is in flight has to close the session.
+	signal?.addEventListener('abort', () => { session.close(); }, { once: true });
 
 	const bound = await bind(session, options);
 
@@ -161,10 +185,6 @@ export async function client(options: ClientOptions = {}): Promise<Result<{ sess
 		session.close();
 
 		return { err: bound.err };
-	}
-
-	if (options.signal) {
-		options.signal.addEventListener('abort', () => { session.close(); }, { once: true });
 	}
 
 	return { session };

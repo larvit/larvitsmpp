@@ -157,6 +157,23 @@ describe('encoding submit_sm', () => {
 		assert.equal(pduObj.params.short_message.toString('hex'), '05000301010168656a2076c3a4726c64656e');
 	});
 
+	test('derives sm_length from a Buffer short_message the caller gave no length for', () => {
+		const message = Buffer.concat([Buffer.from('050003010201', 'hex'), Buffer.from('hej')]);
+		const pduObj = decode(encode({
+			cmdName: 'submit_sm',
+			params: {
+				destination_addr: '46709771337',
+				esm_class: 0x40,
+				short_message: message,
+				source_addr: '46701113311',
+			},
+			seqNr: 12,
+		}));
+
+		assert.equal(pduObj.params.sm_length, message.length);
+		assert.deepEqual(pduObj.params.short_message, message);
+	});
+
 	test('accepts a number for a C-string parameter', () => {
 		const pduObj = decode(encode({
 			cmdName: 'submit_sm_resp',
@@ -182,6 +199,40 @@ describe('encoding submit_sm', () => {
 
 		assert.equal(pduObj.params.short_message, 'hej 一');
 		assert.equal(pduObj.params.sm_length, 10);
+	});
+});
+
+describe('encoding submit_multi', () => {
+	const dest = { dest_addr_npi: 1, dest_addr_ton: 1, destination_addr: '46709771337' };
+
+	test('reports a value the destination structures cannot hold instead of throwing', () => {
+		const badTon = objToPdu({
+			cmdName: 'submit_multi',
+			params: {
+				dest_address: [{ ...dest, dest_addr_ton: 999 }],
+				short_message: 'hi',
+				source_addr: '46701113311',
+			},
+		});
+		const tooMany = objToPdu({
+			cmdName: 'submit_multi',
+			params: {
+				dest_address: Array.from({ length: 300 }, () => dest),
+				short_message: 'hi',
+				source_addr: '46701113311',
+			},
+		});
+		const badStatus = objToPdu({
+			cmdName: 'submit_multi_resp',
+			params: {
+				message_id: '01a03ff4-737f-7c01-91db-cb14aa779bcf',
+				unsuccess_sme: [{ ...dest, error_status_code: 0x1FFFFFFFF }],
+			},
+		});
+
+		assert.ok(badTon.err instanceof Error);
+		assert.ok(tooMany.err instanceof Error);
+		assert.ok(badStatus.err instanceof Error);
 	});
 });
 

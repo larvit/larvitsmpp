@@ -4,6 +4,7 @@ import type { LogInt } from '@larvit/log';
 import type { MessageDlr } from './dlr-merger.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
+import type { ReconnectOptions, SendOptions, SessionOptions } from './session-options.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { SendSmsOptions, SendSmsResult } from './send-sms.ts';
 import type { Sms } from './sms.ts';
@@ -19,13 +20,15 @@ import { SendWindow } from './send-window.ts';
 import { concatInfo } from './udh.ts';
 import { consts, optionalParamsMinVersion } from './defs/constants.ts';
 import { createSms } from './sms.ts';
+import { defaultSystemId, defaults } from './session-options.ts';
 import { dlrFromPdu } from './dlr.ts';
 import { isResp, objToPdu, pduReturn, pduToObj } from './pdu.ts';
 import { paramText } from './defs/types.ts';
 import { silentLog } from './log.ts';
 import { submitSms } from './send-sms.ts';
 
-export type { MessageDlr, SendSmsOptions };
+export type { MessageDlr, ReconnectOptions, SendOptions, SendSmsOptions, SessionOptions };
+export { defaultSystemId };
 
 export type SessionEvents = {
 	close: [];
@@ -37,51 +40,6 @@ export type SessionEvents = {
 	reconnected: [];
 	sessionError: [Error];
 	sms: [Sms];
-};
-
-export type SendOptions = { signal?: AbortSignal | undefined };
-
-/**
- * How to come back after an unexpected disconnect. The session owns the retry loop; the caller
- * supplies how to open a socket and what to do once it is open (bind, for a client).
- */
-export type ReconnectOptions = {
-	connect: () => Promise<Result<{ sock: Socket }>>;
-	maxDelay?: number | undefined;
-	minDelay?: number | undefined;
-	onConnected: (session: Session) => Promise<VoidResult>;
-};
-
-export type SessionOptions = {
-	enquireLinkInterval?: number | undefined;
-	idleTimeout?: number | undefined;
-	log?: LogInt | undefined;
-	maxOutstanding?: number | undefined;
-	maxReassembly?: number | undefined;
-	/**
-	 * First refusal on every incoming request. Returning true means the hook answered it and the
-	 * built-in handling is skipped — this is how the server owns bind without the session also
-	 * replying "invalid command".
-	 */
-	onRequest?: ((session: Session, pduObj: PduObject) => Promise<boolean>) | undefined;
-	reassemblyTimeout?: number | undefined;
-	reconnect?: ReconnectOptions | undefined;
-	responseTimeout?: number | undefined;
-	sock: Socket;
-	/** This end's own identity, answered to the peer in place of the one it sent. */
-	systemId?: string | undefined;
-};
-
-export const defaultSystemId = '';
-
-const defaults = {
-	maxDelay: 30_000,
-	maxOutstanding: 10,
-	maxReassembly: 1000,
-	minDelay: 1000,
-	reassemblyTimeout: 300_000,
-	responseTimeout: 30_000,
-	systemId: defaultSystemId,
 };
 
 export const bindCommands: readonly string[] = [
@@ -100,7 +58,7 @@ export class Session extends EventEmitter<SessionEvents> {
 	peerInterfaceVersion: number | undefined = undefined;
 	userData: unknown = undefined;
 
-	private readonly dlrMerger = new DlrMerger();
+	private readonly dlrMerger: DlrMerger;
 	private readonly options: SessionOptions;
 	private readonly pending: PendingRequests;
 	private readonly reassembler: Reassembler;
@@ -117,6 +75,11 @@ export class Session extends EventEmitter<SessionEvents> {
 
 		this.log = options.log ?? silentLog;
 		this.options = options;
+		this.dlrMerger = new DlrMerger({
+			log: this.log,
+			max: defaults.maxDlrMerges,
+			timeout: defaults.dlrMergeTimeout,
+		});
 		this.pending = new PendingRequests(this.log);
 		this.reassembler = new Reassembler({
 			log: this.log,
@@ -130,7 +93,8 @@ export class Session extends EventEmitter<SessionEvents> {
 			idleTimeout: options.idleTimeout,
 			log: this.log,
 			onEnquireLink: () => { void this.send({ cmdName: 'enquire_link' }); },
-			onIdle: () => { this.close(); },
+			// Not close(): a link that went quiet is a drop, and a drop is what reconnect is for.
+			onIdle: () => { this.teardown(); },
 		});
 		this.window = new SendWindow(options.maxOutstanding ?? defaults.maxOutstanding);
 
@@ -172,10 +136,18 @@ export class Session extends EventEmitter<SessionEvents> {
 		tlvs?: Record<string, TlvInput>,
 	): Promise<VoidResult> {
 		const built = pduReturn(pdu, status, params, tlvs);
+		const sent = built.err ? { err: built.err } : this.write(built.buffer);
 
-		if (built.err) return { err: built.err };
+		if (sent.err) {
+			this.log.warn('session - could not answer a request', {
+				cmdName: pdu.cmdName,
+				message: sent.err.message,
+				seqNr: pdu.seqNr,
+			});
+			this.emit('sessionError', sent.err);
+		}
 
-		return Promise.resolve(this.write(built.buffer));
+		return Promise.resolve(sent);
 	}
 
 	async sendSms(sms: SendSmsOptions, options: SendOptions = {}): Promise<SendSmsResult> {
@@ -185,18 +157,20 @@ export class Session extends EventEmitter<SessionEvents> {
 			send: input => this.send(input, options),
 		}, sms);
 
-		if (!sent.err) this.dlrMerger.expect(sent.smsIds);
+		if (!sent.err && sms.dlr === true) this.dlrMerger.expect(sent.smsIds);
 
 		return sent;
 	}
 
-	/** Unbinds politely, then closes. */
+	/** Unbinds politely, then closes. Many SMSCs drop the link instead of answering, which is fine. */
 	async unbind(): Promise<VoidResult> {
+		const wasOpen = !this.closed;
 		const sent = await this.send({ cmdName: 'unbind' });
+		const closedOnUnbind = wasOpen && this.closed;
 
 		this.close();
 
-		return sent.err ? { err: sent.err } : {};
+		return sent.err && !closedOnUnbind ? { err: sent.err } : {};
 	}
 
 	/** Closes for good. A session closed this way never reconnects. */
@@ -240,6 +214,9 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	/** Wires a freshly opened socket into this session, replacing any previous one. */
 	private attach(sock: Socket): void {
+		// The socket being replaced is already dead, and its three handlers still point here.
+		if (this.sock !== sock) this.sock.removeAllListeners();
+
 		this.sock = sock;
 		this.framer = new PduFramer();
 		this.closed = false;
@@ -283,6 +260,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.closed = true;
 		this.timers.clear();
 		this.pending.settleAll(new Error('Session closed before a response arrived'));
+		this.dlrMerger.clear();
 		this.reassembler.clear();
 		this.sock.destroy();
 		this.emit('close');
@@ -355,7 +333,13 @@ export class Session extends EventEmitter<SessionEvents> {
 		}
 
 		this.emit('incomingPduObj', pduObj);
-		void this.handle(pduObj);
+		// Every application hook and listener reached from an incoming PDU funnels through here.
+		void this.handle(pduObj).catch((thrown: unknown) => {
+			const err = thrown instanceof Error ? thrown : new Error(String(thrown));
+
+			this.log.error('session - a handler threw', { message: err.message });
+			this.emit('sessionError', err);
+		});
 	}
 
 	private async handle(pduObj: PduObject): Promise<void> {
@@ -385,7 +369,6 @@ export class Session extends EventEmitter<SessionEvents> {
 	private async unhandled(pduObj: PduObject): Promise<void> {
 		if (bindCommands.includes(pduObj.cmdName)) {
 			this.log.info('session - bind on an already bound session', { cmdName: pduObj.cmdName });
-			// Explicit, or pduReturn's echo answers the peer with its own system_id instead of ours.
 			await this.sendReturn(pduObj, 'ESME_RALYBND', {
 				system_id: this.options.systemId ?? defaults.systemId,
 			});

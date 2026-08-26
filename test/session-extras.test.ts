@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import test, { describe } from 'node:test';
+import type { ErrorName } from '../src/defs/errors.ts';
 import type { MessageDlr } from '../src/session.ts';
-import type { PduObject } from '../src/pdu.ts';
+import type { PduObject, PduObjectInput } from '../src/pdu.ts';
+import type { Result } from '../src/result.ts';
+import type { SendSmsResult } from '../src/send-sms.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
-import { Reassembler } from '../src/reassembly.ts';
+import { Reassembler, decodeSegments } from '../src/reassembly.ts';
 import { client } from '../src/client.ts';
+import { errors } from '../src/defs/errors.ts';
 import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
+import { submitSms } from '../src/send-sms.ts';
 
 async function startServer(options: Parameters<typeof server>[0] = {}): Promise<SmppServer> {
 	const { err, server: smpp } = await server({ ...options, port: 0 });
@@ -41,8 +46,7 @@ describe('merged delivery reports', () => {
 
 		const [sms] = await Promise.all([
 			incoming.then(async received => {
-				received.smsId = 'merge-me';
-				await received.sendResp();
+				await received.sendResp({ smsId: 'merge-me' });
 
 				return received;
 			}),
@@ -80,8 +84,7 @@ describe('merged delivery reports', () => {
 
 		const [sms] = await Promise.all([
 			incoming.then(async received => {
-				received.smsId = 'partly-failed';
-				await received.sendResp();
+				await received.sendResp({ smsId: 'partly-failed' });
 
 				return received;
 			}),
@@ -102,6 +105,100 @@ describe('merged delivery reports', () => {
 
 		session.close();
 		await smpp.close();
+	});
+});
+
+describe('sendSms()', () => {
+	function submitResp(seqNr: number, messageId: string, status: ErrorName = 'ESME_ROK'): PduObject {
+		return {
+			cmdId: 0x80000004,
+			cmdLength: 0,
+			cmdName: 'submit_sm_resp',
+			cmdStatus: status,
+			cmdStatusId: errors[status],
+			params: { message_id: messageId },
+			seqNr,
+			tlvs: {},
+		};
+	}
+
+	/** Three segments, each answered by whatever the caller decides for that part. */
+	function sendSegments(
+		answer: (part: number) => Result<{ pduObj: PduObject }>,
+	): Promise<SendSmsResult> {
+		let part = 0;
+
+		return submitSms(
+			{
+				log: silentLog,
+				reference: 7,
+				send: () => {
+					part++;
+
+					return Promise.resolve(answer(part));
+				},
+			},
+			{ from: '46701113311', message: 'x'.repeat(400), to: '46709771337' },
+		);
+	}
+
+	test('reports a submit_sm the peer refused instead of an empty message id', async () => {
+		const smpp = await startServer();
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', session => session.on('sms', resolve));
+		});
+		const { session } = await client({ port: smpp.port });
+
+		assert.ok(session);
+
+		const [, sent] = await Promise.all([
+			incoming.then(received => received.sendResp({ status: 'ESME_RMSGQFUL' })),
+			session.sendSms({ from: '46701113311', message: 'the queue is full', to: '46709771337' }),
+		]);
+
+		assert.ok(sent.err instanceof Error);
+		assert.match(sent.err.message, /ESME_RMSGQFUL/);
+
+		session.close();
+		await smpp.close();
+	});
+
+	// A retry that repeats the segments the SMSC already took bills the recipient twice.
+	test('hands back the ids that landed when a segment fails', async () => {
+		const refused = await sendSegments(part => part === 2
+			? { pduObj: submitResp(part, '', 'ESME_RMSGQFUL') }
+			: { pduObj: submitResp(part, `landed-${String(part)}`) });
+
+		assert.ok(refused.err instanceof Error);
+		assert.match(refused.err.message, /ESME_RMSGQFUL/);
+		assert.equal(refused.pduObjs.length, 2);
+		assert.deepEqual(refused.smsIds, ['landed-1', 'landed-3']);
+
+		const unanswered = await sendSegments(part => part === 2
+			? { err: new Error('No response to seqNr 2') }
+			: { pduObj: submitResp(part, `landed-${String(part)}`) });
+
+		assert.ok(unanswered.err instanceof Error);
+		assert.deepEqual(unanswered.smsIds, ['landed-1', 'landed-3']);
+	});
+
+	test('refuses a message needing more segments than a UDH can number', async () => {
+		const attempts: PduObjectInput[] = [];
+		const sent = await submitSms(
+			{
+				log: silentLog,
+				reference: 1,
+				send: input => {
+					attempts.push(input);
+
+					return Promise.resolve({ err: new Error('nothing should reach the wire') });
+				},
+			},
+			{ from: '46701113311', message: 'a'.repeat(153 * 256), to: '46709771337' },
+		);
+
+		assert.ok(sent.err instanceof Error);
+		assert.equal(attempts.length, 0);
 	});
 });
 
@@ -229,6 +326,44 @@ describe('reassembly bounds', () => {
 		assert.equal(reassembler.size, 2);
 
 		reassembler.clear();
+	});
+
+	test('drops the oldest incomplete message once the retained octets exceed the cap', () => {
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			maxOctets: 30,
+			now: () => 0,
+			timeout: 60_000,
+		});
+
+		for (const reference of [1, 2, 3]) {
+			assert.equal(collect(reassembler, reference, 1, 2), undefined);
+		}
+
+		assert.equal(reassembler.size, 2);
+		assert.equal(collect(reassembler, 1, 2, 2), undefined);
+
+		reassembler.clear();
+	});
+
+	// A retained subarray keeps its whole framed PDU alive, up to maxPduLength per segment.
+	test('copies a segment out of the buffer it arrived in', () => {
+		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+		const framed = Buffer.alloc(1024);
+		const first = segment(6, 1, 2);
+
+		Buffer.concat([Buffer.from([0x05, 0x00, 0x03, 6, 2, 1]), Buffer.from('fragment')]).copy(framed);
+		first.params.short_message = framed.subarray(0, 14);
+
+		assert.equal(reassembler.collect(first, { part: 1, reference: 6, total: 2 }), undefined);
+
+		framed.fill(0x00);
+
+		const whole = collect(reassembler, 6, 2, 2);
+
+		assert.ok(whole);
+		assert.equal(decodeSegments(whole), 'fragmentfragment');
 	});
 
 	test('expires an incomplete message once its timeout has passed', () => {

@@ -79,11 +79,17 @@ function tagIdOf(name: string, input: TlvInput): Result<{ tagId: number }> {
 	return { tagId };
 }
 
-/** Encoding a string short_message also settles data_coding and sm_length. */
+/** Encoding a string short_message settles data_coding and sm_length; a buffer settles sm_length. */
 function resolveShortMessage(
 	params: Record<string, ParamValue | undefined>,
 ): Record<string, ParamValue | undefined> {
 	const message = params.short_message;
+
+	if (Buffer.isBuffer(message)) {
+		return params.sm_length === undefined
+			? { ...params, sm_length: message.length }
+			: { ...params };
+	}
 
 	if (typeof message !== 'string') return { ...params };
 
@@ -355,7 +361,10 @@ export function pduToObj(pdu: Buffer): Result<{ pduObj: PduObject }> {
 	return { err: plain.err };
 }
 
-/** Fields the response shares with the request are echoed back unless the caller overrode them. */
+/**
+ * Fields the response shares with the request are echoed back unless the caller overrode them, so a
+ * response that has to state its own value for one — an SMSC's system_id — must pass it.
+ */
 function echoParams(
 	respName: CommandName,
 	pdu: PduObject,

@@ -14,6 +14,7 @@ export type ReconnectLoopOptions = {
 /** Reopens a dropped connection, backing off between attempts until it is told to stop. */
 export class ReconnectLoop {
 	private readonly options: ReconnectLoopOptions;
+	private attempting = false;
 	private delay: number;
 	private halted = false;
 	private timer: NodeJS.Timeout | undefined;
@@ -29,7 +30,7 @@ export class ReconnectLoop {
 	}
 
 	schedule(): void {
-		if (this.timer || this.isStopped()) return;
+		if (this.timer || this.attempting || this.isStopped()) return;
 
 		const delay = this.delay;
 
@@ -53,7 +54,25 @@ export class ReconnectLoop {
 	}
 
 	private async run(): Promise<void> {
-		if (this.isStopped()) return;
+		this.attempting = true;
+
+		// connect() and onConnected() are the application's, so a throw from either lands here.
+		const retry = await this.attempt().catch((thrown: unknown) => {
+			const err = thrown instanceof Error ? thrown : new Error(String(thrown));
+
+			this.options.log.error('reconnect - an attempt threw', { message: err.message });
+
+			return true;
+		});
+
+		this.attempting = false;
+
+		if (retry) this.schedule();
+	}
+
+	/** True means the attempt failed and the loop should try again. */
+	private async attempt(): Promise<boolean> {
+		if (this.isStopped()) return false;
 
 		const opened = await this.options.connect();
 
@@ -61,26 +80,26 @@ export class ReconnectLoop {
 			this.options.log.warn('reconnect - could not open a socket', {
 				message: opened.err.message,
 			});
-			this.schedule();
 
-			return;
+			return true;
 		}
 
 		if (this.isStopped()) {
 			opened.sock.destroy();
 
-			return;
+			return false;
 		}
 
 		const up = await this.options.onConnected(opened.sock);
 
 		if (up.err) {
 			this.options.log.warn('reconnect - could not come back up', { message: up.err.message });
-			this.schedule();
 
-			return;
+			return true;
 		}
 
 		this.delay = this.options.minDelay;
+
+		return false;
 	}
 }

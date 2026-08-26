@@ -1,6 +1,16 @@
 import type { Dlr } from './dlr.ts';
+import type { LogInt } from '@larvit/log';
+import { ExpiringGroups } from './expiring-groups.ts';
 
 export type MessageDlr = Dlr & { segments: Dlr[] };
+
+export type DlrMergerOptions = {
+	log: LogInt;
+	max: number;
+	/** Injected so expiry can be exercised without a wall clock. */
+	now?: (() => number) | undefined;
+	timeout: number;
+};
 
 type Group = {
 	expected: number;
@@ -15,7 +25,24 @@ const numbered = /^(.*)-(\d+)$/;
  * SMSC that hands out unrelated ids per segment cannot be merged, so nothing is reported for it.
  */
 export class DlrMerger {
-	private readonly groups = new Map<string, Group>();
+	private readonly groups: ExpiringGroups<Group>;
+	private readonly log: LogInt;
+	private readonly max: number;
+
+	constructor(options: DlrMergerOptions) {
+		this.groups = new ExpiringGroups<Group>({
+			max: options.max,
+			now: options.now,
+			onSweep: () => { this.sweep(); },
+			timeout: options.timeout,
+		});
+		this.log = options.log;
+		this.max = options.max;
+	}
+
+	get size(): number {
+		return this.groups.size;
+	}
 
 	/** Registers the ids one multipart send got back, so their receipts can be merged. */
 	expect(smsIds: string[]): void {
@@ -34,12 +61,14 @@ export class DlrMerger {
 		if (bases.size !== 1) return;
 
 		for (const base of bases) {
-			this.groups.set(base, { expected: smsIds.length, parts: new Map() });
+			this.open(base, smsIds.length);
 		}
 	}
 
 	/** The whole message's report, on the receipt that completes it. */
 	collect(dlr: Dlr): MessageDlr | undefined {
+		this.sweep();
+
 		const match = numbered.exec(dlr.smsId);
 		const base = match?.[1];
 		const part = match?.[2];
@@ -60,5 +89,28 @@ export class DlrMerger {
 		const worst = segments.reduce((carry, one) => (one.statusId > carry.statusId ? one : carry));
 
 		return { ...worst, segments, smsId: base };
+	}
+
+	clear(): void {
+		this.groups.clear();
+	}
+
+	/** Drops every group past its deadline. Runs before each collect and on its own timer. */
+	sweep(): void {
+		for (const [base, group] of this.groups.takeExpired()) {
+			this.log.info('dlrMerger - incomplete receipts expired', { base, expected: group.expected });
+		}
+	}
+
+	private open(base: string, expected: number): void {
+		if (this.groups.full) this.dropOldest();
+
+		this.groups.set(base, { expected, parts: new Map() });
+	}
+
+	private dropOldest(): void {
+		if (!this.groups.takeOldest()) return;
+
+		this.log.warn('dlrMerger - buffer full, dropping the oldest message', { max: this.max });
 	}
 }

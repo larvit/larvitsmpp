@@ -142,8 +142,7 @@ describe('tls', () => {
 
 		const [sms, sent] = await Promise.all([
 			incoming.then(async received => {
-				received.smsId = 'tls-id';
-				await received.sendResp();
+				await received.sendResp({ smsId: 'tls-id' });
 
 				return received;
 			}),
@@ -193,22 +192,29 @@ describe('tls', () => {
 	});
 
 	test('logs a handshake the server turned away', async () => {
-		const warned = once<string>(resolve => {
-			const log = new Log({ logLevel: 'warn', stderr: resolve, stdout: resolve });
-
-			void server({ log, port: 0, tls: { cert: certificate.cert, key: certificate.key } })
-				.then(({ server: smpp }) => {
-					assert.ok(smpp);
-
-					const sock = net.connect({ port: smpp.port }, () => {
-						sock.end('not a client hello');
-					});
-
-					sock.on('close', () => { void smpp.close(); });
-					sock.resume();
-				});
+		let onWarning: ((message: string) => void) | undefined;
+		const warned = once<string>(resolve => { onWarning = resolve; });
+		const log = new Log({
+			logLevel: 'warn',
+			stderr: message => onWarning?.(message),
+			stdout: message => onWarning?.(message),
+		});
+		const { err, server: smpp } = await server({
+			log,
+			port: 0,
+			tls: { cert: certificate.cert, key: certificate.key },
 		});
 
+		assert.equal(err, undefined);
+		assert.ok(smpp);
+
+		const sock = net.connect({ port: smpp.port }, () => { sock.end('not a client hello'); });
+
+		sock.resume();
+
 		assert.match(await warned, /client handshake failed/);
+
+		sock.destroy();
+		await smpp.close();
 	});
 });

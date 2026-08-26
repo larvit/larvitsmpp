@@ -155,6 +155,14 @@ describe('dest_address_array', () => {
 
 		assert.deepEqual(target, encoded);
 	});
+
+	test('refuses a field value the wire cannot hold instead of throwing', () => {
+		const badTon: DestAddress[] = [{ dest_addr_npi: 0, dest_addr_ton: 999, destination_addr: '123' }];
+		const tooMany: DestAddress[] = Array.from({ length: 300 }, () => ({ dl_name: 'a' }));
+
+		assert.ok(types.dest_address_array.write(badTon, Buffer.alloc(8), 0).err instanceof Error);
+		assert.ok(types.dest_address_array.write(tooMany, Buffer.alloc(901), 0).err instanceof Error);
+	});
 });
 
 describe('unsuccess_sme_array', () => {
@@ -185,6 +193,18 @@ describe('unsuccess_sme_array', () => {
 		types.unsuccess_sme_array.write(expected, target, 0);
 
 		assert.deepEqual(target, encoded);
+	});
+
+	test('refuses a field value the wire cannot hold instead of throwing', () => {
+		const badStatus: UnsuccessSme[] = [
+			{ dest_addr_npi: 0, dest_addr_ton: 0, destination_addr: 'abc', error_status_code: 0x1FFFFFFFF },
+		];
+		const badTon: UnsuccessSme[] = [
+			{ dest_addr_npi: 0, dest_addr_ton: 999, destination_addr: 'abc', error_status_code: 0 },
+		];
+
+		assert.ok(types.unsuccess_sme_array.write(badStatus, Buffer.alloc(11), 0).err instanceof Error);
+		assert.ok(types.unsuccess_sme_array.write(badTon, Buffer.alloc(11), 0).err instanceof Error);
 	});
 });
 

@@ -6,6 +6,9 @@ import { detect, encodingByDataCoding, encodings } from './defs/encodings.ts';
 /** A single SMS carries 1120 bits, whatever the alphabet. */
 const singleMessageBits = 1120;
 
+/** The concatenation UDH numbers the segments of a message in a single octet. */
+export const maxSegments = 255;
+
 /** Budget per concatenated segment: septets for GSM, octets for UCS2. */
 const segmentUnits = { ASCII: 153, UCS2: 67 * 2 } as const;
 
@@ -52,7 +55,8 @@ export function bitCount(message: string, encoding?: EncodingName): number {
 
 /**
  * Splits a message into concatenation segments, each prefixed with a UDH. A message that fits in a
- * single SMS is returned as one segment with no UDH.
+ * single SMS is returned as one segment with no UDH, and one needing more than `maxSegments` as no
+ * segments at all — a UDH cannot number them.
  *
  * Splitting walks code points, so an escaped GSM character never straddles a segment boundary and a
  * surrogate pair is never cut in half.
@@ -83,6 +87,8 @@ export function splitMessage(message: string, options: SplitOptions): Buffer[] {
 	}
 
 	if (current !== '') parts.push(current);
+
+	if (parts.length > maxSegments) return [];
 
 	return parts.map((part, index) => Buffer.concat([
 		Buffer.from([0x05, 0x00, 0x03, options.reference & 0xFF, parts.length, index + 1]),

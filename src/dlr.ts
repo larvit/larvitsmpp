@@ -115,7 +115,7 @@ export function parseReceipt(message: string): Receipt {
 /**
  * Builds a delivery report from a deliver_sm. The message_state and receipted_message_id TLVs are
  * authoritative when present; otherwise the receipt text is parsed, which is the only thing Kannel
- * and several other SMSCs send. 0.4.0 required the TLVs and rejected everything else.
+ * and several other SMSCs send.
  */
 export function dlrFromPdu(pduObj: PduObject): Dlr | undefined {
 	const message = pduObj.params.short_message;

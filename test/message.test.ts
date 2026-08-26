@@ -73,6 +73,11 @@ describe('splitMessage()', () => {
 		assert.deepEqual(segments[1]?.subarray(0, 6), Buffer.from([0x05, 0x00, 0x03, 0x2A, 2, 2]));
 	});
 
+	test('produces no segments at all for a message no UDH can number', () => {
+		assert.equal(splitMessage('a'.repeat(153 * 255), { reference: 1 }).length, 255);
+		assert.equal(splitMessage('a'.repeat(153 * 255 + 1), { reference: 1 }).length, 0);
+	});
+
 	test('splits on characters, never inside an escape sequence', () => {
 		const segments = splitMessage('€'.repeat(100), { reference: 1 });
 		const rejoined = segments

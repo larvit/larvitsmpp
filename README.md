@@ -81,9 +81,10 @@ Every one is optional.
 | `systemType`, `addressRange`, `addrTon`, `addrNpi` | `''`, `''`, `0`, `0` | The remaining bind fields, for operators that require them. |
 | `tls` | `false` | `true` for defaults, or a `tls.ConnectionOptions` object for a private CA or a client certificate. |
 | `enquireLinkInterval` | `20000` | How often to send `enquire_link` on a quiet link. |
+| `idleTimeout` | `2 × enquireLinkInterval` | Give up on a link the peer has stopped answering; with `reconnect` set, it re-binds. |
 | `responseTimeout` | `30000` | How long to wait for a response before giving up on it. |
 | `maxOutstanding` | `10` | Requests allowed on the wire at once; further sends queue. |
-| `reconnect` | off | `{ minDelay, maxDelay }` to re-bind automatically after a drop, with exponential backoff. |
+| `reconnect` | off | `{ minDelay, maxDelay }` to re-bind automatically after a drop or an idle timeout, with exponential backoff. |
 | `log` | silent | A `@larvit/log` instance. |
 | `signal` | — | An `AbortSignal` that cancels connecting and tears the session down. |
 
@@ -108,6 +109,11 @@ one id per segment:
 ```javascript
 const { err, pduObjs, smsIds } = await session.sendSms({ from, message, to });
 ```
+
+`err` is set when the SMSC refuses a segment, and it names the status it refused with. Because every
+segment goes on the wire together, `smsIds` then holds the ids of the segments the SMSC did accept —
+retry only what is missing from it. A message needing more than 255 segments is refused before
+anything is sent, since the concatenation header numbers segments in a single octet.
 
 ## Server
 
@@ -143,9 +149,10 @@ if (err) throw err;
 
 smpp.on('session', session => {
 	session.on('sms', async sms => {
-		// Responding is part of the protocol, not optional.
-		// Defaults to ESME_ROK; see the SMPP spec for the other status codes.
+		// Responding is part of the protocol, not optional. Without arguments it answers
+		// ESME_ROK with a generated id; pass your own, and a status to refuse the message.
 		await sms.sendResp();
+		// await sms.sendResp({ smsId: yourOwnId, status: 'ESME_RMSGQFUL' });
 
 		if (sms.dlr) {
 			await sms.sendDlr(); // same as sms.sendDlr('DELIVERED')
@@ -196,12 +203,12 @@ is exactly what this library promises not to do.
 
 | Event | Fires when |
 | --- | --- |
-| `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()` and `sendDlr()`. |
+| `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and the `smsId` it was answered with. |
 | `dlr` | A delivery report arrives, one per segment. |
-| `messageDlr` | Every segment of a multipart message has been reported on. |
+| `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on. |
 | `close` | The connection closed. |
 | `reconnected` | The client re-bound after a drop (only with `reconnect` configured). |
-| `sessionError` | Something failed on a live session. |
+| `sessionError` | Something failed on a live session, including a hook or listener that threw. |
 | `data` | Raw bytes arrived on the socket. |
 | `incomingPdu` | A complete PDU arrived, as a buffer. |
 | `incomingPduObj` | The same PDU, parsed into an object. |
@@ -248,6 +255,8 @@ The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `
   resolving to a result object with an optional `err`. Nothing rejects.
 - **`server()` resolves once, when it is listening**, and gives you a handle with `close()`, `port`
   and a `session` event. It no longer calls your callback once per incoming connection.
+- **The id a message is answered with goes to `sendResp({ smsId })`**, and `sms.smsId` is read-only.
+  Assigning it no longer works, so set the id where the response is sent rather than before it.
 - **`checkuserpass` is now `authenticate`**, takes `{ password, session, systemId, systemType }` and
   returns `false` or `{ userData }`.
 - **Renamed options:** `enqLinkTiming` → `enquireLinkInterval`, server `timeout` → `idleTimeout`.

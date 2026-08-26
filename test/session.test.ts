@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import test, { describe } from 'node:test';
+import type { Dlr } from '../src/dlr.ts';
 import type { PduObject, PduObjectInput } from '../src/pdu.ts';
-import type { Session } from '../src/session.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
+import { DlrMerger } from '../src/dlr-merger.ts';
 import { PduFramer } from '../src/pdu-framer.ts';
+import { ReconnectLoop } from '../src/reconnect-loop.ts';
+import { Session, bindCommands } from '../src/session.ts';
 import { client } from '../src/client.ts';
-import { isCommand, objToPdu, pduToObj } from '../src/pdu.ts';
+import { isCommand, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
 import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
+import { silentLog } from '../src/log.ts';
 
 async function startServer(options: Parameters<typeof server>[0] = {}): Promise<SmppServer> {
 	const { err, server: smpp } = await server({ ...options, port: 0 });
@@ -26,6 +30,86 @@ async function connect(smpp: SmppServer, options: Parameters<typeof client>[0] =
 
 function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
 	return new Promise<T>(resolve => { register(resolve); });
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise(resolve => { setTimeout(resolve, ms); });
+}
+
+/** Polls until the condition holds; false means it never did within the budget. */
+async function waitFor(condition: () => boolean, budget = 2000): Promise<boolean> {
+	const deadline = Date.now() + budget;
+
+	while (!condition()) {
+		if (Date.now() > deadline) return false;
+
+		await delay(5);
+	}
+
+	return true;
+}
+
+function raceWithin<T>(ms: number, promise: Promise<T>): Promise<T | false> {
+	return Promise.race([promise, delay(ms).then((): false => false)]);
+}
+
+type Peer = { close: () => Promise<void>; port: number };
+
+/** Answers binds and nothing else, which is what a link the peer has stopped serving looks like. */
+async function bindOnlyPeer(options: { dropOn?: string } = {}): Promise<Peer> {
+	const sockets: net.Socket[] = [];
+	const listener = net.createServer(sock => {
+		const framer = new PduFramer();
+
+		sockets.push(sock);
+		sock.on('data', chunk => {
+			framer.push(chunk);
+
+			for (const pdu of framer.next().pdus ?? []) {
+				const { pduObj } = pduToObj(pdu);
+
+				if (pduObj && pduObj.cmdName === options.dropOn) {
+					sock.destroy();
+
+					return;
+				}
+
+				if (!pduObj || !bindCommands.includes(pduObj.cmdName)) continue;
+
+				const { buffer } = pduReturn(pduObj, 'ESME_ROK', { system_id: 'silent' });
+
+				if (buffer) sock.write(buffer);
+			}
+		});
+	});
+
+	await new Promise<void>(resolve => { listener.listen(0, resolve); });
+
+	const address = listener.address();
+
+	return {
+		close: async () => {
+			for (const sock of sockets) {
+				sock.destroy();
+			}
+
+			await new Promise<void>(resolve => { listener.close(() => { resolve(); }); });
+		},
+		port: typeof address === 'object' && address !== null ? address.port : 0,
+	};
+}
+
+function enquireLink(seqNr: number): PduObject {
+	return {
+		cmdId: 0x00000015,
+		cmdLength: 16,
+		cmdName: 'enquire_link',
+		cmdStatus: 'ESME_ROK',
+		cmdStatusId: 0,
+		params: {},
+		seqNr,
+		tlvs: {},
+	};
 }
 
 type RawPeer = {
@@ -108,6 +192,42 @@ describe('bind', () => {
 
 		assert.deepEqual(await session.unbind(), {});
 		await smpp.close();
+	});
+
+	// Plenty of SMSCs drop the connection on unbind instead of answering it.
+	test('takes a close that follows our unbind as a clean unbind', async () => {
+		const peer = await bindOnlyPeer({ dropOn: 'unbind' });
+		const { session } = await client({ port: peer.port, responseTimeout: 2000 });
+
+		assert.ok(session);
+		assert.deepEqual(await session.unbind(), {});
+
+		await peer.close();
+	});
+
+	test('still reports a close that lands on another in-flight request', async () => {
+		const peer = await bindOnlyPeer({ dropOn: 'enquire_link' });
+		const { session } = await client({ port: peer.port, responseTimeout: 2000 });
+
+		assert.ok(session);
+
+		const sent = await session.send({ cmdName: 'enquire_link' });
+
+		assert.ok(sent.err instanceof Error);
+		assert.equal(sent.err.message, 'Session closed before a response arrived');
+
+		session.close();
+		await peer.close();
+	});
+
+	test('reports an unbind the peer left unanswered on a link that stays up', async () => {
+		const peer = await bindOnlyPeer();
+		const { session } = await client({ port: peer.port, responseTimeout: 150 });
+
+		assert.ok(session);
+		assert.ok((await session.unbind()).err instanceof Error);
+
+		await peer.close();
 	});
 
 	test('reports the resolved port when 0 was requested', async () => {
@@ -283,8 +403,10 @@ describe('sending', () => {
 
 		const [sms, sent] = await Promise.all([
 			incoming.then(async received => {
-				received.smsId = 'fixed-id';
-				await received.sendResp();
+				const refused = await received.sendResp({ smsId: '' });
+
+				assert.ok(refused.err instanceof Error);
+				await received.sendResp({ smsId: 'fixed-id' });
 
 				return received;
 			}),
@@ -295,6 +417,7 @@ describe('sending', () => {
 		assert.equal(sms.to, '46709771337');
 		assert.equal(sms.message, 'hello world');
 		assert.equal(sms.dlr, false);
+		assert.equal(sms.smsId, 'fixed-id');
 		assert.equal(sent.err, undefined);
 		assert.deepEqual(sent.smsIds, ['fixed-id']);
 
@@ -321,8 +444,7 @@ describe('sending', () => {
 
 		const [sms, sent] = await Promise.all([
 			incoming.then(async received => {
-				received.smsId = 'long-id';
-				await received.sendResp();
+				await received.sendResp({ smsId: 'long-id' });
 
 				return received;
 			}),
@@ -332,6 +454,7 @@ describe('sending', () => {
 		assert.equal(sms.message, message);
 		assert.ok(sms.pduObjs.length > 1);
 		assert.equal(sent.err, undefined);
+		assert.equal(sent.pduObjs.length, 4);
 		assert.deepEqual(sent.smsIds, ['long-id-1', 'long-id-2', 'long-id-3', 'long-id-4']);
 
 		session.close();
@@ -358,6 +481,7 @@ describe('sending', () => {
 		]);
 
 		assert.equal(sms.message, message);
+		assert.match(sms.smsId, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
 		session.close();
 		await smpp.close();
@@ -407,8 +531,7 @@ describe('delivery reports', () => {
 
 		const [sms] = await Promise.all([
 			incoming.then(async received => {
-				received.smsId = 'dlr-id';
-				await received.sendResp();
+				await received.sendResp({ smsId: 'dlr-id' });
 
 				return received;
 			}),
@@ -449,8 +572,7 @@ describe('delivery reports', () => {
 
 		const [sms] = await Promise.all([
 			incoming.then(async received => {
-				received.smsId = 'fail-id';
-				await received.sendResp();
+				await received.sendResp({ smsId: 'fail-id' });
 
 				return received;
 			}),
@@ -504,6 +626,39 @@ describe('delivery reports', () => {
 		assert.match(paramText(receipt.params.short_message), /stat:DELIVRD/);
 
 		peer.close();
+		await smpp.close();
+	});
+
+	test('merges nothing for a message that asked for no receipt', async () => {
+		const smpp = await startServer();
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', session => session.on('sms', resolve));
+		});
+		const { session } = await connect(smpp);
+
+		assert.ok(session);
+
+		const perSegment: string[] = [];
+		let merged = 0;
+
+		session.on('dlr', dlr => perSegment.push(dlr.smsId));
+		session.on('messageDlr', () => { merged++; });
+
+		const [sms] = await Promise.all([
+			incoming.then(async received => {
+				await received.sendResp({ smsId: 'unrequested' });
+
+				return received;
+			}),
+			session.sendSms({ from: '46701113311', message: 'x'.repeat(400), to: '46709771337' }),
+		]);
+
+		await sms.sendDlr();
+
+		assert.deepEqual(perSegment, ['unrequested-1', 'unrequested-2', 'unrequested-3']);
+		assert.equal(merged, 0);
+
+		session.close();
 		await smpp.close();
 	});
 });
@@ -631,5 +786,298 @@ describe('robustness', () => {
 
 		session.close();
 		await smpp.close();
+	});
+
+	test('reports a response it could not send', async () => {
+		const sock = new net.Socket();
+
+		sock.destroy();
+
+		const session = new Session({ sock });
+		const failed = once<Error>(resolve => { session.on('sessionError', resolve); });
+		const sent = await session.sendReturn(enquireLink(7));
+		const reported = await raceWithin(500, failed);
+
+		assert.ok(sent.err instanceof Error);
+		assert.ok(reported instanceof Error, 'a response that never reached the wire should be reported');
+		assert.equal(reported.message, sent.err.message);
+
+		session.close();
+	});
+
+	test('ignores events from the socket it left behind on a reconnect', async () => {
+		const smpp = await startServer();
+
+		smpp.on('session', bound => {
+			bound.on('sms', sms => { void sms.sendResp(); });
+		});
+
+		const { session } = await connect(smpp, { reconnect: { maxDelay: 50, minDelay: 10 } });
+
+		assert.ok(session);
+
+		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+		const dead = session.sock;
+
+		for (const serverSession of smpp.sessions) {
+			serverSession.close();
+		}
+
+		await reconnected;
+
+		let closes = 0;
+
+		session.on('close', () => { closes++; });
+		dead.emit('close');
+
+		const sent = await session.sendSms({
+			from: '46701113311',
+			message: 'still up',
+			to: '46709771337',
+		});
+
+		assert.equal(closes, 0);
+		assert.equal(sent.err, undefined);
+
+		session.close();
+		await smpp.close();
+	});
+
+	test('closes the session when the signal aborts after the bind', async () => {
+		const smpp = await startServer();
+		const controller = new AbortController();
+		const { err, session } = await connect(smpp, { signal: controller.signal });
+
+		assert.equal(err, undefined);
+		assert.ok(session);
+
+		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
+
+		controller.abort();
+
+		assert.ok(await closed);
+		await smpp.close();
+	});
+});
+
+describe('application hooks that throw', () => {
+	test('turns a throwing authenticate into a session error', async () => {
+		const smpp = await startServer({
+			authenticate: () => { throw new Error('authenticate exploded'); },
+		});
+		const failed = once<Error>(resolve => {
+			smpp.on('session', session => { session.on('sessionError', resolve); });
+		});
+		const { err } = await connect(smpp, { responseTimeout: 200 });
+		const reported = await raceWithin(500, failed);
+
+		assert.ok(err instanceof Error);
+		assert.ok(reported instanceof Error, 'a throwing authenticate should reach the session');
+		assert.equal(reported.message, 'authenticate exploded');
+
+		await smpp.close();
+	});
+
+	test('turns a throwing sms listener into a session error', async () => {
+		const smpp = await startServer();
+		const failed = once<Error>(resolve => {
+			smpp.on('session', session => {
+				session.on('sessionError', resolve);
+				session.on('sms', () => { throw new Error('listener exploded'); });
+			});
+		});
+		const { session } = await connect(smpp, { responseTimeout: 200 });
+
+		assert.ok(session);
+
+		const sent = await session.sendSms({
+			from: '46701113311',
+			message: 'blows up the listener',
+			to: '46709771337',
+		});
+		const reported = await raceWithin(500, failed);
+
+		assert.ok(sent.err instanceof Error);
+		assert.ok(reported instanceof Error, 'a throwing sms listener should reach the session');
+		assert.equal(reported.message, 'listener exploded');
+
+		session.close();
+		await smpp.close();
+	});
+
+	test('keeps the reconnect loop alive when connect throws', async () => {
+		let attempts = 0;
+		const loop = new ReconnectLoop({
+			connect: () => {
+				attempts++;
+
+				throw new Error('connect exploded');
+			},
+			log: silentLog,
+			maxDelay: 10,
+			minDelay: 1,
+			onConnected: () => Promise.resolve({}),
+		});
+
+		loop.schedule();
+
+		const retried = await waitFor(() => attempts >= 2);
+
+		loop.stop();
+
+		assert.ok(retried, 'a throwing connect should be retried, not left for the process to die on');
+	});
+
+	test('starts only one reconnect attempt at a time', async () => {
+		let attempts = 0;
+		let finish: (() => void) | undefined;
+		const loop = new ReconnectLoop({
+			connect: () => {
+				attempts++;
+
+				return new Promise(resolve => {
+					finish = () => { resolve({ err: new Error('no socket') }); };
+				});
+			},
+			log: silentLog,
+			maxDelay: 5,
+			minDelay: 1,
+			onConnected: () => Promise.resolve({}),
+		});
+
+		loop.schedule();
+
+		assert.ok(await waitFor(() => attempts === 1));
+
+		// A second drop landing while the first attempt is still inside connect().
+		loop.schedule();
+		await delay(30);
+
+		assert.equal(attempts, 1);
+
+		loop.stop();
+		finish?.();
+	});
+});
+
+describe('link timers', () => {
+	test('closes a client link the peer has stopped answering', async () => {
+		const peer = await bindOnlyPeer();
+		const { err, session } = await client({ enquireLinkInterval: 50, port: peer.port });
+
+		assert.equal(err, undefined);
+		assert.ok(session);
+
+		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
+
+		assert.ok(
+			await raceWithin(1000, closed),
+			'a peer that answers nothing should time the link out',
+		);
+
+		session.close();
+		await peer.close();
+	});
+
+	test('reconnects a link that timed out', async () => {
+		const peer = await bindOnlyPeer();
+		const { session } = await client({
+			enquireLinkInterval: 40,
+			port: peer.port,
+			reconnect: { maxDelay: 20, minDelay: 10 },
+		});
+
+		assert.ok(session);
+
+		const back = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+
+		assert.ok(await raceWithin(2000, back), 'a link that timed out should be reconnected');
+
+		session.close();
+		await peer.close();
+	});
+});
+
+describe('merged delivery report bounds', () => {
+	function receipt(smsId: string): Dlr {
+		return {
+			doneDate: undefined,
+			errorCode: undefined,
+			receipt: undefined,
+			smsId,
+			statusId: 2,
+			statusMsg: 'DELIVERED',
+		};
+	}
+
+	function merger(options: { max?: number; now?: () => number } = {}): DlrMerger {
+		return new DlrMerger({
+			log: silentLog,
+			max: options.max ?? 10,
+			now: options.now ?? (() => 0),
+			timeout: 60,
+		});
+	}
+
+	test('merges the receipts of one message and forgets the group', () => {
+		const dlrMerger = merger();
+
+		dlrMerger.expect(['whole-1', 'whole-2']);
+
+		assert.equal(dlrMerger.collect(receipt('whole-1')), undefined);
+
+		const merged = dlrMerger.collect(receipt('whole-2'));
+
+		assert.ok(merged);
+		assert.equal(merged.smsId, 'whole');
+		assert.equal(merged.segments.length, 2);
+		assert.equal(dlrMerger.size, 0);
+	});
+
+	// Every multipart send registered a group, and only a complete set of receipts ever removed it.
+	test('drops the oldest group once the cap is reached', () => {
+		const dlrMerger = merger({ max: 2 });
+
+		for (const base of ['first', 'second', 'third']) {
+			dlrMerger.expect([`${base}-1`, `${base}-2`]);
+		}
+
+		assert.equal(dlrMerger.size, 2);
+		assert.equal(dlrMerger.collect(receipt('first-1')), undefined);
+		assert.equal(dlrMerger.collect(receipt('first-2')), undefined);
+
+		dlrMerger.clear();
+		assert.equal(dlrMerger.size, 0);
+	});
+
+	test('expires a group whose receipts never all arrived', () => {
+		let now = 0;
+		const dlrMerger = merger({ now: () => now });
+
+		dlrMerger.expect(['late-1', 'late-2']);
+		now = 61;
+
+		assert.equal(dlrMerger.collect(receipt('late-1')), undefined);
+		assert.equal(dlrMerger.size, 0);
+	});
+});
+
+describe('option validation', () => {
+	test('refuses an interface version that cannot go on the wire', async () => {
+		const { err, server: smpp } = await server({ interfaceVersion: 0x100, port: 0 });
+
+		if (smpp) await smpp.close();
+
+		assert.ok(err instanceof Error);
+	});
+
+	test('returns an error rather than rejecting on an impossible port', async () => {
+		const listening = await server({ port: 70_000 });
+
+		assert.ok(listening.err instanceof Error);
+
+		const connected = await client({ port: 70_000 });
+
+		assert.ok(connected.err instanceof Error);
 	});
 });

@@ -8,6 +8,12 @@ import { receiptCodes } from './dlr.ts';
 import { smppDate } from './message.ts';
 import { uuidv7 } from './uuid.ts';
 
+export type SendRespOptions = {
+	/** The id the peer correlates a later delivery receipt by. Defaults to a generated UUID v7. */
+	smsId?: string;
+	status?: ErrorName;
+};
+
 /**
  * A received SMS, and the handle for answering it. Multipart messages arrive as one Sms carrying
  * every segment's PDU.
@@ -21,10 +27,10 @@ export type Sms = {
 	/** Sends a delivery report back to the sender. Defaults to DELIVERED. */
 	sendDlr: (status?: MessageState) => Promise<Result<{ pduObjs: PduObject[] }>>;
 	/** Answers every segment. Part of the protocol, not optional. Defaults to ESME_ROK. */
-	sendResp: (status?: ErrorName) => Promise<VoidResult>;
+	sendResp: (options?: SendRespOptions) => Promise<VoidResult>;
 	session: Session;
-	/** Generated as a UUID v7 unless the application sets its own before answering. */
-	smsId: string;
+	/** The id answered to the peer: what sendResp() was given, or a generated UUID v7. */
+	readonly smsId: string;
 	submitTime: Date;
 	to: string;
 };
@@ -46,6 +52,7 @@ export function createSms(input: SmsInput): Sms {
 	const first = input.pduObjs[0];
 	const registered = first?.params.registered_delivery;
 	const dataCoding = first?.params.data_coding;
+	const answered = { smsId: uuidv7() };
 
 	const sms: Sms = {
 		dlr: typeof registered === 'number' && registered !== 0,
@@ -54,9 +61,11 @@ export function createSms(input: SmsInput): Sms {
 		message: input.message,
 		pduObjs: input.pduObjs,
 		sendDlr: status => sendDlr(sms, status),
-		sendResp: status => sendResp(sms, status),
+		sendResp: options => sendResp(sms, answered, options ?? {}),
 		session: input.session,
-		smsId: uuidv7(),
+		get smsId(): string {
+			return answered.smsId;
+		},
 		submitTime: new Date(),
 		to: input.to,
 	};
@@ -64,17 +73,27 @@ export function createSms(input: SmsInput): Sms {
 	return sms;
 }
 
-async function sendResp(sms: Sms, status: ErrorName = 'ESME_ROK'): Promise<VoidResult> {
+async function sendResp(
+	sms: Sms,
+	answered: { smsId: string },
+	options: SendRespOptions,
+): Promise<VoidResult> {
 	const total = sms.pduObjs.length;
 
 	if (total === 0) {
 		return { err: new Error('No PDUs to answer') };
 	}
 
+	if (options.smsId === '') {
+		return { err: new Error('smsId must not be empty') };
+	}
+
+	if (options.smsId !== undefined) answered.smsId = options.smsId;
+
 	const results = await Promise.all(sms.pduObjs.map((pduObj, index) => sms.session.sendReturn(
 		pduObj,
-		status,
-		{ message_id: segmentId(sms.smsId, index, total) },
+		options.status ?? 'ESME_ROK',
+		{ message_id: segmentId(answered.smsId, index, total) },
 	)));
 
 	return results.find(result => result.err) ?? {};
