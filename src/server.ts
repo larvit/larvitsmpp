@@ -1,14 +1,15 @@
 import type { LogInt } from '@larvit/log';
-import type { PduObject } from './pdu.ts';
+import type { PduObject, TlvInput } from './pdu.ts';
 import type { Result } from './result.ts';
 import type { Server as NetServer, Socket } from 'node:net';
-import type { TlsOptions } from 'node:tls';
+import type { Server as TlsServer, TlsOptions } from 'node:tls';
 import { EventEmitter } from 'node:events';
 import { Session } from './session.ts';
 import { createServer as createNetServer } from 'node:net';
 import { createServer as createTlsServer } from 'node:tls';
 import { paramText } from './defs/types.ts';
 import { silentLog } from './log.ts';
+import { tlvs } from './defs/tlvs.ts';
 
 export type AuthenticateResult = { userData?: unknown } | boolean;
 
@@ -44,6 +45,7 @@ const defaults = {
 };
 
 const bindCommands = ['bind_receiver', 'bind_transceiver', 'bind_transmitter'];
+const scInterfaceVersion = 0x34;
 
 /** A listening SMPP server. Sessions arrive as `session` events; `close()` stops listening. */
 export class SmppServer extends EventEmitter<ServerEvents> {
@@ -101,6 +103,25 @@ async function authenticate(
 }
 
 /**
+ * A peer that declared below 0x34 must not be sent optional parameters at all; above it, an ESME
+ * reads a missing sc_interface_version as this SMSC having none.
+ */
+function bindRespTlvs(pduObj: PduObject): Record<string, TlvInput> | undefined {
+	const declared = pduObj.params.interface_version;
+	const definition = tlvs.sc_interface_version;
+
+	if (!definition || typeof declared !== 'number' || declared < scInterfaceVersion) return undefined;
+
+	return {
+		sc_interface_version: {
+			tagId: definition.id,
+			tagName: definition.tag,
+			tagValue: scInterfaceVersion,
+		},
+	};
+}
+
+/**
  * Handles everything a peer may send before it is bound. Returns true when it has answered, so the
  * session leaves the PDU alone.
  */
@@ -128,7 +149,7 @@ async function onRequest(
 	}
 
 	session.loggedIn = true;
-	await session.sendReturn(pduObj);
+	await session.sendReturn(pduObj, 'ESME_ROK', {}, bindRespTlvs(pduObj));
 	log.verbose('server - bound', { systemId: paramText(pduObj.params.system_id) });
 
 	return true;
@@ -158,15 +179,33 @@ function onConnection(sock: Socket, options: ServerOptions, server: SmppServer):
 	server.emit('session', session);
 }
 
+/** Node reports a rejected handshake as `tlsClientError`, which is never an `error` event. */
+function createSecureListener(tlsOptions: TlsOptions, log: LogInt): TlsServer {
+	const listener = createTlsServer(tlsOptions);
+
+	listener.on('tlsClientError', err => {
+		log.warn('server - client handshake failed', { message: err.message });
+	});
+
+	return listener;
+}
+
 /** Starts listening for SMPP connections. Resolves once the socket is bound. */
 export function server(options: ServerOptions = {}): Promise<Result<{ server: SmppServer }>> {
 	return new Promise(resolve => {
 		const log = options.log ?? silentLog;
 		const port = options.port ?? defaults.port;
 		const useTls = options.tls !== undefined && options.tls !== false;
-		const listener = useTls
-			? createTlsServer(typeof options.tls === 'object' ? options.tls : {})
-			: createNetServer();
+		const tlsOptions = typeof options.tls === 'object' ? options.tls : undefined;
+
+		if (useTls && !tlsOptions) {
+			log.warn('server - tls without a certificate', { port });
+			resolve({ err: new Error('Listening over TLS needs tls: { cert, key }') });
+
+			return;
+		}
+
+		const listener = tlsOptions ? createSecureListener(tlsOptions, log) : createNetServer();
 		const smpp = new SmppServer(listener);
 
 		listener.on(useTls ? 'secureConnection' : 'connection', (sock: Socket) => {

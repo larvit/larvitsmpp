@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import test, { describe } from 'node:test';
+import type { PduObject } from '../src/pdu.ts';
 import type { Session } from '../src/session.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import { client } from '../src/client.ts';
-import { isCommand } from '../src/pdu.ts';
+import { isCommand, objToPdu, pduToObj } from '../src/pdu.ts';
 import { server } from '../src/server.ts';
 
 async function startServer(options: Parameters<typeof server>[0] = {}): Promise<SmppServer> {
@@ -23,6 +24,30 @@ async function connect(smpp: SmppServer, options: Parameters<typeof client>[0] =
 
 function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
 	return new Promise<T>(resolve => { register(resolve); });
+}
+
+/** Binds off a raw socket, which is the only way to declare a version the client cannot. */
+async function bindRaw(smpp: SmppServer, interfaceVersion: number): Promise<PduObject> {
+	const { buffer } = objToPdu({
+		cmdName: 'bind_transceiver',
+		params: { interface_version: interfaceVersion, password: 'pass', system_id: 'user' },
+	});
+
+	assert.ok(buffer);
+
+	const sock = net.connect({ port: smpp.port });
+	const response = await once<Buffer>(resolve => {
+		sock.on('connect', () => { sock.write(buffer); });
+		sock.once('data', resolve);
+	});
+
+	sock.destroy();
+
+	const { pduObj } = pduToObj(response);
+
+	assert.ok(pduObj);
+
+	return pduObj;
 }
 
 describe('bind', () => {
@@ -116,6 +141,33 @@ describe('bind', () => {
 
 		await byDefault.unbind();
 		await asFive.unbind();
+		await smpp.close();
+	});
+
+	test('tells a 3.4 peer the version it supports in the bind response', async () => {
+		const smpp = await startServer();
+		const asThreeFour = await bindRaw(smpp, 0x34);
+		const asFive = await bindRaw(smpp, 0x50);
+
+		assert.equal(asThreeFour.cmdName, 'bind_transceiver_resp');
+		assert.equal(asThreeFour.cmdStatus, 'ESME_ROK');
+		assert.deepEqual(asThreeFour.tlvs.sc_interface_version, {
+			tagId: 0x0210,
+			tagName: 'sc_interface_version',
+			tagValue: 0x34,
+		});
+		assert.equal(asFive.tlvs.sc_interface_version?.tagValue, 0x34);
+
+		await smpp.close();
+	});
+
+	test('sends no optional parameters to a peer declaring less than 3.4', async () => {
+		const smpp = await startServer();
+		const bound = await bindRaw(smpp, 0x00);
+
+		assert.equal(bound.cmdStatus, 'ESME_ROK');
+		assert.deepEqual(bound.tlvs, {});
+
 		await smpp.close();
 	});
 });

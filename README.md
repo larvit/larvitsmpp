@@ -166,7 +166,7 @@ await smpp.close();      // stop listening and close every live session
 | --- | --- | --- |
 | `host` / `port` | all interfaces / `2775` | Where to listen. Pass `0` for any free port. |
 | `authenticate` | accept everything | `({ password, session, systemId, systemType }) => false \| { userData }`, sync or async. |
-| `tls` | `false` | `true`, or a `tls.TlsOptions` object with your certificate and key. |
+| `tls` | `false` | A `tls.TlsOptions` object with your certificate and key. |
 | `idleTimeout` | `40000` | Drop a peer that has been silent this long. |
 | `maxReassembly` | `1000` | Incomplete multipart messages held per session. |
 | `reassemblyTimeout` | `300000` | How long an incomplete multipart message is held. |
