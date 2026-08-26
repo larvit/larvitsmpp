@@ -139,3 +139,11 @@ exactly 140.
   peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
 - `assert.equal` from `node:assert/strict` narrows its first argument, so a following `?.` on the
   same value is flagged as unnecessary. Assert once with `assert.ok(x)` and use plain access after.
+
+## Decisions
+
+- **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
+  adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image
+  `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI
+  and fail on every developer machine, and a committed key leaks in a public repository. Valid while
+  the dev image has no openssl.
