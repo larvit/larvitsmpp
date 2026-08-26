@@ -5,7 +5,7 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 136 tests, lint and typecheck clean, verified on Node
+The rewrite is **feature complete and green**: 137 tests, lint and typecheck clean, verified on Node
 18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
@@ -62,10 +62,6 @@ Every defect listed in the AGENTS.md table has a regression test naming the beha
 
 ## Before publishing 1.0.0
 
-- [ ] **Decide the `interface_version` default.** Binds now declare 0x50, which is what 0.4.0's own
-      command table intended but never applied — it actually sent 0x00. 0x34 (SMPP 3.4) is the more
-      conservative choice and is what most SMSCs implement. Flagged to the maintainer; the README
-      documents 0x50 and the `interfaceVersion` option overrides it either way.
 - [ ] Create the `@larvit/smpp` package on npm and add `NPM_TOKEN` to the repository secrets, which
       `.github/workflows/release.yaml` needs.
 - [ ] Tag `v1.0.0` to publish.
@@ -78,6 +74,10 @@ Every defect listed in the AGENTS.md table has a regression test naming the beha
 - [ ] **In-flight sends across a reconnect.** They currently fail with "Session closed before a
       response arrived" and the caller retries. Re-queueing them automatically would be friendlier
       but risks duplicate delivery, so it needs a decision before it is built.
+- [ ] **The server never returns the `sc_interface_version` TLV.** The 3.4 spec has an ESME read its
+      absence from a bind response as "this SMSC does not support optional parameters", and ours
+      does send DLR TLVs. Returning it has to be conditional: a peer that declared below 0x34 must
+      not be sent optional parameters at all.
 - [ ] **TLS is untested.** The code path is right (`tls.connect` / `tls.createServer`, options
       passed through) but no test exercises a handshake. Needs a self-signed certificate fixture.
 - [ ] **`submit_multi` and the broadcast commands** encode and decode, but nothing exercises them

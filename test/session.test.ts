@@ -5,6 +5,7 @@ import type { Session } from '../src/session.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import { client } from '../src/client.ts';
+import { isCommand } from '../src/pdu.ts';
 import { server } from '../src/server.ts';
 
 async function startServer(options: Parameters<typeof server>[0] = {}): Promise<SmppServer> {
@@ -91,6 +92,30 @@ describe('bind', () => {
 
 		// 0x00000004 is ESME_RINVBNDSTS
 		assert.equal(await responded, '00000010800000150000000400000001');
+		await smpp.close();
+	});
+
+	test('declares SMPP 3.4 by default and the version the caller asks for', async () => {
+		const smpp = await startServer();
+		const declared: (number | undefined)[] = [];
+
+		smpp.on('session', session => {
+			session.on('incomingPduObj', pduObj => {
+				if (isCommand(pduObj, 'bind_transceiver')) {
+					declared.push(pduObj.params.interface_version);
+				}
+			});
+		});
+
+		const { session: byDefault } = await connect(smpp);
+		const { session: asFive } = await connect(smpp, { interfaceVersion: 0x50 });
+
+		assert.ok(byDefault);
+		assert.ok(asFive);
+		assert.deepEqual(declared, [0x34, 0x50]);
+
+		await byDefault.unbind();
+		await asFive.unbind();
 		await smpp.close();
 	});
 });

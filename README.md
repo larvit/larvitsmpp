@@ -77,7 +77,8 @@ Every one is optional.
 | `host` / `port` | `localhost` / `2775` | Where to connect. |
 | `username` / `password` | `user` / `pass` | Bind credentials (`system_id` and `password`). |
 | `bindType` | `transceiver` | `transceiver`, `transmitter` or `receiver`. |
-| `systemType`, `addressRange`, `addrTon`, `addrNpi`, `interfaceVersion` | `''`, `''`, `0`, `0`, `0x50` | The remaining bind fields, for operators that require them. |
+| `interfaceVersion` | `0x34` | The SMPP version declared at bind. `0x50` for an SMSC that requires SMPP 5.0. |
+| `systemType`, `addressRange`, `addrTon`, `addrNpi` | `''`, `''`, `0`, `0` | The remaining bind fields, for operators that require them. |
 | `tls` | `false` | `true` for defaults, or a `tls.ConnectionOptions` object for a private CA or a client certificate. |
 | `enquireLinkInterval` | `20000` | How often to send `enquire_link` on a quiet link. |
 | `responseTimeout` | `30000` | How long to wait for a response before giving up on it. |
@@ -275,8 +276,9 @@ have worked around any of these, remove the workaround:
   reported the full length, so it went out corrupt. In UCS2 that is any message ending in a
   character like 一 (U+4E00), which made the bug routine for CJK text.
 - Short or malformed PDUs threw out of the codec instead of being reported as a parse failure.
-- Binds now declare `interface_version` 0x50. 0.4.0 declared 0x00, because the default in its own
-  command table was never applied. Pass `interfaceVersion: 0x34` to bind as SMPP 3.4.
+- Binds now declare `interface_version` 0x34. 0.4.0 declared 0x00, which tells the SMSC the ESME
+  speaks SMPP 3.3 or earlier — and a spec-following SMSC then withholds every optional parameter,
+  including the TLVs delivery receipts are carried in.
 - `submit_multi` was missing its `sm_length` field, so its `short_message` never round-tripped.
 
 The corrected framing is cross-checked against [node-smpp](https://github.com/farhadi/node-smpp), an

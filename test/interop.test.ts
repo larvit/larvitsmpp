@@ -69,7 +69,7 @@ describe('our encoder against the reference parser', () => {
 		const parsed = referenceParse(ourBuffer({
 			cmdName: 'bind_transceiver',
 			params: {
-				interface_version: 0x50,
+				interface_version: 0x34,
 				password: 'bar',
 				system_id: 'foo',
 				system_type: 'smpp',
@@ -80,7 +80,7 @@ describe('our encoder against the reference parser', () => {
 		assert.equal(parsed.command, 'bind_transceiver');
 		assert.equal(parsed.system_id, 'foo');
 		assert.equal(parsed.password, 'bar');
-		assert.equal(parsed.interface_version, 0x50);
+		assert.equal(parsed.interface_version, 0x34);
 	});
 
 	test('a deliver_sm carrying delivery receipt TLVs', () => {

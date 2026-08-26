@@ -33,8 +33,8 @@ const defaults = {
 	bindType: 'transceiver',
 	enquireLinkInterval: 20_000,
 	host: 'localhost',
-	/** SMPP 5.0. 0.4.0 declared 0x00 because its per-parameter default was never applied. */
-	interfaceVersion: 0x50,
+	/** SMPP 3.4. The 3.4 spec reserves every value above it, so 0x50 is undefined to a 3.4 SMSC. */
+	interfaceVersion: 0x34,
 	password: 'pass',
 	port: 2775,
 	username: 'user',
