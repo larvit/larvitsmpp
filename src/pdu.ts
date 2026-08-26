@@ -1,7 +1,7 @@
-import type { CommandName, PduParams, PduParamsInput } from './defs/commands.ts';
+import type { CommandDefinition, CommandName, PduParams, PduParamsInput } from './defs/commands.ts';
 import type { ErrorName } from './defs/errors.ts';
 import type { ParamValue } from './defs/types.ts';
-import type { Result } from './result.ts';
+import type { Result, VoidResult } from './result.ts';
 import type { Tlv } from './defs/tlvs.ts';
 import { cmds, commandNameById, isCommandName } from './defs/commands.ts';
 import { consts } from './defs/constants.ts';
@@ -79,46 +79,31 @@ function tagIdOf(name: string, input: TlvInput): Result<{ tagId: number }> {
 	return { tagId };
 }
 
-function buildPdu(
-	cmdName: CommandName,
-	cmdStatus: ErrorName,
-	seqNr: number,
+/** Encoding a string short_message also settles data_coding and sm_length. */
+function resolveShortMessage(
 	params: Record<string, ParamValue | undefined>,
-	tlvs: Record<string, TlvInput> | undefined,
-): Result<{ buffer: Buffer }> {
-	const definition = cmds[cmdName];
+): Record<string, ParamValue | undefined> {
+	const message = params.short_message;
 
-	if (!definition) {
-		return { err: new Error(`Invalid cmdName: ${JSON.stringify(cmdName)}`) };
-	}
+	if (typeof message !== 'string') return { ...params };
 
-	if (!isErrorName(cmdStatus)) {
-		return { err: new Error(`Invalid cmdStatus: ${JSON.stringify(cmdStatus)}`) };
-	}
+	const dataCoding = params.data_coding;
+	const encoding = typeof dataCoding === 'number' ? encodingByDataCoding(dataCoding) : detect(message);
+	const encoded = encodeMessage(message, encoding);
 
-	if (!Number.isInteger(seqNr) || seqNr < 0 || seqNr > maxSeqNr) {
-		return { err: new Error(`Invalid seqNr: ${JSON.stringify(seqNr)}`) };
-	}
+	return {
+		...params,
+		data_coding: typeof dataCoding === 'number' ? dataCoding : consts.ENCODING[encoded.encoding],
+		short_message: encoded.buffer,
+		sm_length: encoded.buffer.length,
+	};
+}
 
-	const resolved = { ...params };
-	const message = resolved.short_message;
-
-	// A string short_message is encoded here, which also settles data_coding and sm_length.
-	if (typeof message === 'string') {
-		const dataCoding = resolved.data_coding;
-		const encoding = typeof dataCoding === 'number'
-			? encodingByDataCoding(dataCoding)
-			: detect(message);
-		const encoded = encodeMessage(message, encoding);
-
-		resolved.short_message = encoded.buffer;
-		resolved.sm_length = encoded.buffer.length;
-
-		if (typeof dataCoding !== 'number') {
-			resolved.data_coding = consts.ENCODING[encoded.encoding];
-		}
-	}
-
+function writeParams(
+	definition: CommandDefinition,
+	resolved: Record<string, ParamValue | undefined>,
+	cmdName: CommandName,
+): Result<{ chunks: Buffer[] }> {
 	const chunks: Buffer[] = [];
 
 	for (const [name, type] of Object.entries(definition.params ?? {})) {
@@ -138,6 +123,12 @@ function buildPdu(
 
 		chunks.push(chunk);
 	}
+
+	return { chunks };
+}
+
+function writeTlvs(tlvs: Record<string, TlvInput> | undefined): Result<{ chunks: Buffer[] }> {
+	const chunks: Buffer[] = [];
 
 	for (const [name, tlv] of Object.entries(tlvs ?? {})) {
 		const tag = tagIdOf(name, tlv);
@@ -169,7 +160,39 @@ function buildPdu(
 		chunks.push(chunk);
 	}
 
-	const body = Buffer.concat(chunks);
+	return { chunks };
+}
+
+function buildPdu(
+	cmdName: CommandName,
+	cmdStatus: ErrorName,
+	seqNr: number,
+	params: Record<string, ParamValue | undefined>,
+	tlvs: Record<string, TlvInput> | undefined,
+): Result<{ buffer: Buffer }> {
+	const definition = cmds[cmdName];
+
+	if (!definition) {
+		return { err: new Error(`Invalid cmdName: ${JSON.stringify(cmdName)}`) };
+	}
+
+	if (!isErrorName(cmdStatus)) {
+		return { err: new Error(`Invalid cmdStatus: ${JSON.stringify(cmdStatus)}`) };
+	}
+
+	if (!Number.isInteger(seqNr) || seqNr < 0 || seqNr > maxSeqNr) {
+		return { err: new Error(`Invalid seqNr: ${JSON.stringify(seqNr)}`) };
+	}
+
+	const written = writeParams(definition, resolveShortMessage(params), cmdName);
+
+	if (written.err) return { err: written.err };
+
+	const writtenTlvs = writeTlvs(tlvs);
+
+	if (writtenTlvs.err) return { err: writtenTlvs.err };
+
+	const body = Buffer.concat([...written.chunks, ...writtenTlvs.chunks]);
 	const header = Buffer.alloc(16);
 
 	header.writeUInt32BE(body.length + 16, 0);
@@ -223,22 +246,11 @@ function parseTlvs(
 	return { offset, tlvs };
 }
 
-function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolean; pduObj: PduObject }> {
-	const cmdLength = pdu.readUInt32BE(0);
-	const cmdId = pdu.readUInt32BE(4);
-	const cmdName = commandNameById(cmdId);
-
-	if (!cmdName) {
-		return { err: new Error(`Unknown PDU command id: ${String(cmdId)}`) };
-	}
-
-	const cmdStatusId = pdu.readUInt32BE(8);
-	const seqNr = pdu.readUInt32BE(12);
-
-	if (seqNr > maxSeqNr) {
-		return { err: new Error(`Invalid seqNr, exceeds ${String(maxSeqNr)}: ${String(seqNr)}`) };
-	}
-
+function readParams(
+	cmdName: CommandName,
+	pdu: Buffer,
+	trailingNull: boolean,
+): Result<{ offset: number; params: Record<string, ParamValue> }> {
 	const params: Record<string, ParamValue> = {};
 	let offset = 16;
 
@@ -255,10 +267,34 @@ function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolea
 		if (name === 'short_message' && trailingNull) offset++;
 	}
 
-	const parsed = parseTlvs(pdu, offset, cmdLength);
+	return { offset, params };
+}
+
+function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolean; pduObj: PduObject }> {
+	const cmdLength = pdu.readUInt32BE(0);
+	const cmdId = pdu.readUInt32BE(4);
+	const cmdName = commandNameById(cmdId);
+
+	if (!cmdName) {
+		return { err: new Error(`Unknown PDU command id: ${String(cmdId)}`) };
+	}
+
+	const cmdStatusId = pdu.readUInt32BE(8);
+	const seqNr = pdu.readUInt32BE(12);
+
+	if (seqNr > maxSeqNr) {
+		return { err: new Error(`Invalid seqNr, exceeds ${String(maxSeqNr)}: ${String(seqNr)}`) };
+	}
+
+	const read = readParams(cmdName, pdu, trailingNull);
+
+	if (read.err) return { err: read.err };
+
+	const parsed = parseTlvs(pdu, read.offset, cmdLength);
 
 	if (parsed.err) return { err: parsed.err };
 
+	const params = read.params;
 	const message = params.short_message;
 	const esmClass = numberOr(params.esm_class, 0);
 
@@ -282,7 +318,7 @@ function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolea
 	};
 }
 
-export function pduToObj(pdu: Buffer): Result<{ pduObj: PduObject }> {
+function checkFraming(pdu: Buffer): VoidResult {
 	if (pdu.length < 16) {
 		return { err: new Error(`PDU is too short, minimum is 16 octets, got ${String(pdu.length)}`) };
 	}
@@ -297,6 +333,14 @@ export function pduToObj(pdu: Buffer): Result<{ pduObj: PduObject }> {
 		return { err: new Error(`cmd_length ${String(cmdLength)} exceeds the ${String(pdu.length)} octets given`) };
 	}
 
+	return {};
+}
+
+export function pduToObj(pdu: Buffer): Result<{ pduObj: PduObject }> {
+	const framing = checkFraming(pdu);
+
+	if (framing.err) return { err: framing.err };
+
 	const plain = parseOnce(pdu, false);
 
 	if (!plain.err && plain.aligned) return { pduObj: plain.pduObj };
@@ -309,6 +353,25 @@ export function pduToObj(pdu: Buffer): Result<{ pduObj: PduObject }> {
 	if (!padded.err) return { pduObj: padded.pduObj };
 
 	return { err: plain.err };
+}
+
+/** Fields the response shares with the request are echoed back unless the caller overrode them. */
+function echoParams(
+	respName: CommandName,
+	pdu: PduObject,
+	params: Record<string, ParamValue>,
+): Record<string, ParamValue> {
+	const respParams: Record<string, ParamValue> = { ...params };
+
+	for (const name of Object.keys(cmds[respName]?.params ?? {})) {
+		const value = pdu.params[name];
+
+		if (respParams[name] === undefined && value !== undefined) {
+			respParams[name] = value;
+		}
+	}
+
+	return respParams;
 }
 
 export function pduReturn(
@@ -329,16 +392,5 @@ export function pduReturn(
 		return { err: new Error(`"${pdu.cmdName}" has no response command`) };
 	}
 
-	const respParams: Record<string, ParamValue> = { ...params };
-
-	// Fields the response shares with the request are echoed back unless the caller overrode them.
-	for (const name of Object.keys(cmds[respName]?.params ?? {})) {
-		const value = pdu.params[name];
-
-		if (respParams[name] === undefined && value !== undefined) {
-			respParams[name] = value;
-		}
-	}
-
-	return buildPdu(respName, status, pdu.seqNr, respParams, tlvs);
+	return buildPdu(respName, status, pdu.seqNr, echoParams(respName, pdu, params), tlvs);
 }

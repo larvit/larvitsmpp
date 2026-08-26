@@ -77,8 +77,10 @@ Every defect listed in the AGENTS.md table has a regression test naming the beha
 - [ ] **`session.ts` is 459 lines.** The one seam left in it is a socket-to-PDU transport, which
       would move the deliberately public `sock` field out of `Session` or turn it into a getter —
       a public-surface change, so it waits for a decision.
-- [ ] **`buildPdu` and `dlrFromPdu` carry a complexity of 22.** `eslint.config.js` holds them at
-      that ceiling rather than below the repo-wide 10, so neither can grow but neither shrinks.
+- [ ] **Group the session's collaborators under `src/session/`.** Only `session.ts` imports
+      `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `reconnect-loop`, `pending-requests`
+      and `send-sms`, so the directory would make that boundary visible. Do it on the next
+      extraction out of `session.ts`, not as a move of its own.
 - [ ] **`submit_multi` and the broadcast commands** encode and decode, but nothing exercises them
       end to end. The interop suite is the natural place.
 - [ ] **Move to TypeScript 7** once `typescript-eslint` supports it; `renovate.json` pins TypeScript

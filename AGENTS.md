@@ -154,6 +154,20 @@ exactly 140.
 
 ## Decisions
 
+- **The published surface is frozen at what `src/index.ts` exports today.** `Session` is exported and
+  publicly constructible, which is why `SessionOptions` and `ReconnectOptions` are public too — that
+  is correct, not a leak, and it has been raised twice. The collaborators `session.ts` delegates to
+  (`Reassembler`, `PendingRequests`, `SendWindow`, `ReconnectLoop`, `LinkTimers`, `DlrMerger`,
+  `submitSms`) stay unpublished so they can be reshaped.
+- **The sub-3.4 optional-parameter rule is a predicate, not a chokepoint.** `acceptsOptionalParams()`
+  is consulted by the library's own senders; `session.send({ tlvs })` is passed through as written,
+  because silently stripping a caller's explicit TLVs off a deliberately public low-level surface
+  would be worse than sending them. The guarantee is "what this library sends honours the rule",
+  never "the session cannot send optional parameters to an old peer".
+- **Only the server feeds `peerInterfaceVersion`.** `acceptBind()` records what the peer declared;
+  the client never reads `sc_interface_version` out of its bind response, so a client session is
+  permissive. That is not a defect today — this library's ESME direction sends no TLVs at all — but
+  anyone adding a client-side TLV owes the other half of the feed.
 - **The library speaks SMPP 3.4 on the wire, and `defs/` keeps the 5.0 tables as a superset.**
   Maintainer's call, 2026-08-26: 3.4 is what SMSCs actually run, while the wider tables let the codec
   parse and build whatever a peer sends. The declared version is an option on both `client()` and

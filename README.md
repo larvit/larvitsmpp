@@ -171,7 +171,7 @@ await smpp.close();      // stop listening and close every live session
 | `tls` | `false` | A `tls.TlsOptions` object with your certificate and key. |
 | `idleTimeout` | `40000` | Drop a peer that has been silent this long. |
 | `maxReassembly` | `1000` | Incomplete multipart messages held per session. |
-| `reassemblyTimeout` | `300000` | How long an incomplete multipart message is held. |
+| `reassemblyTimeout` | `300000` | How long a late segment can still join an incomplete message. |
 | `responseTimeout`, `maxOutstanding`, `log`, `signal` | as for the client | |
 
 ## Errors
@@ -217,6 +217,11 @@ const { err, pduObj } = await session.send({
 	params: { message_id: smsId },
 });
 ```
+
+`acceptsOptionalParams()` answers whether the peer declared SMPP 3.4 or later, which is the version
+at and above which the spec allows optional parameters to be sent to it; `peerInterfaceVersion` is
+the raw value it declared. The library's own senders consult the first before attaching a TLV — a
+`send()` you build yourself is passed through as written, so consult it too when you attach TLVs.
 
 ## Working with PDUs directly
 

@@ -84,20 +84,23 @@ describe('dlrFromPdu()', () => {
 		assert.equal(dlr.doneDate?.toISOString(), '2025-08-25T14:31:00.000Z');
 	});
 
-	test('maps every spec status code back to its message state', () => {
-		for (const [code, expected] of [
-			['DELIVRD', 'DELIVERED'],
-			['UNDELIV', 'UNDELIVERABLE'],
-			['EXPIRED', 'EXPIRED'],
-			['DELETED', 'DELETED'],
-			['ACCEPTD', 'ACCEPTED'],
-			['REJECTD', 'REJECTED'],
-			['ENROUTE', 'ENROUTE'],
-			['UNKNOWN', 'UNKNOWN'],
-		]) {
-			const dlr = dlrFromPdu(deliverSm(`id:x stat:${String(code)} err:0`));
+	test('maps every spec status code back to its message state and id', () => {
+		for (const [code, expected, statusId] of [
+			['DELIVRD', 'DELIVERED', 2],
+			['UNDELIV', 'UNDELIVERABLE', 5],
+			['EXPIRED', 'EXPIRED', 3],
+			['DELETED', 'DELETED', 4],
+			['ACCEPTD', 'ACCEPTED', 6],
+			['REJECTD', 'REJECTED', 8],
+			['ENROUTE', 'ENROUTE', 1],
+			['UNKNOWN', 'UNKNOWN', 7],
+			['delivrd', 'DELIVERED', 2],
+		] as const) {
+			const dlr = dlrFromPdu(deliverSm(`id:x stat:${code} err:0`));
 
-			assert.equal(dlr?.statusMsg, expected);
+			assert.ok(dlr);
+			assert.equal(dlr.statusMsg, expected);
+			assert.equal(dlr.statusId, statusId);
 		}
 	});
 

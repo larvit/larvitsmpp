@@ -120,6 +120,21 @@ describe('encoding submit_sm', () => {
 		);
 	});
 
+	test('encodes a string short_message with the given data_coding instead of a detected one', () => {
+		const pdu = encode({
+			cmdName: 'submit_sm',
+			params: {
+				data_coding: 0x08,
+				destination_addr: '46709771337',
+				short_message: 'hi',
+				source_addr: '46701113311',
+			},
+			seqNr: 12,
+		});
+
+		assert.equal(pdu.subarray(-7).toString('hex'), '08000400680069');
+	});
+
 	test('keeps a UDH-carrying short_message as a buffer', () => {
 		const message = Buffer.concat([
 			Buffer.from('050003010101', 'hex'),

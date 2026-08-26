@@ -72,6 +72,8 @@ export type SessionOptions = {
 	systemId?: string | undefined;
 };
 
+export const defaultSystemId = '';
+
 const defaults = {
 	maxDelay: 30_000,
 	maxOutstanding: 10,
@@ -79,7 +81,7 @@ const defaults = {
 	minDelay: 1000,
 	reassemblyTimeout: 300_000,
 	responseTimeout: 30_000,
-	systemId: '',
+	systemId: defaultSystemId,
 };
 
 export const bindCommands: readonly string[] = [

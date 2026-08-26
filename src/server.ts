@@ -4,7 +4,7 @@ import type { Result } from './result.ts';
 import type { Server as NetServer, Socket } from 'node:net';
 import type { Server as TlsServer, TlsOptions } from 'node:tls';
 import { EventEmitter } from 'node:events';
-import { Session, bindCommands } from './session.ts';
+import { Session, bindCommands, defaultSystemId } from './session.ts';
 import { createServer as createNetServer } from 'node:net';
 import { createServer as createTlsServer } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
@@ -45,7 +45,7 @@ const defaults = {
 	idleTimeout: 40_000,
 	interfaceVersion: defaultInterfaceVersion,
 	port: 2775,
-	systemId: '',
+	systemId: defaultSystemId,
 };
 
 /** A listening SMPP server. Sessions arrive as `session` events; `close()` stops listening. */

@@ -39,13 +39,9 @@ export default tseslint.config(
 		rules: { 'max-lines': 'off' },
 	},
 	{
-		// The codec branches per wire type and per parameter; splitting it scatters the wire format
-		// across files instead. These two keep the ceiling they have today.
-		files: ['src/dlr.ts', 'src/pdu.ts'],
-		rules: {
-			complexity: ['error', 22],
-			'max-lines-per-function': ['error', { max: 75, skipBlankLines: true, skipComments: true }],
-		},
+		// ESLint counts every ?. and ?? in dlrFromPdu as a branch; the 19 is 26 lines of flat field resolution.
+		files: ['src/dlr.ts'],
+		rules: { complexity: ['error', 19] },
 	},
 	{
 		// ESC (0x1B) is the GSM 03.38 escape character, so it belongs in these patterns.

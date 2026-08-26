@@ -120,6 +120,7 @@ export function parseReceipt(message: string): Receipt {
 export function dlrFromPdu(pduObj: PduObject): Dlr | undefined {
 	const message = pduObj.params.short_message;
 	const receipt = typeof message === 'string' ? parseReceipt(message) : undefined;
+	const receiptState = receiptStates[receipt?.stat?.toUpperCase() ?? ''];
 
 	const tlvState = pduObj.tlvs.message_state?.tagValue;
 	const tlvId = pduObj.tlvs.receipted_message_id?.tagValue;
@@ -132,13 +133,13 @@ export function dlrFromPdu(pduObj: PduObject): Dlr | undefined {
 
 	const statusMsg = typeof tlvState === 'number'
 		? constsById.MESSAGE_STATE?.[tlvState]
-		: receiptStates[receipt?.stat?.toUpperCase() ?? ''];
+		: receiptState;
 
 	if (statusMsg === undefined) return undefined;
 
 	const statusId = typeof tlvState === 'number'
 		? tlvState
-		: consts.MESSAGE_STATE[receiptStates[receipt?.stat?.toUpperCase() ?? ''] ?? 'UNKNOWN'];
+		: consts.MESSAGE_STATE[receiptState ?? 'UNKNOWN'];
 
 	return {
 		doneDate: receiptDate(receipt?.doneDate),
