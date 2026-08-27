@@ -2,7 +2,7 @@ import type { ErrorName } from './defs/errors.ts';
 import type { MessageDlr } from './dlr-merger.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
-import type { ReconnectOptions, SendOptions, SessionEvents, SessionOptions } from './session-options.ts';
+import type { BindType, ReconnectOptions, SendOptions, SessionEvents, SessionOptions } from './session-options.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { SendSmsOptions, SendSmsResult } from './send-sms.ts';
 import type { SmppLog } from './log.ts';
@@ -16,7 +16,7 @@ import { PendingRequests } from './pending-requests.ts';
 import { ReconnectLoop } from './reconnect-loop.ts';
 import { SendWindow } from './send-window.ts';
 import { optionalParamsMinVersion } from './defs/constants.ts';
-import { bindCommands, defaultSystemId, defaults } from './session-options.ts';
+import { bindCarries, bindCommands, defaultSystemId, defaults } from './session-options.ts';
 import { isResp, objToPdu, pduReturn, pduToObj } from './pdu.ts';
 import { silentLog } from './log.ts';
 import { submitSms } from './send-sms.ts';
@@ -30,6 +30,7 @@ export type {
 	SessionEvents,
 	SessionOptions,
 };
+export type { BindType };
 export { bindCommands, defaultSystemId };
 
 export class Session extends EventEmitter<SessionEvents> {
@@ -37,6 +38,8 @@ export class Session extends EventEmitter<SessionEvents> {
 	sock: Socket;
 	readonly log: SmppLog;
 
+	/** The role the ESME bound with, whichever end of the link this is. Undefined before any bind. */
+	boundAs: BindType | undefined = undefined;
 	loggedIn = false;
 	/** What the peer declared when binding: 0x00 if it declared none, undefined before any bind. */
 	peerInterfaceVersion: number | undefined = undefined;
@@ -110,6 +113,11 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.resetTimers();
 	}
 
+	/** Whether this session's bind direction carries a command. Consulted by the library's senders. */
+	bindAllows(cmdName: string): boolean {
+		return bindCarries(this.boundAs, cmdName);
+	}
+
 	/** SMPP 3.4 forbids sending optional parameters to a peer that declared an older version. */
 	acceptsOptionalParams(): boolean {
 		return this.peerInterfaceVersion === undefined
@@ -165,6 +173,10 @@ export class Session extends EventEmitter<SessionEvents> {
 	}
 
 	async sendSms(sms: SendSmsOptions, options: SendOptions = {}): Promise<SendSmsResult> {
+		if (!this.bindAllows('submit_sm')) {
+			return { err: new Error('A receiver-bound session does not carry submit_sm'), pduObjs: [], smsIds: [] };
+		}
+
 		const sent = await submitSms({
 			log: this.log,
 			reference: this.nextConcatReference(),

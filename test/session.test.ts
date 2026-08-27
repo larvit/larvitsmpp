@@ -424,6 +424,93 @@ describe('bind', () => {
 	});
 });
 
+describe('bind direction', () => {
+	// A receiver-bound ESME sends no submit_sm and a transmitter-bound one is sent no deliver_sm.
+	test('refuses a submit_sm from a peer that bound as a receiver', async () => {
+		const smpp = await startServer();
+		const { session } = await connect(smpp, { bindType: 'receiver' });
+
+		assert.ok(session);
+
+		const sent = await session.send({
+			cmdName: 'submit_sm',
+			params: { destination_addr: '46709771337', short_message: 'nope', source_addr: '46701113311' },
+		});
+
+		assert.ok(sent.pduObj);
+		assert.equal(sent.pduObj.cmdStatus, 'ESME_RINVBNDSTS');
+
+		session.close();
+		await smpp.close();
+	});
+
+	test('refuses sendSms() on a receiver-bound session before it reaches the wire', async () => {
+		const smpp = await startServer();
+		const arrived: Sms[] = [];
+
+		smpp.on('session', peer => peer.on('sms', sms => arrived.push(sms)));
+
+		const { session } = await connect(smpp, { bindType: 'receiver' });
+
+		assert.ok(session);
+
+		const sent = await session.sendSms({ from: '46701113311', message: 'nope', to: '46709771337' });
+
+		assert.ok(sent.err instanceof Error);
+		assert.match(sent.err.message, /receiver-bound/);
+		assert.deepEqual(sent.smsIds, []);
+		assert.equal(arrived.length, 0);
+
+		session.close();
+		await smpp.close();
+	});
+
+	test('refuses a deliver_sm sent to a peer that bound as a transmitter', async () => {
+		const smpp = await startServer();
+		const bound = once<Session>(resolve => { smpp.on('session', resolve); });
+		const { session } = await connect(smpp, { bindType: 'transmitter' });
+
+		assert.ok(session);
+
+		const peer = await bound;
+		const sent = await peer.send({
+			cmdName: 'deliver_sm',
+			params: { destination_addr: '46709771337', short_message: 'nope', source_addr: '46701113311' },
+		});
+
+		assert.ok(sent.pduObj);
+		assert.equal(sent.pduObj.cmdStatus, 'ESME_RINVBNDSTS');
+
+		session.close();
+		await smpp.close();
+	});
+
+	test('refuses sendDlr() to a transmitter-bound peer before it reaches the wire', async () => {
+		const smpp = await startServer();
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', peer => peer.on('sms', resolve));
+		});
+		const { session } = await connect(smpp, { bindType: 'transmitter' });
+
+		assert.ok(session);
+
+		const [sms] = await Promise.all([
+			incoming,
+			session.sendSms({ dlr: true, from: '46701113311', message: 'one way', to: '46709771337' }),
+		]);
+
+		await sms.sendResp();
+
+		const report = await sms.sendDlr();
+
+		assert.ok(report.err instanceof Error);
+		assert.match(report.err.message, /transmitter-bound/);
+
+		session.close();
+		await smpp.close();
+	});
+});
+
 describe('sending', () => {
 	test('delivers a simple SMS with the sender TON derived from the address', async () => {
 		const smpp = await startServer();
@@ -542,6 +629,40 @@ describe('sending', () => {
 		assert.equal(sms.pduObjs[0]?.params.data_coding, 0x18);
 		assert.equal(sms.message, 'تست');
 		assert.ok(sms.flash);
+
+		session.close();
+		await smpp.close();
+	});
+
+	test('puts the address TON and NPI the caller chose on the wire', async () => {
+		const smpp = await startServer();
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', peer => peer.on('sms', resolve));
+		});
+		const { session } = await connect(smpp);
+
+		assert.ok(session);
+
+		const [sms] = await Promise.all([
+			incoming,
+			session.sendSms({
+				destinationAddrNpi: consts.NPI.ISDN,
+				destinationAddrTon: consts.TON.NATIONAL,
+				from: '46701113311',
+				message: 'addressed by hand',
+				sourceAddrNpi: consts.NPI.PRIVATE,
+				sourceAddrTon: consts.TON.ABBREVIATED,
+				to: '46709771337',
+			}),
+		]);
+
+		const params = sms.pduObjs[0]?.params;
+
+		assert.ok(params);
+		assert.equal(params.dest_addr_npi, consts.NPI.ISDN);
+		assert.equal(params.dest_addr_ton, consts.TON.NATIONAL);
+		assert.equal(params.source_addr_npi, consts.NPI.PRIVATE);
+		assert.equal(params.source_addr_ton, consts.TON.ABBREVIATED);
 
 		session.close();
 		await smpp.close();

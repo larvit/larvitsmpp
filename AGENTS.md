@@ -55,7 +55,7 @@ src/
 	result.ts            Result<T> — the shape every fallible call returns
 	send-sms.ts          submitSms composition and the submitSmParams builder
 	send-window.ts       SendWindow: the maxOutstanding semaphore
-	session-options.ts   SessionOptions, ReconnectOptions and the session defaults
+	session-options.ts   SessionOptions, ReconnectOptions, bind direction and the session defaults
 	udh.ts               User data header: the concatenation fields of a long SMS
 	uuid.ts              uuidv7() — the ids the library generates for messages
 	defs/
@@ -185,6 +185,13 @@ exactly 140.
   `server()`, so an implementation that needs 5.0 throughout can have it. The threshold at or above
   which a peer may be sent optional parameters is fixed at 0x34 by the spec and is not the same
   constant as the declared version.
+- **Bind direction is enforced on the library's own senders and on everything incoming, not on
+  `send()`.** A receiver-bound ESME carries no `submit_sm` and a transmitter-bound one no
+  `deliver_sm`; `sendSms()` and `sendDlr()` refuse locally, and an arriving PDU is answered
+  `ESME_RINVBNDSTS`. `bindAllows()` is a predicate on the same footing as `acceptsOptionalParams()`,
+  so the deliberately public low-level `send()` stays a passthrough. Only those two commands are
+  policed, because they are the only ones the library sends and dispatches by direction.
+
 - **The logger is a five-method contract this library declares, not a dependency.** `SmppLog` in
   `log.ts` is what the code actually calls (`debug`, `error`, `info`, `verbose`, `warn`), so an
   application can satisfy it with an object literal and `@larvit/smpp` ships with no runtime

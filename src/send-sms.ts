@@ -15,6 +15,8 @@ export type SendSmsOptions = {
 	encoding?: EncodingName;
 	flash?: boolean;
 	from: string;
+	/** Refuse before sending anything if the message needs more than this many segments. */
+	maxSegments?: number;
 	message: string;
 	scheduleDeliveryTime?: Date | number | string;
 	sourceAddrNpi?: number;
@@ -79,31 +81,26 @@ export function submitSmParams(
 }
 
 /** Puts a message on the wire as one submit_sm per segment. */
-export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise<SendSmsResult> {
-	const encoding = sms.encoding ?? detect(sms.message);
-	const segments = splitMessage(sms.message, { encoding, reference: deps.reference });
-
-	if (segments.length === 0) {
-		return {
-			err: new Error(`Message needs more than ${String(maxSegments)} segments, the concatenation limit`),
-			pduObjs: [],
-			smsIds: [],
-		};
+/** Nothing goes on the wire until the whole message fits: a half-sent message bills twice. */
+function checkSegments(allowed: number, segments: number): Error | undefined {
+	if (!Number.isInteger(allowed) || allowed < 1 || allowed > maxSegments) {
+		return new Error(`maxSegments must be between 1 and ${String(maxSegments)}, got ${String(allowed)}`);
 	}
 
-	const multipart = segments.length > 1;
+	if (segments === 0) {
+		return new Error(`Message needs more than ${String(maxSegments)} segments, the concatenation limit`);
+	}
+
+	if (segments > allowed) {
+		return new Error(`Message needs ${String(segments)} segments, more than the ${String(allowed)} allowed`);
+	}
+
+	return undefined;
+}
+
+function collectSent(sent: Result<{ pduObj: PduObject }>[]): SendSmsResult {
 	const pduObjs: PduObject[] = [];
 	const smsIds: string[] = [];
-
-	deps.log.debug('sendSms() - sending', { encoding, segments: segments.length, to: sms.to });
-
-	// Segments go out together rather than one-after-a-response: a receiver that waits for every
-	// segment before answering — this library's own server does — would otherwise deadlock.
-	const sent = await Promise.all(segments.map(segment => deps.send({
-		cmdName: 'submit_sm',
-		params: submitSmParams(sms, segment, { encoding, multipart }),
-	})));
-
 	let failure: Error | undefined;
 
 	for (const one of sent) {
@@ -120,4 +117,26 @@ export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise
 	}
 
 	return failure ? { err: failure, pduObjs, smsIds } : { pduObjs, smsIds };
+}
+
+export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise<SendSmsResult> {
+	const allowed = sms.maxSegments ?? maxSegments;
+	const encoding = sms.encoding ?? detect(sms.message);
+	const segments = splitMessage(sms.message, { encoding, reference: deps.reference });
+	const refused = checkSegments(allowed, segments.length);
+
+	if (refused) return { err: refused, pduObjs: [], smsIds: [] };
+
+	const multipart = segments.length > 1;
+
+	deps.log.debug('sendSms() - sending', { encoding, segments: segments.length, to: sms.to });
+
+	// Segments go out together rather than one-after-a-response: a receiver that waits for every
+	// segment before answering — this library's own server does — would otherwise deadlock.
+	const sent = await Promise.all(segments.map(segment => deps.send({
+		cmdName: 'submit_sm',
+		params: submitSmParams(sms, segment, { encoding, multipart }),
+	})));
+
+	return collectSent(sent);
 }

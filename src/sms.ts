@@ -126,6 +126,10 @@ async function sendDlr(
 	sms: Sms,
 	status: MessageState = 'DELIVERED',
 ): Promise<Result<{ pduObjs: PduObject[] }>> {
+	if (!sms.session.bindAllows('deliver_sm')) {
+		return { err: new Error('A transmitter-bound session does not carry deliver_sm') };
+	}
+
 	const total = sms.pduObjs.length;
 	const pduObjs: PduObject[] = [];
 

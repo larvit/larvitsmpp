@@ -48,6 +48,16 @@ export class IncomingRequests {
 	async handle(pduObj: PduObject): Promise<void> {
 		if (this.onRequest && await this.onRequest(this.session, pduObj)) return;
 
+		if (!this.session.bindAllows(pduObj.cmdName)) {
+			this.log.info('session - command the peer\'s bind direction does not carry', {
+				bindType: this.session.boundAs ?? '',
+				cmdName: pduObj.cmdName,
+			});
+			await this.session.sendReturn(pduObj, 'ESME_RINVBNDSTS');
+
+			return;
+		}
+
 		switch (pduObj.cmdName) {
 			case 'deliver_sm':
 				await this.onDeliverSm(pduObj);

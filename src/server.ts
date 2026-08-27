@@ -5,7 +5,7 @@ import type { Server as TlsServer, TlsOptions } from 'node:tls';
 import type { SmppLog } from './log.ts';
 import { EventEmitter } from 'node:events';
 import { Session, bindCommands, defaultSystemId } from './session.ts';
-import { checkSessionOptions, undeclaredInterfaceVersion } from './session-options.ts';
+import { bindTypeFromCommand, checkSessionOptions, undeclaredInterfaceVersion } from './session-options.ts';
 import { createServer as createNetServer } from 'node:net';
 import { createServer as createTlsServer } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
@@ -147,6 +147,7 @@ async function acceptBind(
 ): Promise<void> {
 	const declared = pduObj.params.interface_version;
 
+	session.boundAs = bindTypeFromCommand(pduObj.cmdName);
 	session.loggedIn = true;
 	session.peerInterfaceVersion = typeof declared === 'number'
 		? declared

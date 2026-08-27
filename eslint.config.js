@@ -49,6 +49,11 @@ export default tseslint.config(
 		rules: { 'no-control-regex': 'off' },
 	},
 	{
+		// Mirrors the README's examples as written; an async event listener is part of what they show.
+		files: ['test/readme.test.ts'],
+		rules: { '@typescript-eslint/no-misused-promises': 'off' },
+	},
+	{
 		files: ['eslint.config.js'],
 		extends: [tseslint.configs.disableTypeChecked],
 	},

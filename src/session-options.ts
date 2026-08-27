@@ -25,6 +25,28 @@ export const bindCommands: readonly string[] = [
 	'bind_transmitter',
 ];
 
+export type BindType = 'receiver' | 'transceiver' | 'transmitter';
+
+export function bindTypeFromCommand(cmdName: string): BindType | undefined {
+	if (cmdName === 'bind_receiver') return 'receiver';
+	if (cmdName === 'bind_transceiver') return 'transceiver';
+	if (cmdName === 'bind_transmitter') return 'transmitter';
+
+	return undefined;
+}
+
+/**
+ * Whether a bind direction carries a command at all. A receiver-bound ESME submits nothing and a
+ * transmitter-bound one is delivered nothing, whichever end of the link is looking. A session that
+ * has not bound carries everything, since nothing has declared a direction yet.
+ */
+export function bindCarries(bindType: BindType | undefined, cmdName: string): boolean {
+	if (bindType === 'receiver') return cmdName !== 'submit_sm';
+	if (bindType === 'transmitter') return cmdName !== 'deliver_sm';
+
+	return true;
+}
+
 export type SendOptions = { signal?: AbortSignal | undefined };
 
 /**

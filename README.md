@@ -92,15 +92,23 @@ Every one is optional.
 ```javascript
 await session.sendSms({
 	dlr:                  true,        // ask for a delivery report
+	destinationAddrNpi:   0,           // override the numbering plan of the recipient
+	destinationAddrTon:   1,
 	encoding:             'UCS2',      // override the automatic choice
 	flash:                false,
 	from:                 'MyBrand',   // alphanumeric -> TON 5, digits -> TON 1
+	maxSegments:          10,          // refuse a longer message instead of sending it
 	message:              'Hello world',
 	scheduleDeliveryTime: new Date(Date.now() + 3600_000),
+	sourceAddrNpi:        0,           // override the numbering plan of the sender
+	sourceAddrTon:        5,
 	to:                   '46709771337',
 	validityPeriod:       3600,        // seconds, or a Date
 }, { signal });                       // optional per-call AbortSignal
 ```
+
+`sourceAddrTon` and `destinationAddrTon` default to 5 for an alphanumeric address and 1 for a
+numeric one; the NPI fields default to 0. Set them for an operator that requires something else.
 
 Messages too long for one SMS are split automatically and sent as a concatenated message. You get
 one id per segment:
@@ -113,7 +121,8 @@ const { err, pduObjs, smsIds } = await session.sendSms({ from, message, to });
 segment goes on the wire together, `pduObjs` and `smsIds` then hold what the SMSC did accept — enough
 to reconcile against a later receipt, not enough to resend the rest, so treat a partial failure as a
 failed message. A message needing more than 255 segments is refused before anything is sent, since
-the concatenation header numbers segments in a single octet.
+the concatenation header numbers segments in a single octet. `maxSegments` lowers that ceiling:
+most handsets and SMSCs stop well short of 255, and refusing beats a message only half delivered.
 
 ### Receiving
 
@@ -143,6 +152,7 @@ if (err) throw err;
 smpp.on('session', session => {
 	session.on('sms', async sms => {
 		// sms.from, sms.to, sms.message, sms.dlr
+		await sms.sendResp();
 	});
 });
 ```
@@ -199,6 +209,20 @@ A message whose `data_coding` says 8-bit binary arrives as Latin-1, so `Buffer.f
 | `maxOctets` | `67108864` | Bytes of incomplete multipart messages held per session. |
 | `reassemblyTimeout` | `300000` | How long a late segment can still join an incomplete message. |
 | `responseTimeout`, `maxOutstanding`, `log`, `signal` | as for the client | |
+
+### Bind direction
+
+The three bind types are honoured in both directions, not just accepted. A receiver-bound ESME
+carries no `submit_sm` and a transmitter-bound one is sent no `deliver_sm`, whichever end of the
+link the session is:
+
+- `session.sendSms()` on a receiver-bound session, and `sms.sendDlr()` to a transmitter-bound peer,
+  fail with an `err` before anything reaches the wire.
+- A `submit_sm` arriving on a receiver-bound session, or a `deliver_sm` on a transmitter-bound one,
+  is answered `ESME_RINVBNDSTS`.
+
+A `transceiver` bind, the default, carries both. `session.send()` stays a low-level passthrough and
+is not checked, so the raw surface can still put whatever a test or a proxy needs on the wire.
 
 ## Errors
 
@@ -277,6 +301,9 @@ const { err, pduObj } = await session.send({
 at and above which the spec allows optional parameters to be sent to it; `peerInterfaceVersion` is
 the version it declared, `0x00` if it declared none. The library's own senders consult the first before attaching a TLV — a
 `send()` you build yourself is passed through as written, so consult it too when you attach TLVs.
+
+`bindAllows(cmdName)` answers the same question for the bind direction, and `boundAs` is the role
+the ESME bound with — see [Bind direction](#bind-direction).
 
 ## Working with PDUs directly
 

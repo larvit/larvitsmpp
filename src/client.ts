@@ -1,15 +1,16 @@
 import type { ConnectionOptions } from 'node:tls';
 import type { Result, VoidResult } from './result.ts';
+import type { BindType } from './session-options.ts';
 import type { SmppLog } from './log.ts';
 import type { Socket } from 'node:net';
+export type { BindType };
+
 import { Session } from './session.ts';
 import { checkSessionOptions, undeclaredInterfaceVersion } from './session-options.ts';
 import { connect as netConnect } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
 import { silentLog } from './log.ts';
-
-export type BindType = 'receiver' | 'transceiver' | 'transmitter';
 
 export type ClientOptions = {
 	addressRange?: string;
@@ -125,6 +126,7 @@ async function bind(session: Session, options: ClientOptions): Promise<VoidResul
 
 	const declared = sent.pduObj.tlvs.sc_interface_version?.tagValue;
 
+	session.boundAs = bindType;
 	session.loggedIn = true;
 	session.peerInterfaceVersion = typeof declared === 'number'
 		? declared

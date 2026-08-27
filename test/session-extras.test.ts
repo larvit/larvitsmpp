@@ -243,6 +243,31 @@ describe('sendSms()', () => {
 		assert.ok(sent.err instanceof Error);
 		assert.equal(attempts.length, 0);
 	});
+
+	// Most handsets and SMSCs stop well short of the 255 a UDH can number.
+	test('refuses a message needing more segments than the caller allows', async () => {
+		const attempts: PduObjectInput[] = [];
+		const deps = {
+			log: silentLog,
+			reference: 3,
+			send: (input: PduObjectInput) => {
+				attempts.push(input);
+
+				return Promise.resolve({ pduObj: submitResp(attempts.length, `landed-${String(attempts.length)}`) });
+			},
+		};
+		const message = 'a'.repeat(153 * 4);
+
+		const refused = await submitSms(deps, { from: '46701113311', maxSegments: 3, message, to: '46709771337' });
+
+		assert.ok(refused.err instanceof Error);
+		assert.equal(attempts.length, 0);
+
+		const sent = await submitSms(deps, { from: '46701113311', maxSegments: 4, message, to: '46709771337' });
+
+		assert.equal(sent.err, undefined);
+		assert.equal(attempts.length, 4);
+	});
 });
 
 describe('reconnect', () => {
