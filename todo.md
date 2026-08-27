@@ -100,6 +100,10 @@ session message is a change to every call site.
 
 ## Before publishing 1.0.0
 
+- [ ] **`messageDlr` is documented without its precondition.** The README event table says it fires
+      once every segment of a multipart message has been reported on. `DlrMerger` only merges ids
+      shaped `<base>-<n>`, which is this library's own server's convention, so against most SMSCs it
+      never fires at all. `src/dlr-merger.ts` states the precondition; the README must too.
 - [ ] Create the `@larvit/smpp` package on npm and add `NPM_TOKEN` to the repository secrets, which
       `.github/workflows/release.yaml` needs.
 - [ ] Tag `v1.0.0` to publish.
@@ -134,3 +138,37 @@ session message is a change to every call site.
       below 6.1 for exactly that reason.
 - [ ] **Coverage reporting.** `node --test --experimental-test-coverage` works today; nothing
       publishes the numbers.
+
+- [ ] **Normalise the message id on both sides of a receipt.** An SMSC that answers `submit_sm_resp`
+      with a hex `message_id` and sends the receipt's `id:` in decimal — or pads it, or flips its
+      case — leaves `smsIds` and `dlr.smsId` unequal, so correlation silently yields nothing and the
+      application sees no receipts at all. A `dlrIdFormat` option (`'hex' | 'decimal' | 'raw'`, or a
+      function) applied to both ids before they are compared covers the whole class. The smallest
+      change on this list for the most real-world breakage removed.
+
+- [ ] **Detect a receipt by `esm_class`, not by what happens to parse.** `dlrFromPdu()` treats a
+      `deliver_sm` as a receipt exactly when it can scrape an id and a state out of it, and never
+      reads `esm_class` — `MC_DELIVERY_RECEIPT` (0x04) sits in the constants table unused. That
+      misclassifies both ways: a receipt in a format we cannot parse arrives as an inbound `sms`,
+      and a mobile-originated message whose text happens to contain `id:… stat:DELIVRD` arrives as a
+      `dlr`. Read the bits first and keep the scrape as the fallback for a peer that sets none.
+
+- [ ] **An `onReceipt` hook.** Receipt text is only loosely specified and operators disagree on it,
+      but `dlrFromPdu()` is wired into `IncomingRequests` with no way past it: an application facing
+      a format we do not parse has to listen on `incomingPduObj` and reimplement the dispatch.
+      Mirror the `onRequest` seam — return a `Dlr` to own the receipt, `undefined` to fall through
+      to the built-in parser.
+
+- [ ] **Turn `reconnect` on by default in `client()`.** Surviving a dropped link is most of why the
+      session layer exists, and it is opt-in behind an empty object today, so an application that
+      does not read the options table gets none of it. A default change, so it needs a decision.
+
+## Declined
+
+- **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** An SMSC's rate limit
+  is account-wide, but this library keeps state only in memory in a single process: a bucket here
+  dies with the process and cannot be shared with a second binding of the same account, so it would
+  be wrong in exactly the cases it exists for. Pacing an account belongs to whatever the application
+  already uses to coordinate across processes, since it needs the durable shared state this library
+  deliberately has none of. `sendSms()` surfaces `ESME_RTHROTTLED` to the caller instead, and
+  `maxOutstanding` stays what it is — a cap on requests in flight, not on rate.
