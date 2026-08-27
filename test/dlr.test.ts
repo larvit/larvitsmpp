@@ -1,17 +1,22 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import { consts } from '../src/defs/constants.ts';
 import { dlrFromPdu, parseReceipt, receiptCodes } from '../src/dlr.ts';
 import { objToPdu, pduToObj } from '../src/pdu.ts';
 import type { PduObject, TlvInput } from '../src/pdu.ts';
 
 const receiptText = 'id:0195f0c7 sub:001 dlvrd:001 submit date:2508251430 done date:2508251431 stat:DELIVRD err:000 text:hello';
 
-function deliverSm(message: string, tlvs?: Record<string, TlvInput>): PduObject {
+function deliverSm(
+	message: string,
+	tlvs?: Record<string, TlvInput>,
+	esmClass: number = consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+): PduObject {
 	const { buffer } = objToPdu({
 		cmdName: 'deliver_sm',
 		params: {
 			destination_addr: '46701113311',
-			esm_class: 4,
+			esm_class: esmClass,
 			short_message: message,
 			source_addr: '46709771337',
 		},
@@ -112,8 +117,40 @@ describe('dlrFromPdu()', () => {
 		assert.equal(dlrFromPdu(deliverSm('id:x stat:DELIVRD done date:2501012560'))?.doneDate, undefined);
 	});
 
-	test('returns nothing when the PDU identifies no message', () => {
-		assert.equal(dlrFromPdu(deliverSm('just a normal sms')), undefined);
+	test('returns nothing when an unmarked deliver_sm identifies no message', () => {
+		assert.equal(dlrFromPdu(deliverSm('just a normal sms', undefined, 0)), undefined);
+	});
+
+	test('still reads the body when the peer marks no message type', () => {
+		const dlr = dlrFromPdu(deliverSm(receiptText, undefined, 0));
+
+		assert.ok(dlr);
+		assert.equal(dlr.smsId, '0195f0c7');
+		assert.equal(dlr.statusMsg, 'DELIVERED');
+	});
+
+	test('reports a marked receipt whose body it cannot read, rather than an inbound message', () => {
+		const dlr = dlrFromPdu(deliverSm('a receipt in a format nobody documented'));
+
+		assert.ok(dlr);
+		assert.equal(dlr.smsId, undefined);
+		assert.equal(dlr.statusMsg, 'UNKNOWN');
+		assert.equal(dlr.statusId, 7);
+
+		const withUdh = consts.ESM_CLASS.MC_DELIVERY_RECEIPT | consts.ESM_CLASS.UDH_INDICATOR;
+
+		assert.ok(dlrFromPdu(deliverSm(receiptText, undefined, withUdh)));
+	});
+
+	test('leaves a message the peer marked as another type to arrive as an SMS', () => {
+		for (const esmClass of [
+			consts.ESM_CLASS.CONVERSATION_ABORT,
+			consts.ESM_CLASS.DELIVERY_ACKNOWLEDGEMENT,
+			consts.ESM_CLASS.INTERMEDIATE_DELIVERY,
+			consts.ESM_CLASS.USER_ACKNOWLEDGEMENT,
+		]) {
+			assert.equal(dlrFromPdu(deliverSm(receiptText, undefined, esmClass)), undefined);
+		}
 	});
 
 	test('exposes the raw receipt alongside the resolved fields', () => {

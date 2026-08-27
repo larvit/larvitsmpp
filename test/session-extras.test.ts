@@ -57,7 +57,7 @@ describe('merged delivery reports', () => {
 		const merged = once<MessageDlr>(resolve => { session.on('messageDlr', resolve); });
 		const perSegment: string[] = [];
 
-		session.on('dlr', dlr => perSegment.push(dlr.smsId));
+		session.on('dlr', dlr => perSegment.push(dlr.smsId ?? ''));
 
 		const [sms] = await Promise.all([
 			incoming.then(async received => {

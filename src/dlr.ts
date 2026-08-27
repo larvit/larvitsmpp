@@ -1,4 +1,5 @@
 import type { MessageState } from './defs/constants.ts';
+import type { ParamValue } from './defs/types.ts';
 import type { PduObject } from './pdu.ts';
 import { consts, constsById } from './defs/constants.ts';
 
@@ -46,7 +47,7 @@ export type Dlr = {
 	doneDate: Date | undefined;
 	errorCode: string | undefined;
 	receipt: Receipt | undefined;
-	smsId: string;
+	smsId: string | undefined;
 	statusId: number;
 	statusMsg: string;
 };
@@ -120,34 +121,59 @@ export function parseReceipt(message: string): Receipt {
 	};
 }
 
+/** esm_class bits 5-2 name the message type; the rest are the messaging mode and the GSM features. */
+const messageTypeBits = 0x3c;
+
+type MessageType = 'other' | 'receipt' | 'unmarked';
+
+function messageType(pduObj: PduObject): MessageType {
+	const esmClass = pduObj.params.esm_class;
+
+	if (typeof esmClass !== 'number') return 'unmarked';
+
+	const type = esmClass & messageTypeBits;
+
+	if (type === consts.ESM_CLASS.MC_DELIVERY_RECEIPT) return 'receipt';
+
+	return type === 0 ? 'unmarked' : 'other';
+}
+
+function receiptId(tlvId: ParamValue | undefined, receipt: Receipt | undefined): string | undefined {
+	if (typeof tlvId === 'string' && tlvId !== '') return tlvId;
+
+	return receipt?.id === '' ? undefined : receipt?.id;
+}
+
+function receiptStatus(
+	tlvState: ParamValue | undefined,
+	receipt: Receipt | undefined,
+): { statusId: number; statusMsg: string | undefined } {
+	if (typeof tlvState === 'number') {
+		return { statusId: tlvState, statusMsg: constsById.MESSAGE_STATE?.[tlvState] };
+	}
+
+	const state = receiptStates[receipt?.stat?.toUpperCase() ?? ''];
+
+	return { statusId: consts.MESSAGE_STATE[state ?? 'UNKNOWN'], statusMsg: state };
+}
+
 /**
- * Builds a delivery report from a deliver_sm. The message_state and receipted_message_id TLVs are
- * authoritative when present; otherwise the receipt text is parsed, which is the only thing Kannel
- * and several other SMSCs send.
+ * Builds a delivery report from a deliver_sm, or nothing if the PDU carries a message rather than a
+ * receipt. `esm_class` decides that where the peer sets a message type; where it sets none, the body
+ * is read for the standard receipt fields, which is the only thing Kannel and several other SMSCs
+ * send. The message_state and receipted_message_id TLVs are authoritative over the body.
  */
 export function dlrFromPdu(pduObj: PduObject): Dlr | undefined {
+	const type = messageType(pduObj);
+
+	if (type === 'other') return undefined;
+
 	const message = pduObj.params.short_message;
 	const receipt = typeof message === 'string' ? parseReceipt(message) : undefined;
-	const receiptState = receiptStates[receipt?.stat?.toUpperCase() ?? ''];
+	const smsId = receiptId(pduObj.tlvs.receipted_message_id?.tagValue, receipt);
+	const { statusId, statusMsg } = receiptStatus(pduObj.tlvs.message_state?.tagValue, receipt);
 
-	const tlvState = pduObj.tlvs.message_state?.tagValue;
-	const tlvId = pduObj.tlvs.receipted_message_id?.tagValue;
-
-	const smsId = typeof tlvId === 'string' && tlvId !== ''
-		? tlvId
-		: receipt?.id;
-
-	if (smsId === undefined || smsId === '') return undefined;
-
-	const statusMsg = typeof tlvState === 'number'
-		? constsById.MESSAGE_STATE?.[tlvState]
-		: receiptState;
-
-	if (statusMsg === undefined) return undefined;
-
-	const statusId = typeof tlvState === 'number'
-		? tlvState
-		: consts.MESSAGE_STATE[receiptState ?? 'UNKNOWN'];
+	if (type === 'unmarked' && (smsId === undefined || statusMsg === undefined)) return undefined;
 
 	return {
 		doneDate: receiptDate(receipt?.doneDate),
@@ -155,6 +181,6 @@ export function dlrFromPdu(pduObj: PduObject): Dlr | undefined {
 		receipt,
 		smsId,
 		statusId,
-		statusMsg,
+		statusMsg: statusMsg ?? 'UNKNOWN',
 	};
 }

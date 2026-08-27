@@ -198,6 +198,14 @@ exactly 140.
   dependencies. `@larvit/log` implements it structurally and stays a devDependency, where
   `test/tls.test.ts` passing a real `Log` as the server's logger keeps that compatibility compiled.
 
+- **`esm_class` decides what a `deliver_sm` is, and the body is only read when it names nothing.**
+  Message type `MC_DELIVERY_RECEIPT` (0x04) makes it a receipt whatever the body parses to, so a
+  receipt in a format `dlrFromPdu()` cannot read reaches `dlr` with `smsId` undefined instead of
+  arriving as an inbound SMS. Any other named type — delivery or user acknowledgement, conversation
+  abort, intermediate notification — is not a receipt and its body is not scraped. Message type 0
+  keeps the scrape: SMSCs that send text-only receipts leave `esm_class` at 0, and reading that as
+  the spec's "default message type" would lose every one of them.
+
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image
   `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI

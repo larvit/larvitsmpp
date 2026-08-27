@@ -5,7 +5,7 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 223 tests, lint and typecheck clean, verified on Node
+The rewrite is **feature complete and green**: 227 tests, lint and typecheck clean, verified on Node
 18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
@@ -56,6 +56,7 @@ Rules the API follows:
 | Session, client, server: bind, auth, send, reassembly, DLRs, timeouts, abort, send window | `test/session.test.ts` |
 | Merged multipart DLRs, reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
+| Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
 | Cross-checked against node-smpp both ways and over a live session | `test/interop.test.ts` |
 | CI on Node 18/20/22/24, Renovate, tag-triggered publish | `.github/workflows/` |
 
@@ -100,10 +101,6 @@ session message is a change to every call site.
 
 ## Before publishing 1.0.0
 
-- [ ] **`messageDlr` is documented without its precondition.** The README event table says it fires
-      once every segment of a multipart message has been reported on. `DlrMerger` only merges ids
-      shaped `<base>-<n>`, which is this library's own server's convention, so against most SMSCs it
-      never fires at all. `src/dlr-merger.ts` states the precondition; the README must too.
 - [ ] Create the `@larvit/smpp` package on npm and add `NPM_TOKEN` to the repository secrets, which
       `.github/workflows/release.yaml` needs.
 - [ ] Tag `v1.0.0` to publish.
@@ -163,13 +160,6 @@ session message is a change to every call site.
       application sees no receipts at all. A `dlrIdFormat` option (`'hex' | 'decimal' | 'raw'`, or a
       function) applied to both ids before they are compared covers the whole class. The smallest
       change on this list for the most real-world breakage removed.
-
-- [ ] **Detect a receipt by `esm_class`, not by what happens to parse.** `dlrFromPdu()` treats a
-      `deliver_sm` as a receipt exactly when it can scrape an id and a state out of it, and never
-      reads `esm_class` — `MC_DELIVERY_RECEIPT` (0x04) sits in the constants table unused. That
-      misclassifies both ways: a receipt in a format we cannot parse arrives as an inbound `sms`,
-      and a mobile-originated message whose text happens to contain `id:… stat:DELIVRD` arrives as a
-      `dlr`. Read the bits first and keep the scrape as the fallback for a peer that sets none.
 
 - [ ] **An `onReceipt` hook.** Receipt text is only loosely specified and operators disagree on it,
       but `dlrFromPdu()` is wired into `IncomingRequests` with no way past it: an application facing

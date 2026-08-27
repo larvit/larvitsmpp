@@ -93,6 +93,8 @@ export class DlrMerger {
 	collect(dlr: Dlr): MessageDlr | undefined {
 		this.sweep();
 
+		if (dlr.smsId === undefined) return undefined;
+
 		const match = numbered.exec(dlr.smsId);
 		const base = match?.[1];
 		const part = match?.[2];

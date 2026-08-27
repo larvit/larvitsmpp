@@ -711,6 +711,34 @@ describe('receiving', () => {
 		assert.equal(answered.pduObj.params.message_id, 'inbound-id');
 	});
 
+	test('hands a client a receipt it cannot read as a dlr rather than as an sms', async t => {
+		const { peer, session } = await inbound(t);
+		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
+		let messages = 0;
+
+		session.on('sms', () => { messages++; });
+
+		const delivered = peer.send({
+			cmdName: 'deliver_sm',
+			params: {
+				destination_addr: '46709771337',
+				esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+				short_message: 'a receipt in a format nobody documented',
+				source_addr: '46701113311',
+			},
+		});
+		const dlr = await raceWithin(2000, reported);
+
+		assert.ok(dlr, 'esm_class marks it a receipt, so nothing else may claim it');
+		assert.equal(dlr.smsId, undefined);
+		assert.equal(messages, 0);
+
+		const answered = await delivered;
+
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdName, 'deliver_sm_resp');
+	});
+
 	test('reassembles a multipart inbound SMS before the sms event', async t => {
 		const message = 'Inbound lorem ipsum dolor sit amet consectetur, '.repeat(6);
 		const { peer, session } = await inbound(t);
@@ -757,7 +785,7 @@ describe('delivery reports', () => {
 
 		assert.ok(session);
 
-		const dlr = once<[{ smsId: string; statusMsg: string }, PduObject]>(resolve => {
+		const dlr = once<[Dlr, PduObject]>(resolve => {
 			session.on('dlr', (report, pduObj) => { resolve([report, pduObj]); });
 		});
 
@@ -873,7 +901,7 @@ describe('delivery reports', () => {
 		const perSegment: string[] = [];
 		let merged = 0;
 
-		session.on('dlr', dlr => perSegment.push(dlr.smsId));
+		session.on('dlr', dlr => perSegment.push(dlr.smsId ?? ''));
 		session.on('messageDlr', () => { merged++; });
 
 		const [sms] = await Promise.all([
