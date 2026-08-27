@@ -33,6 +33,10 @@ export function paramText(value: ParamValue | undefined): string {
 	return '';
 }
 
+export function paramNumber(value: ParamValue | undefined, fallback: number): number {
+	return typeof value === 'number' ? value : fallback;
+}
+
 function outOfRange(buffer: Buffer, offset: number, needed: number): Error | undefined {
 	if (offset < 0 || needed < 0 || offset + needed > buffer.length) {
 		return new Error(

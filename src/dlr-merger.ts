@@ -3,7 +3,7 @@ import type { MessageState } from './defs/constants.ts';
 import type { SmppLog } from './log.ts';
 import { ExpiringGroups } from './expiring-groups.ts';
 
-export type MessageDlr = Dlr & { segments: Dlr[] };
+export type MessageDlr = Dlr & { segments: Dlr[]; smsId: string };
 
 export type DlrMergerOptions = {
 	log: SmppLog;
@@ -41,12 +41,6 @@ const severity: Record<MessageState, number> = {
 	REJECTED: 8,
 	UNDELIVERABLE: 9,
 };
-
-function severityOf(dlr: Dlr): number {
-	const ranked: Record<string, number | undefined> = severity;
-
-	return ranked[dlr.statusMsg] ?? severity.UNKNOWN;
-}
 
 export class DlrMerger {
 	private readonly groups: ExpiringGroups<Group>;
@@ -112,7 +106,7 @@ export class DlrMerger {
 		this.groups.delete(base);
 
 		const segments = [...group.parts.entries()].sort(([a], [b]) => a - b).map(([, one]) => one);
-		const worst = segments.reduce((carry, one) => (severityOf(one) > severityOf(carry) ? one : carry));
+		const worst = segments.reduce((carry, one) => (severity[one.statusMsg] > severity[carry.statusMsg] ? one : carry));
 
 		return { ...worst, segments, smsId: base };
 	}

@@ -2,6 +2,8 @@ import type { MessageState } from './defs/constants.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject } from './pdu.ts';
 import { consts, constsById } from './defs/constants.ts';
+import { decodeMessage } from './message.ts';
+import { paramNumber, paramText } from './defs/types.ts';
 
 /**
  * The seven-character status codes carried in a receipt's `stat:` field, mapped to the
@@ -49,7 +51,7 @@ export type Dlr = {
 	receipt: Receipt | undefined;
 	smsId: string | undefined;
 	statusId: number;
-	statusMsg: string;
+	statusMsg: MessageState;
 };
 
 const field = (name: string) => new RegExp(`\\b${name}:([^ ]*)`, 'i');
@@ -127,15 +129,25 @@ const messageTypeBits = 0x3c;
 type MessageType = 'other' | 'receipt' | 'unmarked';
 
 function messageType(pduObj: PduObject): MessageType {
-	const esmClass = pduObj.params.esm_class;
-
-	if (typeof esmClass !== 'number') return 'unmarked';
-
-	const type = esmClass & messageTypeBits;
+	const type = paramNumber(pduObj.params.esm_class, 0) & messageTypeBits;
 
 	if (type === consts.ESM_CLASS.MC_DELIVERY_RECEIPT) return 'receipt';
+	if (type !== 0) return 'other';
 
-	return type === 0 ? 'unmarked' : 'other';
+	return pduObj.tlvs.receipted_message_id === undefined ? 'unmarked' : 'receipt';
+}
+
+/** A UDH-carrying short_message reaches here as a buffer, header and all. */
+function receiptBody(pduObj: PduObject): string {
+	const message = pduObj.params.short_message;
+
+	if (!Buffer.isBuffer(message)) return paramText(message);
+
+	return decodeMessage(
+		message,
+		paramNumber(pduObj.params.data_coding, 0),
+		paramNumber(pduObj.params.esm_class, 0),
+	).message;
 }
 
 function receiptId(tlvId: ParamValue | undefined, receipt: Receipt | undefined): string | undefined {
@@ -144,32 +156,39 @@ function receiptId(tlvId: ParamValue | undefined, receipt: Receipt | undefined):
 	return receipt?.id === '' ? undefined : receipt?.id;
 }
 
+function isMessageState(name: string | undefined): name is MessageState {
+	return name !== undefined && name in consts.MESSAGE_STATE;
+}
+
+/** The state TLV wins where it names a state we know; an unnameable one leaves the body to say. */
 function receiptStatus(
 	tlvState: ParamValue | undefined,
 	receipt: Receipt | undefined,
-): { statusId: number; statusMsg: string | undefined } {
-	if (typeof tlvState === 'number') {
-		return { statusId: tlvState, statusMsg: constsById.MESSAGE_STATE?.[tlvState] };
+): { statusId: number; statusMsg: MessageState | undefined } {
+	const scraped = receiptStates[receipt?.stat?.toUpperCase() ?? ''];
+
+	if (typeof tlvState !== 'number') {
+		return { statusId: consts.MESSAGE_STATE[scraped ?? 'UNKNOWN'], statusMsg: scraped };
 	}
 
-	const state = receiptStates[receipt?.stat?.toUpperCase() ?? ''];
+	const named = constsById.MESSAGE_STATE?.[tlvState];
 
-	return { statusId: consts.MESSAGE_STATE[state ?? 'UNKNOWN'], statusMsg: state };
+	return { statusId: tlvState, statusMsg: isMessageState(named) ? named : scraped };
 }
 
 /**
  * Builds a delivery report from a deliver_sm, or nothing if the PDU carries a message rather than a
- * receipt. `esm_class` decides that where the peer sets a message type; where it sets none, the body
- * is read for the standard receipt fields, which is the only thing Kannel and several other SMSCs
- * send. The message_state and receipted_message_id TLVs are authoritative over the body.
+ * receipt. `esm_class` decides that where the peer names a message type and a receipted_message_id
+ * TLV where it names none; failing both, the body is read for the standard receipt fields, which is
+ * the only thing Kannel and several other SMSCs send.
  */
 export function dlrFromPdu(pduObj: PduObject): Dlr | undefined {
 	const type = messageType(pduObj);
 
 	if (type === 'other') return undefined;
 
-	const message = pduObj.params.short_message;
-	const receipt = typeof message === 'string' ? parseReceipt(message) : undefined;
+	const body = receiptBody(pduObj);
+	const receipt = body === '' ? undefined : parseReceipt(body);
 	const smsId = receiptId(pduObj.tlvs.receipted_message_id?.tagValue, receipt);
 	const { statusId, statusMsg } = receiptStatus(pduObj.tlvs.message_state?.tagValue, receipt);
 

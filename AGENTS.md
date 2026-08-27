@@ -204,7 +204,11 @@ exactly 140.
   arriving as an inbound SMS. Any other named type — delivery or user acknowledgement, conversation
   abort, intermediate notification — is not a receipt and its body is not scraped. Message type 0
   keeps the scrape: SMSCs that send text-only receipts leave `esm_class` at 0, and reading that as
-  the spec's "default message type" would lose every one of them.
+  the spec's "default message type" would lose every one of them. A `receipted_message_id` TLV marks
+  a receipt on the same footing where the message type is 0, since nothing but a receipt carries one.
+  The `message_state` TLV is authoritative only where it names a state in the table — SMPP reserves
+  0x80-0xFF for MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves
+  `statusMsg` to the body.
 
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image

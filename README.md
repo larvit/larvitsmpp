@@ -155,8 +155,9 @@ session.on('sms', async sms => {
 ```
 
 Delivery receipts travel on the same SMPP command but reach you as `dlr`, so nothing you write has
-to tell the two apart. `esm_class` is what tells them apart; a peer that marks no message type
-there has the message body read for the standard `id:` and `stat:` receipt fields instead.
+to tell the two apart. `esm_class` is what tells them apart; where it names no message type a
+`receipted_message_id` TLV does, and failing both the message body is read for the standard
+`id:` and `stat:` receipt fields.
 
 ## Server
 
@@ -295,7 +296,7 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 | Event | Fires when |
 | --- | --- |
 | `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and the `smsId` it was answered with. |
-| `dlr` | A delivery report arrives, one per segment. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. |
+| `dlr` | A delivery report arrives, one per segment. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. `statusMsg` names `statusId` unless the peer sent a `message_state` this library cannot name — then `statusId` is that raw value and `statusMsg` is whatever the body said, or `UNKNOWN`. |
 | `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. |
 | `close` | The connection closed. |
 | `reconnected` | The client re-bound after a drop (only with `reconnect` configured). |

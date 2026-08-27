@@ -8,6 +8,7 @@ import { consts } from './defs/constants.ts';
 import { decodeMessage, encodeMessage } from './message.ts';
 import { detect, encodingByDataCoding } from './defs/encodings.ts';
 import { errorNameById, errors, isErrorName } from './defs/errors.ts';
+import { paramNumber } from './defs/types.ts';
 import { tlvDefault, tlvs, tlvsById } from './defs/tlvs.ts';
 
 /** Sequence numbers are a 31-bit field; 0x7fffffff is reserved. */
@@ -61,10 +62,6 @@ export function isCommand<C extends CommandName>(
 	cmdName: C,
 ): pduObj is PduObject & { cmdName: C; params: PduParams<C> } {
 	return pduObj.cmdName === cmdName;
-}
-
-function numberOr(value: ParamValue | undefined, fallback: number): number {
-	return typeof value === 'number' ? value : fallback;
 }
 
 function tagIdOf(name: string, input: TlvInput): Result<{ tagId: number }> {
@@ -283,7 +280,7 @@ function readParams(
 	let offset = 16;
 
 	for (const [name, type] of Object.entries(cmds[cmdName]?.params ?? {})) {
-		const read = type.read(pdu, offset, numberOr(params.sm_length, 0));
+		const read = type.read(pdu, offset, paramNumber(params.sm_length, 0));
 
 		if (read.err) {
 			return { err: new Error(`Parameter "${name}" of "${cmdName}": ${read.err.message}`) };
@@ -327,11 +324,11 @@ function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolea
 
 	const params = read.params;
 	const message = params.short_message;
-	const esmClass = numberOr(params.esm_class, 0);
+	const esmClass = paramNumber(params.esm_class, 0);
 
 	// A message carrying a UDH stays a buffer; the session needs the header intact to reassemble.
 	if (Buffer.isBuffer(message) && (esmClass & consts.ESM_CLASS.UDH_INDICATOR) !== consts.ESM_CLASS.UDH_INDICATOR) {
-		params.short_message = decodeMessage(message, numberOr(params.data_coding, 0)).message;
+		params.short_message = decodeMessage(message, paramNumber(params.data_coding, 0)).message;
 	}
 
 	return {

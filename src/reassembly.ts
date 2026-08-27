@@ -5,7 +5,7 @@ import type { SmppLog } from './log.ts';
 import type { Tlv } from './defs/tlvs.ts';
 import { ExpiringGroups } from './expiring-groups.ts';
 import { decodeMessage } from './message.ts';
-import { paramText } from './defs/types.ts';
+import { paramNumber, paramText } from './defs/types.ts';
 
 export type ReassemblerOptions = {
 	log: SmppLog;
@@ -71,10 +71,6 @@ function groupKey(pduObj: PduObject, reference: number): string {
 	].join('_');
 }
 
-function numberOr(value: ParamValue | undefined, fallback: number): number {
-	return typeof value === 'number' ? value : fallback;
-}
-
 /** The text of a message, joining its segments in the order they were reassembled. */
 export function decodeSegments(pduObjs: PduObject[]): string {
 	let message = '';
@@ -85,8 +81,8 @@ export function decodeSegments(pduObjs: PduObject[]): string {
 		message += Buffer.isBuffer(part)
 			? decodeMessage(
 				part,
-				numberOr(pduObj.params.data_coding, 0),
-				numberOr(pduObj.params.esm_class, 0),
+				paramNumber(pduObj.params.data_coding, 0),
+				paramNumber(pduObj.params.esm_class, 0),
 			).message
 			: paramText(part);
 	}

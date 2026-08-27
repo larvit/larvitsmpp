@@ -5,7 +5,7 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 227 tests, lint and typecheck clean, verified on Node
+The rewrite is **feature complete and green**: 230 tests, lint and typecheck clean, verified on Node
 18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
@@ -147,6 +147,12 @@ session message is a change to every call site.
       `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `reconnect-loop`, `pending-requests`
       and `send-sms`, so the directory would make that boundary visible. Do it on the next
       extraction out of `session.ts`, not as a move of its own.
+- [ ] **Nothing owns the `esm_class` bits.** Three modules read them with their own literals:
+      `pdu.ts` decides decode-or-not, `incoming-requests.ts` reassemble-or-not and `dlr.ts`
+      receipt-or-not. That divergence is what let a UDH-carrying receipt reach `dlrFromPdu()` as an
+      undecoded buffer. Two predicates next to the constants would collapse it without touching
+      `index.ts`.
+
 - [ ] **`submit_multi` and the broadcast commands** encode and decode, but nothing exercises them
       end to end. The interop suite is the natural place.
 - [ ] **Move to TypeScript 7** once `typescript-eslint` supports it; `renovate.json` pins TypeScript
@@ -162,8 +168,9 @@ session message is a change to every call site.
       change on this list for the most real-world breakage removed.
 
 - [ ] **An `onReceipt` hook.** Receipt text is only loosely specified and operators disagree on it,
-      but `dlrFromPdu()` is wired into `IncomingRequests` with no way past it: an application facing
-      a format we do not parse has to listen on `incomingPduObj` and reimplement the dispatch.
+      but `dlrFromPdu()` is wired into `IncomingRequests` with no seam of its own: an application
+      facing a format we do not parse has to take the whole PDU on `onRequest` and reimplement the
+      dispatch, which owns the response as well.
       Mirror the `onRequest` seam — return a `Dlr` to own the receipt, `undefined` to fall through
       to the built-in parser.
 

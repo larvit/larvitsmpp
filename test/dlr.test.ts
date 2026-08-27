@@ -8,7 +8,7 @@ import type { PduObject, TlvInput } from '../src/pdu.ts';
 const receiptText = 'id:0195f0c7 sub:001 dlvrd:001 submit date:2508251430 done date:2508251431 stat:DELIVRD err:000 text:hello';
 
 function deliverSm(
-	message: string,
+	message: Buffer | string,
 	tlvs?: Record<string, TlvInput>,
 	esmClass: number = consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
 ): PduObject {
@@ -136,10 +136,41 @@ describe('dlrFromPdu()', () => {
 		assert.equal(dlr.smsId, undefined);
 		assert.equal(dlr.statusMsg, 'UNKNOWN');
 		assert.equal(dlr.statusId, 7);
+	});
 
-		const withUdh = consts.ESM_CLASS.MC_DELIVERY_RECEIPT | consts.ESM_CLASS.UDH_INDICATOR;
+	// pduToObj leaves a UDH-carrying short_message a buffer, so the body needs decoding before it
+	// can be read at all — and the message type sits under the UDH indicator in the same octet.
+	test('reads the body of a receipt that carries a UDH', () => {
+		const udh = Buffer.from([0x05, 0x00, 0x03, 0x2a, 0x01, 0x01]);
+		const body = Buffer.concat([udh, Buffer.from(receiptText, 'ascii')]);
+		const dlr = dlrFromPdu(deliverSm(
+			body,
+			undefined,
+			consts.ESM_CLASS.MC_DELIVERY_RECEIPT | consts.ESM_CLASS.UDH_INDICATOR,
+		));
 
-		assert.ok(dlrFromPdu(deliverSm(receiptText, undefined, withUdh)));
+		assert.ok(dlr);
+		assert.equal(dlr.smsId, '0195f0c7');
+		assert.equal(dlr.statusMsg, 'DELIVERED');
+	});
+
+	// message_state 0x80-0xFF is reserved for MC-vendor-specific values, which we cannot name.
+	test('falls back to the body when the state TLV carries a value it cannot name', () => {
+		const dlr = dlrFromPdu(deliverSm(receiptText, { message_state: { tagValue: 0x84 } }));
+
+		assert.ok(dlr);
+		assert.equal(dlr.statusId, 0x84);
+		assert.equal(dlr.statusMsg, 'DELIVERED');
+	});
+
+	test('takes a receipted_message_id TLV as a receipt marker of its own', () => {
+		const dlr = dlrFromPdu(deliverSm('nothing scrapable here', {
+			receipted_message_id: { tagValue: 'from-the-tlv' },
+		}, 0));
+
+		assert.ok(dlr);
+		assert.equal(dlr.smsId, 'from-the-tlv');
+		assert.equal(dlr.statusMsg, 'UNKNOWN');
 	});
 
 	test('leaves a message the peer marked as another type to arrive as an SMS', () => {
