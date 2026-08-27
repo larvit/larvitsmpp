@@ -125,13 +125,25 @@ export function parseReceipt(message: string): Receipt {
 
 type MessageType = 'other' | 'receipt' | 'unmarked';
 
+/** The message types the spec names that are not receipts. It reserves the remaining ten. */
+const notReceiptTypes: number[] = [
+	consts.ESM_CLASS.CONVERSATION_ABORT,
+	consts.ESM_CLASS.DELIVERY_ACKNOWLEDGEMENT,
+	consts.ESM_CLASS.INTERMEDIATE_DELIVERY,
+	consts.ESM_CLASS.USER_ACKNOWLEDGEMENT,
+];
+
+function nonEmptyText(value: ParamValue | undefined): string | undefined {
+	return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
 function messageType(pduObj: PduObject): MessageType {
 	const type = messageTypeOf(paramNumber(pduObj.params.esm_class, 0));
 
 	if (type === consts.ESM_CLASS.MC_DELIVERY_RECEIPT) return 'receipt';
-	if (type !== 0) return 'other';
+	if (notReceiptTypes.includes(type)) return 'other';
 
-	return pduObj.tlvs.receipted_message_id === undefined ? 'unmarked' : 'receipt';
+	return nonEmptyText(pduObj.tlvs.receipted_message_id?.tagValue) === undefined ? 'unmarked' : 'receipt';
 }
 
 /** A UDH-carrying short_message reaches here as a buffer, header and all. */
@@ -148,9 +160,7 @@ function receiptBody(pduObj: PduObject): string {
 }
 
 function receiptId(tlvId: ParamValue | undefined, receipt: Receipt | undefined): string | undefined {
-	if (typeof tlvId === 'string' && tlvId !== '') return tlvId;
-
-	return receipt?.id === '' ? undefined : receipt?.id;
+	return nonEmptyText(tlvId) ?? (receipt?.id === '' ? undefined : receipt?.id);
 }
 
 function isMessageState(name: string | undefined): name is MessageState {
@@ -173,12 +183,7 @@ function receiptStatus(
 	return { statusId: tlvState, statusMsg: isMessageState(named) ? named : scraped };
 }
 
-/**
- * Builds a delivery report from a deliver_sm, or nothing if the PDU carries a message rather than a
- * receipt. `esm_class` decides that where the peer names a message type and a receipted_message_id
- * TLV where it names none; failing both, the body is read for the standard receipt fields, which is
- * the only thing Kannel and several other SMSCs send.
- */
+/** The delivery report a deliver_sm carries, or nothing when it carries a message instead. */
 export function dlrFromPdu(pduObj: PduObject): Dlr | undefined {
 	const type = messageType(pduObj);
 

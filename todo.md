@@ -5,7 +5,7 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 230 tests, lint and typecheck clean, verified on Node
+The rewrite is **feature complete and green**: 231 tests, lint and typecheck clean, verified on Node
 18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
@@ -147,6 +147,13 @@ session message is a change to every call site.
       `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `reconnect-loop`, `pending-requests`
       and `send-sms`, so the directory would make that boundary visible. Do it on the next
       extraction out of `session.ts`, not as a move of its own.
+- [ ] **Does an intermediate delivery notification deserve to be a `dlr`?** `esm_class` message type
+      `INTERMEDIATE_DELIVERY` (0x20) is classified as a message today, so a peer that reports
+      non-final states with it hands the application a raw `id:… stat:ENROUTE` text as an inbound
+      SMS. Kannel treats 0x04, 0x08 and 0x20 alike as report-bearing. Against it: a non-final report
+      would take a segment's slot in `DlrMerger` and complete the group early. Raised by review,
+      2026-08-27; needs a decision.
+
 - [ ] **`submit_multi` and the broadcast commands** encode and decode, but nothing exercises them
       end to end. The interop suite is the natural place.
 - [ ] **Move to TypeScript 7** once `typescript-eslint` supports it; `renovate.json` pins TypeScript

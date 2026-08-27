@@ -119,6 +119,7 @@ describe('dlrFromPdu()', () => {
 
 	test('returns nothing when an unmarked deliver_sm identifies no message', () => {
 		assert.equal(dlrFromPdu(deliverSm('just a normal sms', undefined, 0)), undefined);
+		assert.equal(dlrFromPdu(deliverSm('id:0195f0c7 stat:WEIRDXX', undefined, 0)), undefined);
 	});
 
 	test('still reads the body when the peer marks no message type', () => {
@@ -171,6 +172,22 @@ describe('dlrFromPdu()', () => {
 		assert.ok(dlr);
 		assert.equal(dlr.smsId, 'from-the-tlv');
 		assert.equal(dlr.statusMsg, 'UNKNOWN');
+
+		const empty = dlrFromPdu(deliverSm('an ordinary inbound message', {
+			receipted_message_id: { tagValue: '' },
+		}, 0));
+
+		assert.equal(empty, undefined, 'an empty id marks nothing');
+	});
+
+	// The spec names six of the sixteen message types and reserves the rest, so a peer that types
+	// its receipts with one of the reserved bits keeps the body scrape rather than losing them.
+	test('keeps the body scrape for a message type the spec reserves', () => {
+		const dlr = dlrFromPdu(deliverSm(receiptText, undefined, 0x0c));
+
+		assert.ok(dlr);
+		assert.equal(dlr.smsId, '0195f0c7');
+		assert.equal(dlr.statusMsg, 'DELIVERED');
 	});
 
 	test('leaves a message the peer marked as another type to arrive as an SMS', () => {
