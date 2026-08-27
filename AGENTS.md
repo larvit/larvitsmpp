@@ -229,7 +229,8 @@ exactly 140.
   consumer. `declare on: …` and its six siblings re-type the inherited methods to return `unknown`,
   which emits nothing, needs no cast and leaves the runtime method on the prototype. Overriding them
   as real methods instead cannot work: the `super.on()` call needs a cast to satisfy the conditional
-  `Listener` type. `unknown` rather than `void | Promise<void>` because a listener may return
+  `Listener` type. The cost is that a subclass can no longer reach those seven through `super` or
+  override them as methods — re-declaring them the same way is its way out. `unknown` rather than `void | Promise<void>` because a listener may return
   anything — `session.on('close', () => set.delete(session))` returns a boolean.
 
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
