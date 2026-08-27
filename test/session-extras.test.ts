@@ -365,6 +365,17 @@ describe('reassembly bounds', () => {
 		assert.equal(reassembler.size, 0);
 	});
 
+	// Parts 1/2 then 2/3 would otherwise complete the stored two-part group, truncating the message.
+	test('refuses a segment that renumbers how many parts the message has', () => {
+		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+
+		assert.equal(collect(reassembler, 9, 1, 2), undefined);
+		assert.equal(collect(reassembler, 9, 2, 3), undefined);
+		assert.equal(reassembler.size, 1);
+
+		reassembler.clear();
+	});
+
 	// 0.4.0 held incomplete groups without limit and swept them only when other traffic arrived.
 	test('drops the oldest incomplete message once the cap is reached', () => {
 		const reassembler = new Reassembler({ log: silentLog, max: 2, now: () => 0, timeout: 60_000 });

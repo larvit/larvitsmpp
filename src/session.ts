@@ -127,6 +127,11 @@ export class Session extends EventEmitter<SessionEvents> {
 
 		if (this.closed) return { err: new Error('Session is closed') };
 
+		// Before the window, or a full window makes an aborted call wait for a slot it will not use.
+		if (options.signal?.aborted === true) {
+			return { err: new Error('Aborted before the request was sent') };
+		}
+
 		await this.window.acquire();
 
 		try {

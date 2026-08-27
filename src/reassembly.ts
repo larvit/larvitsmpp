@@ -132,7 +132,20 @@ export class Reassembler {
 		}
 
 		const key = groupKey(pduObj, concat.reference);
-		const group = this.groups.get(key) ?? this.open(key, concat.total);
+		const existing = this.groups.get(key);
+
+		// Parts 1/2 and 2/3 would otherwise complete the stored two-part group as a truncated message.
+		if (existing && existing.total !== concat.total) {
+			this.log.warn('reassembler - dropping a segment with an inconsistent UDH total', {
+				existingTotal: existing.total,
+				part: concat.part,
+				total: concat.total,
+			});
+
+			return undefined;
+		}
+
+		const group = existing ?? this.open(key, concat.total);
 		const replaced = group.parts.get(concat.part);
 		const segment = detach(pduObj);
 		const delta = octetsOf(segment) - (replaced === undefined ? 0 : octetsOf(replaced));

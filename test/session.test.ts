@@ -1000,6 +1000,38 @@ describe('robustness', () => {
 		assert.deepEqual(seen, []);
 	});
 
+	// The guard sits before the send window, or a full window makes the aborted call queue first.
+	test('does not wait for a send window slot it will never use', async t => {
+		const smpp = await startServer();
+
+		t.after(() => smpp.close());
+
+		// The peer answers nothing, so the one slot stays held for the whole test.
+		smpp.on('session', session => session.on('sms', () => undefined));
+
+		const { session } = await connect(smpp, { maxOutstanding: 1, responseTimeout: 5000 });
+
+		assert.ok(session);
+		t.after(() => { session.close(); });
+
+		const held = session.sendSms({ from: '46701113311', message: 'holds the slot', to: '46709771337' });
+		const controller = new AbortController();
+
+		controller.abort();
+
+		const aborted = await raceWithin(500, session.sendSms({
+			from: '46701113311',
+			message: 'must not queue behind the held one',
+			to: '46709771337',
+		}, { signal: controller.signal }));
+
+		assert.notEqual(aborted, false, 'an aborted send should not wait for the window');
+		assert.ok(aborted !== false && aborted.err instanceof Error);
+
+		session.close();
+		await held;
+	});
+
 	// A socket the loop opened and never handed over is one leaked per retry, forever.
 	test('leaves no socket open when coming back up fails', async () => {
 		const opened: net.Socket[] = [];
