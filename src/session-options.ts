@@ -1,9 +1,9 @@
 import type { Dlr } from './dlr.ts';
-import type { LogInt } from '@larvit/log';
 import type { MessageDlr } from './dlr-merger.ts';
 import type { PduObject } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
+import type { SmppLog } from './log.ts';
 import type { Sms } from './sms.ts';
 import type { Socket } from 'node:net';
 
@@ -48,7 +48,7 @@ export type ReconnectOptions = {
 export type SessionOptions = {
 	enquireLinkInterval?: number | undefined;
 	idleTimeout?: number | undefined;
-	log?: LogInt | undefined;
+	log?: SmppLog | undefined;
 	maxOctets?: number | undefined;
 	maxOutstanding?: number | undefined;
 	maxReassembly?: number | undefined;

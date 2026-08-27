@@ -1,8 +1,8 @@
 import type { DlrMerger } from './dlr-merger.ts';
-import type { LogInt } from '@larvit/log';
 import type { OnRequest } from './session-options.ts';
 import type { PduObject } from './pdu.ts';
 import type { Session } from './session.ts';
+import type { SmppLog } from './log.ts';
 import { Reassembler, decodeSegments } from './reassembly.ts';
 import { bindCommands, defaults } from './session-options.ts';
 import { concatInfo } from './udh.ts';
@@ -13,7 +13,7 @@ import { paramText } from './defs/types.ts';
 
 export type IncomingRequestsOptions = {
 	dlrMerger: DlrMerger;
-	log: LogInt;
+	log: SmppLog;
 	maxOctets?: number | undefined;
 	maxReassembly?: number | undefined;
 	onRequest?: OnRequest | undefined;
@@ -25,7 +25,7 @@ export type IncomingRequestsOptions = {
 /** Everything the peer asks of a session: messages, receipts, links and the answers to them. */
 export class IncomingRequests {
 	private readonly dlrMerger: DlrMerger;
-	private readonly log: LogInt;
+	private readonly log: SmppLog;
 	private readonly onRequest: OnRequest | undefined;
 	private readonly reassembler: Reassembler;
 	private readonly session: Session;

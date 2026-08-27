@@ -1,8 +1,8 @@
-import type { LogInt } from '@larvit/log';
 import type { PduObject, TlvInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Server as NetServer, Socket } from 'node:net';
 import type { Server as TlsServer, TlsOptions } from 'node:tls';
+import type { SmppLog } from './log.ts';
 import { EventEmitter } from 'node:events';
 import { Session, bindCommands, defaultSystemId } from './session.ts';
 import { checkSessionOptions, undeclaredInterfaceVersion } from './session-options.ts';
@@ -26,7 +26,7 @@ export type ServerOptions = {
 	host?: string;
 	idleTimeout?: number;
 	interfaceVersion?: number;
-	log?: LogInt;
+	log?: SmppLog;
 	maxOutstanding?: number;
 	maxOctets?: number;
 	maxReassembly?: number;
@@ -54,10 +54,10 @@ const defaults = {
 export class SmppServer extends EventEmitter<ServerEvents> {
 	readonly sessions = new Set<Session>();
 
-	private readonly log: LogInt;
+	private readonly log: SmppLog;
 	private readonly server: NetServer;
 
-	constructor(server: NetServer, log: LogInt) {
+	constructor(server: NetServer, log: SmppLog) {
 		super();
 		this.log = log;
 		this.server = server;
@@ -223,7 +223,7 @@ function onConnection(sock: Socket, options: ServerOptions, server: SmppServer):
 }
 
 /** Node reports a rejected handshake as `tlsClientError`, which is never an `error` event. */
-function createSecureListener(tlsOptions: TlsOptions, log: LogInt): TlsServer {
+function createSecureListener(tlsOptions: TlsOptions, log: SmppLog): TlsServer {
 	const listener = createTlsServer(tlsOptions);
 
 	listener.on('tlsClientError', err => {
@@ -233,7 +233,7 @@ function createSecureListener(tlsOptions: TlsOptions, log: LogInt): TlsServer {
 	return listener;
 }
 
-function checkOptions(options: ServerOptions, log: LogInt, port: number): VoidResult {
+function checkOptions(options: ServerOptions, log: SmppLog, port: number): VoidResult {
 	const checked = checkSessionOptions(options);
 
 	if (checked.err) return { err: checked.err };
@@ -258,7 +258,7 @@ function checkOptions(options: ServerOptions, log: LogInt, port: number): VoidRe
 
 function createListener(
 	options: ServerOptions,
-	log: LogInt,
+	log: SmppLog,
 	port: number,
 ): Result<{ listener: NetServer | TlsServer; useTls: boolean }> {
 	const useTls = options.tls !== undefined && options.tls !== false;

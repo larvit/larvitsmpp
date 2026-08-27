@@ -1,14 +1,14 @@
 import type { ConcatInfo } from './udh.ts';
-import type { LogInt } from '@larvit/log';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject } from './pdu.ts';
+import type { SmppLog } from './log.ts';
 import type { Tlv } from './defs/tlvs.ts';
 import { ExpiringGroups } from './expiring-groups.ts';
 import { decodeMessage } from './message.ts';
 import { paramText } from './defs/types.ts';
 
 export type ReassemblerOptions = {
-	log: LogInt;
+	log: SmppLog;
 	max: number;
 	maxOctets?: number | undefined;
 	/** Injected so expiry can be exercised without a wall clock. */
@@ -97,7 +97,7 @@ export function decodeSegments(pduObjs: PduObject[]): string {
 /** Holds the segments of incomplete multipart messages until they are whole, capped and expiring. */
 export class Reassembler {
 	private readonly groups: ExpiringGroups<Group>;
-	private readonly log: LogInt;
+	private readonly log: SmppLog;
 	private readonly max: number;
 	private readonly maxOctets: number;
 	private octets = 0;

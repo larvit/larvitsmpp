@@ -1,10 +1,10 @@
-import type { LogInt } from '@larvit/log';
 import type { Result, VoidResult } from './result.ts';
+import type { SmppLog } from './log.ts';
 import type { Socket } from 'node:net';
 
 export type ReconnectLoopOptions = {
 	connect: () => Promise<Result<{ sock: Socket }>>;
-	log: LogInt;
+	log: SmppLog;
 	maxDelay: number;
 	minDelay: number;
 	/** Brings the owner back up on a freshly opened socket. An err means try again. */

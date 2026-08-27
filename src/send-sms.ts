@@ -1,8 +1,8 @@
 import type { EncodingName } from './defs/encodings.ts';
-import type { LogInt } from '@larvit/log';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput } from './pdu.ts';
 import type { Result } from './result.ts';
+import type { SmppLog } from './log.ts';
 import { consts } from './defs/constants.ts';
 import { detect } from './defs/encodings.ts';
 import { paramText } from './defs/types.ts';
@@ -28,7 +28,7 @@ export type SendSmsResult = { err?: Error; pduObjs: PduObject[]; smsIds: string[
 
 /** What sending needs from the session: a concat reference and a way onto the wire. */
 export type SendSmsDeps = {
-	log: LogInt;
+	log: SmppLog;
 	reference: number;
 	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 };

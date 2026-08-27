@@ -1,6 +1,6 @@
 import type { ConnectionOptions } from 'node:tls';
-import type { LogInt } from '@larvit/log';
 import type { Result, VoidResult } from './result.ts';
+import type { SmppLog } from './log.ts';
 import type { Socket } from 'node:net';
 import { Session } from './session.ts';
 import { checkSessionOptions, undeclaredInterfaceVersion } from './session-options.ts';
@@ -20,7 +20,7 @@ export type ClientOptions = {
 	host?: string;
 	idleTimeout?: number;
 	interfaceVersion?: number;
-	log?: LogInt;
+	log?: SmppLog;
 	maxOutstanding?: number;
 	password?: string;
 	port?: number;
@@ -134,7 +134,7 @@ async function bind(session: Session, options: ClientOptions): Promise<VoidResul
 	return {};
 }
 
-function createSession(options: ClientOptions, log: LogInt, sock: Socket): Session {
+function createSession(options: ClientOptions, log: SmppLog, sock: Socket): Session {
 	const enquireLinkInterval = options.enquireLinkInterval ?? defaults.enquireLinkInterval;
 
 	return new Session({
@@ -157,7 +157,7 @@ function createSession(options: ClientOptions, log: LogInt, sock: Socket): Sessi
 	});
 }
 
-async function connect(options: ClientOptions, log: LogInt): Promise<Result<{ sock: Socket }>> {
+async function connect(options: ClientOptions, log: SmppLog): Promise<Result<{ sock: Socket }>> {
 	const checked = checkSessionOptions(options);
 
 	if (checked.err) {

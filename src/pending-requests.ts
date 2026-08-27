@@ -1,6 +1,6 @@
-import type { LogInt } from '@larvit/log';
 import type { PduObject } from './pdu.ts';
 import type { Result } from './result.ts';
+import type { SmppLog } from './log.ts';
 import { maxSeqNr } from './pdu.ts';
 
 export type WaitOptions = {
@@ -14,11 +14,11 @@ type Pending = {
 
 /** Hands out sequence numbers and matches responses to the requests waiting for them. */
 export class PendingRequests {
-	private readonly log: LogInt;
+	private readonly log: SmppLog;
 	private readonly pending = new Map<number, Pending>();
 	private ourSeqNr = 1;
 
-	constructor(log: LogInt) {
+	constructor(log: SmppLog) {
 		this.log = log;
 	}
 

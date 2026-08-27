@@ -20,7 +20,7 @@ These are not preferences. Breaking one is a defect.
    `err`. No `throw`, no rejected promises, no exceptions as control flow. Node APIs that throw are
    wrapped at the boundary and converted into a result. Programmer errors (bad arguments) are
    results too.
-2. **Log messages are static strings.** Every dynamic value goes into `@larvit/log` metadata. Never
+2. **Log messages are static strings.** Every dynamic value goes into the log metadata. Never
    interpolate, never concatenate.
    - GOOD: `log.debug('sendSms() - splitting message', { parts: msgs.length, to });`
    - BANNED: `log.debug('sendSms() - splitting into ' + msgs.length + ' parts');`
@@ -45,7 +45,7 @@ src/
 	expiring-groups.ts   ExpiringGroups: the capped, expiring store both of those share
 	incoming-requests.ts Every request the peer sends: messages, receipts, links, unknown commands
 	link-timers.ts       LinkTimers: the enquire_link heartbeat and the idle timeout
-	log.ts               silentLog — the default when the application passes none
+	log.ts               SmppLog, the logger contract, and silentLog — the default
 	message.ts           Encoding detection, splitting, bit counting, SMPP date formatting
 	pdu.ts               pduToObj / objToPdu / pduReturn — synchronous, result-returning
 	pdu-framer.ts        PduFramer: a byte stream cut into complete PDUs
@@ -185,6 +185,12 @@ exactly 140.
   `server()`, so an implementation that needs 5.0 throughout can have it. The threshold at or above
   which a peer may be sent optional parameters is fixed at 0x34 by the spec and is not the same
   constant as the declared version.
+- **The logger is a five-method contract this library declares, not a dependency.** `SmppLog` in
+  `log.ts` is what the code actually calls (`debug`, `error`, `info`, `verbose`, `warn`), so an
+  application can satisfy it with an object literal and `@larvit/smpp` ships with no runtime
+  dependencies. `@larvit/log` implements it structurally and stays a devDependency, where
+  `test/tls.test.ts` passing a real `Log` as the server's logger keeps that compatibility compiled.
+
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image
   `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI

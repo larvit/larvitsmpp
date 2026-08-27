@@ -11,8 +11,7 @@ promises and the rough edges taken off.
 
 ## Requirements
 
-Node 18 or later. The only runtime dependency is
-[`@larvit/log`](https://www.npmjs.com/package/@larvit/log).
+Node 18 or later. No runtime dependencies.
 
 ## Install
 
@@ -85,7 +84,7 @@ Every one is optional.
 | `responseTimeout` | `30000` | How long to wait for a response before giving up on it; `0` waits forever. |
 | `maxOutstanding` | `10` | Requests allowed on the wire at once; further sends queue. |
 | `reconnect` | off | `{ minDelay, maxDelay }` to re-bind automatically after a drop or an idle timeout, with exponential backoff. |
-| `log` | silent | A `@larvit/log` instance. |
+| `log` | silent | Any object with `debug`, `error`, `info`, `verbose` and `warn` methods — see [Logging](#logging). |
 | `signal` | — | An `AbortSignal` that cancels connecting and tears the session down. |
 
 ### Sending
@@ -217,6 +216,35 @@ Runtime failures on a live connection arrive as `sessionError` and `serverError`
 deliberately not called `error`: Node turns an unhandled `error` event into a thrown exception, which
 is exactly what this library promises not to do.
 
+## Logging
+
+`log` takes any object with `debug`, `error`, `info`, `verbose` and `warn` methods, each
+`(msg: string, metadata?: Record<string, boolean | number | string>) => void`. Message strings are
+static and every dynamic value goes in the metadata, so entries group by message.
+
+[`@larvit/log`](https://www.npmjs.com/package/@larvit/log) implements it as it stands:
+
+```javascript
+import { Log } from '@larvit/log';
+import { client } from '@larvit/smpp';
+
+const { err, session } = await client({ log: new Log('debug') });
+```
+
+So does an object of your own, forwarding wherever you want it:
+
+```javascript
+const log = {
+	debug:   () => undefined,
+	error:   (msg, metadata) => { console.error(msg, metadata); },
+	info:    (msg, metadata) => { console.info(msg, metadata); },
+	verbose: () => undefined,
+	warn:    (msg, metadata) => { console.warn(msg, metadata); },
+};
+```
+
+TypeScript users can import `SmppLog` to have the compiler check one.
+
 ## Sessions
 
 ### Events
@@ -289,8 +317,8 @@ The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `
 - **`defs.filters` is gone.** It was declared on every command and TLV but never invoked, so it did
   nothing. SMPP time formatting, the one part worth keeping, is exported as `smppTime`.
 - **The `error` event is `sessionError`** (and `serverError` on the server handle).
-- **`log`** takes a [`@larvit/log`](https://www.npmjs.com/package/@larvit/log) instance instead of a
-  `larvitutils` one, and is silent by default.
+- **`log`** takes any object with `debug`, `error`, `info`, `verbose` and `warn` methods instead of a
+  `larvitutils` one, and is silent by default. See [Logging](#logging).
 
 ### Behaviour that changed on the wire
 

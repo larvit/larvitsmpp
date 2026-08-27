@@ -1,11 +1,11 @@
 import type { ErrorName } from './defs/errors.ts';
-import type { LogInt } from '@larvit/log';
 import type { MessageDlr } from './dlr-merger.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
 import type { ReconnectOptions, SendOptions, SessionEvents, SessionOptions } from './session-options.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { SendSmsOptions, SendSmsResult } from './send-sms.ts';
+import type { SmppLog } from './log.ts';
 import type { Socket } from 'node:net';
 import { DlrMerger } from './dlr-merger.ts';
 import { EventEmitter } from 'node:events';
@@ -35,7 +35,7 @@ export { bindCommands, defaultSystemId };
 export class Session extends EventEmitter<SessionEvents> {
 	/** Replaced on reconnect, so hold the session rather than this. */
 	sock: Socket;
-	readonly log: LogInt;
+	readonly log: SmppLog;
 
 	loggedIn = false;
 	/** What the peer declared when binding: 0x00 if it declared none, undefined before any bind. */

@@ -1,11 +1,11 @@
-import type { LogInt } from '@larvit/log';
+import type { SmppLog } from './log.ts';
 
 export type LinkTimersOptions = {
 	/** How long between enquire_link probes. Undefined or 0 never probes. */
 	enquireLinkInterval?: number | undefined;
 	/** How long a silent peer is kept. Undefined or 0 keeps it forever. */
 	idleTimeout?: number | undefined;
-	log: LogInt;
+	log: SmppLog;
 	onEnquireLink: () => void;
 	onIdle: () => void;
 };

@@ -8,6 +8,7 @@ import type { MessageDlr } from '../src/session.ts';
 import type { PduObject, PduObjectInput } from '../src/pdu.ts';
 import type { Result } from '../src/result.ts';
 import type { SendSmsResult } from '../src/send-sms.ts';
+import type { SmppLog } from '../src/log.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import { Reassembler, decodeSegments } from '../src/reassembly.ts';
@@ -357,12 +358,22 @@ describe('reassembly bounds', () => {
 
 	// The UDH is peer-controlled, and the default authenticate() accepts every peer.
 	test('refuses a segment whose concatenation metadata cannot be honoured', () => {
-		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+		const warnings: string[] = [];
+		const noop = (): void => undefined;
+		const log: SmppLog = {
+			debug: noop,
+			error: noop,
+			info: noop,
+			verbose: noop,
+			warn: msg => { warnings.push(msg); },
+		};
+		const reassembler = new Reassembler({ log, max: 10, now: () => 0, timeout: 60_000 });
 
 		assert.equal(collect(reassembler, 1, 1, 0), undefined);
 		assert.equal(collect(reassembler, 2, 0, 3), undefined);
 		assert.equal(collect(reassembler, 3, 4, 3), undefined);
 		assert.equal(reassembler.size, 0);
+		assert.deepEqual(warnings, Array(3).fill('reassembler - dropping a segment the UDH numbers impossibly'));
 	});
 
 	// Parts 1/2 then 2/3 would otherwise complete the stored two-part group, truncating the message.

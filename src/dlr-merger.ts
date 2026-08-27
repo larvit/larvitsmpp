@@ -1,12 +1,12 @@
 import type { Dlr } from './dlr.ts';
 import type { MessageState } from './defs/constants.ts';
-import type { LogInt } from '@larvit/log';
+import type { SmppLog } from './log.ts';
 import { ExpiringGroups } from './expiring-groups.ts';
 
 export type MessageDlr = Dlr & { segments: Dlr[] };
 
 export type DlrMergerOptions = {
-	log: LogInt;
+	log: SmppLog;
 	max: number;
 	/** Injected so expiry can be exercised without a wall clock. */
 	now?: (() => number) | undefined;
@@ -50,7 +50,7 @@ function severityOf(dlr: Dlr): number {
 
 export class DlrMerger {
 	private readonly groups: ExpiringGroups<Group>;
-	private readonly log: LogInt;
+	private readonly log: SmppLog;
 	private readonly max: number;
 
 	constructor(options: DlrMergerOptions) {
