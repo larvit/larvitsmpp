@@ -9,6 +9,24 @@ promises and the rough edges taken off.
 > **Not published yet.** The implementation is complete and tested, but 1.0.0 has not been released
 > to npm. Until it is, use `larvitsmpp` 0.4.0. Remaining release steps are in [todo.md](todo.md).
 
+## Beyond the PDU codec
+
+Encoding and decoding PDUs is the easy half of SMPP. The session layer is the half usually written
+by hand on top of a library; it is built in here.
+
+| | |
+| --- | --- |
+| **Keepalive** | `enquire_link` every 20 s on a quiet link, and a peer that stops answering is dropped. |
+| **Reconnect with backoff** | Opt-in `reconnect` reopens the socket and re-binds, 1 s doubling to 30 s. |
+| **Submit window** | `maxOutstanding` holds requests in flight at 10; further sends queue instead of overrunning the SMSC. |
+| **Delivery receipts** | Correlated by `receipted_message_id`/`message_state` where the SMSC sends them, falling back to parsing the receipt text — what Kannel and several others send. |
+| **Multipart** | Long messages split on send; concatenated `deliver_sm` reassembled into one `sms`. |
+| **Never throws** | Everything fallible resolves to `{ err?, … }`, the codec included. |
+
+Throughput throttling is deliberately absent: an operator's rate limit is scoped to the account, and
+enforcing it needs state shared across every process bound to that account, which a library holding
+everything in memory cannot provide.
+
 ## Requirements
 
 Node 18 or later. No runtime dependencies.
