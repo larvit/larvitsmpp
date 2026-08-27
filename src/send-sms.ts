@@ -61,7 +61,6 @@ export function submitSmParams(
 		dest_addr_npi: sms.destinationAddrNpi ?? 0,
 		dest_addr_ton: sms.destinationAddrTon ?? addressTon(sms.to),
 		short_message: segment,
-		sm_length: segment.length,
 		source_addr: sms.from,
 		source_addr_npi: sms.sourceAddrNpi ?? 0,
 		source_addr_ton: sms.sourceAddrTon ?? addressTon(sms.from),

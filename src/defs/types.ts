@@ -215,12 +215,18 @@ export const string: WireType<string> = {
 	size(value) {
 		const { err, text } = wantText(value);
 
-		return err ? { err } : { size: text.length + 1 };
+		if (err) return { err };
+
+		return tooLongForLengthOctet(text) ?? { size: text.length + 1 };
 	},
 	write(value, buffer, offset) {
 		const { err, text } = wantText(value);
 
 		if (err) return { err };
+
+		const lengthErr = tooLongForLengthOctet(text);
+
+		if (lengthErr) return lengthErr;
 
 		const rangeErr = outOfRange(buffer, offset, text.length + 1);
 
@@ -232,6 +238,12 @@ export const string: WireType<string> = {
 		return {};
 	},
 };
+
+function tooLongForLengthOctet(text: string): { err: Error } | undefined {
+	if (text.length <= 0xFF) return undefined;
+
+	return { err: new Error(`Octet String is ${String(text.length)} octets, the length octet holds 255`) };
+}
 
 /** C-Octet String: NULL-terminated. */
 export const cstring: WireType<string> = {
@@ -350,7 +362,11 @@ export const dest_address_array: WireType<DestAddress[]> = {
 		for (const dest of addresses) {
 			if ('dl_name' in dest) {
 				buf.writeUInt8(2, offset++);
-				writeCstring(dest.dl_name, buf, offset);
+
+				const name = writeCstring(dest.dl_name, buf, offset);
+
+				if (name.err) return { err: name.err };
+
 				offset += dest.dl_name.length + 1;
 			} else {
 				buf.writeUInt8(1, offset++);
@@ -363,7 +379,10 @@ export const dest_address_array: WireType<DestAddress[]> = {
 
 				if (npi.err) return { err: npi.err };
 
-				writeCstring(dest.destination_addr, buf, offset);
+				const addr = writeCstring(dest.destination_addr, buf, offset);
+
+				if (addr.err) return { err: addr.err };
+
 				offset += dest.destination_addr.length + 1;
 			}
 		}
@@ -448,7 +467,10 @@ export const unsuccess_sme_array: WireType<UnsuccessSme[]> = {
 
 			if (npi.err) return { err: npi.err };
 
-			writeCstring(sme.destination_addr, buf, offset);
+			const addr = writeCstring(sme.destination_addr, buf, offset);
+
+			if (addr.err) return { err: addr.err };
+
 			offset += sme.destination_addr.length + 1;
 
 			const status = writeInt32(sme.error_status_code, buf, offset);

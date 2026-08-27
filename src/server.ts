@@ -1,10 +1,11 @@
 import type { LogInt } from '@larvit/log';
 import type { PduObject, TlvInput } from './pdu.ts';
-import type { Result } from './result.ts';
+import type { Result, VoidResult } from './result.ts';
 import type { Server as NetServer, Socket } from 'node:net';
 import type { Server as TlsServer, TlsOptions } from 'node:tls';
 import { EventEmitter } from 'node:events';
 import { Session, bindCommands, defaultSystemId } from './session.ts';
+import { checkSessionOptions } from './session-options.ts';
 import { createServer as createNetServer } from 'node:net';
 import { createServer as createTlsServer } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
@@ -27,6 +28,7 @@ export type ServerOptions = {
 	interfaceVersion?: number;
 	log?: LogInt;
 	maxOutstanding?: number;
+	maxOctets?: number;
 	maxReassembly?: number;
 	port?: number;
 	reassemblyTimeout?: number;
@@ -52,10 +54,12 @@ const defaults = {
 export class SmppServer extends EventEmitter<ServerEvents> {
 	readonly sessions = new Set<Session>();
 
+	private readonly log: LogInt;
 	private readonly server: NetServer;
 
-	constructor(server: NetServer) {
+	constructor(server: NetServer, log: LogInt) {
 		super();
+		this.log = log;
 		this.server = server;
 	}
 
@@ -66,11 +70,34 @@ export class SmppServer extends EventEmitter<ServerEvents> {
 		return typeof address === 'object' && address !== null ? address.port : 0;
 	}
 
+	/** A listener that throws is the application's bug; it must not become ours. Hard rule 1. */
+	override emit<K extends keyof ServerEvents>(
+		event: K,
+		...args: K extends keyof ServerEvents ? ServerEvents[K] : never
+	): boolean {
+		try {
+			return super.emit(event, ...args);
+		} catch (thrown: unknown) {
+			const err = thrown instanceof Error ? thrown : new Error(String(thrown));
+
+			this.log.error('server - a listener threw', { event, message: err.message });
+
+			// Guarded against the listener that throws being the one listening for this.
+			if (event !== 'serverError') this.emit('serverError', err);
+
+			return false;
+		}
+	}
+
 	/** Stops listening and closes every live session. */
 	close(): Promise<void> {
 		return new Promise(resolve => {
 			for (const session of this.sessions) {
-				session.close();
+				try {
+					session.close();
+				} catch (thrown: unknown) {
+					this.emit('serverError', thrown instanceof Error ? thrown : new Error(String(thrown)));
+				}
 			}
 
 			this.sessions.clear();
@@ -173,6 +200,7 @@ function onConnection(sock: Socket, options: ServerOptions, server: SmppServer):
 		idleTimeout: options.idleTimeout ?? defaults.idleTimeout,
 		log,
 		maxOutstanding: options.maxOutstanding,
+		maxOctets: options.maxOctets,
 		maxReassembly: options.maxReassembly,
 		onRequest: (bound, pduObj) => onRequest(bound, pduObj, options),
 		reassemblyTimeout: options.reassemblyTimeout,
@@ -203,6 +231,29 @@ function createSecureListener(tlsOptions: TlsOptions, log: LogInt): TlsServer {
 	return listener;
 }
 
+function checkOptions(options: ServerOptions, log: LogInt, port: number): VoidResult {
+	const checked = checkSessionOptions(options);
+
+	if (checked.err) return { err: checked.err };
+
+	if (options.tls === true) {
+		log.warn('server - tls without a certificate', { port });
+
+		return { err: new Error('Listening over TLS needs tls: { cert, key }') };
+	}
+
+	// An int8 TLV on every bind response: out of range here means no ESME can ever bind.
+	const version = options.interfaceVersion ?? defaults.interfaceVersion;
+
+	if (!Number.isInteger(version) || version < 0 || version > 0xFF) {
+		log.warn('server - interface version out of range', { interfaceVersion: version });
+
+		return { err: new Error(`interfaceVersion must be 0-255, got ${String(version)}`) };
+	}
+
+	return {};
+}
+
 function createListener(
 	options: ServerOptions,
 	log: LogInt,
@@ -210,20 +261,9 @@ function createListener(
 ): Result<{ listener: NetServer | TlsServer; useTls: boolean }> {
 	const useTls = options.tls !== undefined && options.tls !== false;
 	const tlsOptions = typeof options.tls === 'object' ? options.tls : undefined;
-	const version = options.interfaceVersion ?? defaults.interfaceVersion;
+	const checked = checkOptions(options, log, port);
 
-	if (useTls && !tlsOptions) {
-		log.warn('server - tls without a certificate', { port });
-
-		return { err: new Error('Listening over TLS needs tls: { cert, key }') };
-	}
-
-	// An int8 TLV on every bind response: out of range here means no ESME can ever bind.
-	if (!Number.isInteger(version) || version < 0 || version > 0xFF) {
-		log.warn('server - interface version out of range', { interfaceVersion: version });
-
-		return { err: new Error(`interfaceVersion must be 0-255, got ${String(version)}`) };
-	}
+	if (checked.err) return { err: checked.err };
 
 	return {
 		listener: tlsOptions ? createSecureListener(tlsOptions, log) : createNetServer(),
@@ -242,15 +282,7 @@ function onListening(listener: NetServer, smpp: SmppServer, options: ServerOptio
 
 	log.info('server - listening', { host: options.host ?? '*', port: smpp.port });
 
-	// close() runs the application's own 'close' listeners, so a throw from one lands here.
-	options.signal?.addEventListener('abort', () => {
-		void smpp.close().catch((thrown: unknown) => {
-			const err = thrown instanceof Error ? thrown : new Error(String(thrown));
-
-			log.warn('server - could not close on abort', { message: err.message });
-			smpp.emit('serverError', err);
-		});
-	}, { once: true });
+	options.signal?.addEventListener('abort', () => { void smpp.close(); }, { once: true });
 }
 
 /** Starts listening for SMPP connections. Resolves once the socket is bound. */
@@ -262,7 +294,7 @@ export function server(options: ServerOptions = {}): Promise<Result<{ server: Sm
 	if (created.err) return Promise.resolve({ err: created.err });
 
 	const listener = created.listener;
-	const smpp = new SmppServer(listener);
+	const smpp = new SmppServer(listener, log);
 
 	listener.on(created.useTls ? 'secureConnection' : 'connection', (sock: Socket) => {
 		onConnection(sock, options, smpp);

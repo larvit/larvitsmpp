@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import test, { describe } from 'node:test';
+import type { Dlr } from '../src/dlr.ts';
 import type { ErrorName } from '../src/defs/errors.ts';
+import type { MessageState } from '../src/defs/constants.ts';
 import type { MessageDlr } from '../src/session.ts';
 import type { PduObject, PduObjectInput } from '../src/pdu.ts';
 import type { Result } from '../src/result.ts';
@@ -9,7 +11,9 @@ import type { SendSmsResult } from '../src/send-sms.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import { Reassembler, decodeSegments } from '../src/reassembly.ts';
+import { DlrMerger } from '../src/dlr-merger.ts';
 import { client } from '../src/client.ts';
+import { consts } from '../src/defs/constants.ts';
 import { errors } from '../src/defs/errors.ts';
 import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
@@ -105,6 +109,34 @@ describe('merged delivery reports', () => {
 
 		session.close();
 		await smpp.close();
+	});
+});
+
+describe('merging segment statuses', () => {
+	function receipt(smsId: string, statusMsg: MessageState): Dlr {
+		return {
+			doneDate: undefined,
+			errorCode: undefined,
+			receipt: undefined,
+			smsId,
+			statusId: consts.MESSAGE_STATE[statusMsg],
+			statusMsg,
+		};
+	}
+
+	// MESSAGE_STATE is a flat enum: ACCEPTED is 6 where UNDELIVERABLE is 5, so reducing on the
+	// wire value called a part-failed message delivered.
+	test('reports the worse of two states the wire numbers the other way round', () => {
+		const merger = new DlrMerger({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+
+		merger.expect(['msg-1', 'msg-2']);
+
+		assert.equal(merger.collect(receipt('msg-1', 'UNDELIVERABLE')), undefined);
+
+		const merged = merger.collect(receipt('msg-2', 'ACCEPTED'));
+
+		assert.ok(merged);
+		assert.equal(merged.statusMsg, 'UNDELIVERABLE');
 	});
 });
 
@@ -332,7 +364,8 @@ describe('reassembly bounds', () => {
 		const reassembler = new Reassembler({
 			log: silentLog,
 			max: 10,
-			maxOctets: 30,
+			// One segment is 36 octets: 14 of short_message plus the two 11-octet addresses.
+			maxOctets: 80,
 			now: () => 0,
 			timeout: 60_000,
 		});

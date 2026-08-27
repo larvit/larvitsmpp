@@ -42,15 +42,22 @@ function detach(pduObj: PduObject): PduObject {
 	return { ...pduObj, params, tlvs };
 }
 
+// A cstring param arrives as a string, and source_addr alone can carry most of a 1 MiB PDU.
+function sizeOf(value: unknown): number {
+	if (Buffer.isBuffer(value)) return value.length;
+
+	return typeof value === 'string' ? value.length : 0;
+}
+
 function octetsOf(pduObj: PduObject): number {
 	let octets = 0;
 
 	for (const value of Object.values(pduObj.params)) {
-		if (Buffer.isBuffer(value)) octets += value.length;
+		octets += sizeOf(value);
 	}
 
 	for (const tlv of Object.values(pduObj.tlvs)) {
-		if (Buffer.isBuffer(tlv.tagValue)) octets += tlv.tagValue.length;
+		octets += sizeOf(tlv.tagValue);
 	}
 
 	return octets;

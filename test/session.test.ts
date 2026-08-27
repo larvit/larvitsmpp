@@ -353,12 +353,14 @@ describe('bind', () => {
 		await named.close();
 	});
 
-	test('answers a refused bind with its own system_id too', async () => {
+	// The echo leak cannot reach a refusal at all: the spec gives a failure response no body.
+	test('answers a refused bind with no body to leak', async () => {
 		const smpp = await startServer({ authenticate: () => false, systemId: 'the-smsc' });
 		const refused = await bindRaw(smpp, 0x34);
 
 		assert.equal(refused.cmdStatus, 'ESME_RBINDFAIL');
-		assert.equal(refused.params.system_id, 'the-smsc');
+		assert.equal(refused.cmdLength, 16);
+		assert.deepEqual(refused.params, {});
 
 		await smpp.close();
 	});
@@ -373,7 +375,7 @@ describe('bind', () => {
 		await smpp.close();
 	});
 
-	test('answers a second bind with ESME_RALYBND and its own system_id', async () => {
+	test('answers a second bind with ESME_RALYBND and no body', async () => {
 		const smpp = await startServer({ systemId: 'the-smsc' });
 		const peer = rawPeer(smpp.port);
 
@@ -384,7 +386,7 @@ describe('bind', () => {
 		const again = await peer.next();
 
 		assert.equal(again.cmdStatus, 'ESME_RALYBND');
-		assert.equal(again.params.system_id, 'the-smsc');
+		assert.deepEqual(again.params, {});
 
 		peer.close();
 		await smpp.close();
@@ -902,6 +904,90 @@ describe('application hooks that throw', () => {
 		assert.equal(reported.message, 'listener exploded');
 
 		session.close();
+		await smpp.close();
+	});
+
+	// The guard for a throwing sms listener used to emit sessionError from inside its own catch.
+	test('survives a sessionError listener that throws as well', async () => {
+		const smpp = await startServer();
+
+		smpp.on('session', session => {
+			session.on('sessionError', () => { throw new Error('the reporter exploded too'); });
+			session.on('sms', () => { throw new Error('listener exploded'); });
+		});
+
+		const { session } = await connect(smpp, { responseTimeout: 200 });
+
+		assert.ok(session);
+
+		const sent = await session.sendSms({
+			from: '46701113311',
+			message: 'blows up both listeners',
+			to: '46709771337',
+		});
+
+		assert.ok(sent.err instanceof Error);
+
+		session.close();
+		await smpp.close();
+	});
+
+	test('closes even when an application close listener throws', async () => {
+		const smpp = await startServer();
+
+		smpp.on('session', session => {
+			session.on('close', () => { throw new Error('close listener exploded'); });
+		});
+
+		const { session } = await connect(smpp);
+
+		assert.ok(session);
+		await smpp.close();
+		assert.equal(smpp.sessions.size, 0);
+
+		session.close();
+	});
+
+	test('refuses a send window that can never free a slot', async () => {
+		const smpp = await startServer();
+		const { err, session } = await connect(smpp, { maxOutstanding: 0 });
+
+		assert.ok(err instanceof Error);
+		assert.match(err.message, /maxOutstanding/);
+		assert.equal(session, undefined);
+
+		await smpp.close();
+	});
+
+	test('keeps the message id off a submit_sm_resp that refuses the message', async () => {
+		const smpp = await startServer();
+
+		smpp.on('session', bound => {
+			bound.on('sms', sms => { void sms.sendResp({ status: 'ESME_RMSGQFUL' }); });
+		});
+
+		const peer = rawPeer(smpp.port);
+
+		peer.write(bindOf(0x34));
+		await peer.next();
+		peer.write({
+			cmdName: 'submit_sm',
+			params: {
+				destination_addr: '46709771337',
+				short_message: 'full queue',
+				source_addr: '46701113311',
+			},
+			seqNr: 2,
+		});
+
+		const refused = await peer.next();
+
+		assert.equal(refused.cmdName, 'submit_sm_resp');
+		assert.equal(refused.cmdStatus, 'ESME_RMSGQFUL');
+		assert.equal(refused.cmdLength, 16);
+		assert.deepEqual(refused.params, {});
+
+		peer.close();
 		await smpp.close();
 	});
 

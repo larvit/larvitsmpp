@@ -1,4 +1,5 @@
 import type { Dlr } from './dlr.ts';
+import type { MessageState } from './defs/constants.ts';
 import type { LogInt } from '@larvit/log';
 import { ExpiringGroups } from './expiring-groups.ts';
 
@@ -24,6 +25,29 @@ const numbered = /^(.*)-(\d+)$/;
  * numbered its ids `<base>-<n>` off one base — the convention this library's own server follows. An
  * SMSC that hands out unrelated ids per segment cannot be merged, so nothing is reported for it.
  */
+/**
+ * MESSAGE_STATE is a flat enum, not a ranking — ACCEPTED is 6 where UNDELIVERABLE is 5 — so reducing
+ * on the wire value reports a part-failed message as delivered. Rank it deliberately instead.
+ */
+const severity: Record<MessageState, number> = {
+	DELIVERED: 0,
+	ACCEPTED: 1,
+	ENROUTE: 2,
+	SCHEDULED: 3,
+	SKIPPED: 4,
+	UNKNOWN: 5,
+	EXPIRED: 6,
+	DELETED: 7,
+	REJECTED: 8,
+	UNDELIVERABLE: 9,
+};
+
+function severityOf(dlr: Dlr): number {
+	const ranked: Record<string, number | undefined> = severity;
+
+	return ranked[dlr.statusMsg] ?? severity.UNKNOWN;
+}
+
 export class DlrMerger {
 	private readonly groups: ExpiringGroups<Group>;
 	private readonly log: LogInt;
@@ -86,7 +110,7 @@ export class DlrMerger {
 		this.groups.delete(base);
 
 		const segments = [...group.parts.entries()].sort(([a], [b]) => a - b).map(([, one]) => one);
-		const worst = segments.reduce((carry, one) => (one.statusId > carry.statusId ? one : carry));
+		const worst = segments.reduce((carry, one) => (severityOf(one) > severityOf(carry) ? one : carry));
 
 		return { ...worst, segments, smsId: base };
 	}

@@ -24,7 +24,8 @@ describe('header', () => {
 	test('writes command length, id, status and sequence number', () => {
 		const pdu = encode({ cmdName: 'bind_transceiver_resp', cmdStatus: 'ESME_RALYBND', seqNr: 1 });
 
-		assert.equal(pdu.readUInt32BE(0), 17);
+		// A failure response is header-only, so 16 rather than 17 with an empty system_id.
+		assert.equal(pdu.readUInt32BE(0), 16);
 		assert.equal(pdu.readUInt32BE(4).toString(16), '80000009');
 		assert.equal(pdu.readUInt32BE(8), 5);
 		assert.equal(pdu.readUInt32BE(12), 1);
@@ -397,7 +398,7 @@ describe('pduReturn()', () => {
 			params: { destination_addr: '46709771337', short_message: 'hi', source_addr: 'foo' },
 			seqNr: 9,
 		}));
-		const { buffer, err } = pduReturn(request, 'ESME_RINVDSTADR', { message_id: 'abc123' });
+		const { buffer, err } = pduReturn(request, 'ESME_ROK', { message_id: 'abc123' });
 
 		assert.equal(err, undefined);
 		assert.ok(buffer);
@@ -405,9 +406,16 @@ describe('pduReturn()', () => {
 		const pduObj = decode(buffer);
 
 		assert.equal(pduObj.cmdName, 'submit_sm_resp');
-		assert.equal(pduObj.cmdStatus, 'ESME_RINVDSTADR');
+		assert.equal(pduObj.cmdStatus, 'ESME_ROK');
 		assert.equal(pduObj.params.message_id, 'abc123');
 		assert.equal(pduObj.seqNr, 9);
+
+		// The spec drops the body of a failure response, so the id a caller passes is not sent.
+		const refused = pduReturn(request, 'ESME_RINVDSTADR', { message_id: 'abc123' });
+
+		assert.ok(refused.buffer);
+		assert.equal(refused.buffer.length, 16);
+		assert.equal(decode(refused.buffer).params.message_id, undefined);
 	});
 
 	test('refuses a command that has no response', () => {

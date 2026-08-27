@@ -3,6 +3,7 @@ import type { LogInt } from '@larvit/log';
 import type { Result, VoidResult } from './result.ts';
 import type { Socket } from 'node:net';
 import { Session } from './session.ts';
+import { checkSessionOptions } from './session-options.ts';
 import { connect as netConnect } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
@@ -152,9 +153,15 @@ function createSession(options: ClientOptions, log: LogInt, sock: Socket): Sessi
 	});
 }
 
-/** Connects to an SMSC and binds. */
-export async function client(options: ClientOptions = {}): Promise<Result<{ session: Session }>> {
-	const log = options.log ?? silentLog;
+async function connect(options: ClientOptions, log: LogInt): Promise<Result<{ sock: Socket }>> {
+	const checked = checkSessionOptions(options);
+
+	if (checked.err) {
+		log.warn('client - option out of range', { message: checked.err.message });
+
+		return { err: checked.err };
+	}
+
 	const opened = await openSocket(options);
 
 	if (opened.err) {
@@ -166,6 +173,16 @@ export async function client(options: ClientOptions = {}): Promise<Result<{ sess
 
 		return { err: opened.err };
 	}
+
+	return { sock: opened.sock };
+}
+
+/** Connects to an SMSC and binds. */
+export async function client(options: ClientOptions = {}): Promise<Result<{ session: Session }>> {
+	const log = options.log ?? silentLog;
+	const opened = await connect(options, log);
+
+	if (opened.err) return { err: opened.err };
 
 	const session = createSession(options, log, opened.sock);
 	const signal = options.signal;

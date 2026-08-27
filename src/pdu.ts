@@ -45,8 +45,10 @@ export type PduObject = {
 	tlvs: Record<string, Tlv>;
 };
 
+const respBit = 0x80000000;
+
 export function isResp(pduObj: Pick<PduObject, 'cmdId'>): boolean {
-	return pduObj.cmdId >= 0x80000000;
+	return pduObj.cmdId >= respBit;
 }
 
 /**
@@ -169,6 +171,30 @@ function writeTlvs(tlvs: Record<string, TlvInput> | undefined): Result<{ chunks:
 	return { chunks };
 }
 
+/**
+ * SMPP 3.4: a response reporting a failure carries no body, so its fields are not "unused but
+ * present" — they are absent, and a peer that reads them anyway reads past the end of the PDU.
+ */
+function buildBody(
+	definition: CommandDefinition,
+	cmdName: CommandName,
+	cmdStatus: ErrorName,
+	params: Record<string, ParamValue | undefined>,
+	tlvs: Record<string, TlvInput> | undefined,
+): Result<{ body: Buffer }> {
+	if (errors[cmdStatus] !== 0 && definition.id >= respBit) return { body: Buffer.alloc(0) };
+
+	const written = writeParams(definition, resolveShortMessage(params), cmdName);
+
+	if (written.err) return { err: written.err };
+
+	const writtenTlvs = writeTlvs(tlvs);
+
+	if (writtenTlvs.err) return { err: writtenTlvs.err };
+
+	return { body: Buffer.concat([...written.chunks, ...writtenTlvs.chunks]) };
+}
+
 function buildPdu(
 	cmdName: CommandName,
 	cmdStatus: ErrorName,
@@ -190,15 +216,11 @@ function buildPdu(
 		return { err: new Error(`Invalid seqNr: ${JSON.stringify(seqNr)}`) };
 	}
 
-	const written = writeParams(definition, resolveShortMessage(params), cmdName);
+	const built = buildBody(definition, cmdName, cmdStatus, params, tlvs);
 
-	if (written.err) return { err: written.err };
+	if (built.err) return { err: built.err };
 
-	const writtenTlvs = writeTlvs(tlvs);
-
-	if (writtenTlvs.err) return { err: writtenTlvs.err };
-
-	const body = Buffer.concat([...written.chunks, ...writtenTlvs.chunks]);
+	const body = built.body;
 	const header = Buffer.alloc(16);
 
 	header.writeUInt32BE(body.length + 16, 0);
@@ -292,7 +314,10 @@ function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolea
 		return { err: new Error(`Invalid seqNr, exceeds ${String(maxSeqNr)}: ${String(seqNr)}`) };
 	}
 
-	const read = readParams(cmdName, pdu, trailingNull);
+	// SMPP 3.4 4.4.2 and friends: a response with a non-zero status carries no body at all.
+	const read = cmdStatusId !== 0 && cmdLength === 16
+		? { offset: 16, params: {} }
+		: readParams(cmdName, pdu, trailingNull);
 
 	if (read.err) return { err: read.err };
 

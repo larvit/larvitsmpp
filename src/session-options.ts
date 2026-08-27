@@ -1,8 +1,29 @@
+import type { Dlr } from './dlr.ts';
 import type { LogInt } from '@larvit/log';
+import type { MessageDlr } from './dlr-merger.ts';
 import type { PduObject } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
+import type { Sms } from './sms.ts';
 import type { Socket } from 'node:net';
+
+export type SessionEvents = {
+	close: [];
+	data: [Buffer];
+	dlr: [Dlr, PduObject];
+	incomingPdu: [Buffer];
+	incomingPduObj: [PduObject];
+	messageDlr: [MessageDlr];
+	reconnected: [];
+	sessionError: [Error];
+	sms: [Sms];
+};
+
+export const bindCommands: readonly string[] = [
+	'bind_receiver',
+	'bind_transceiver',
+	'bind_transmitter',
+];
 
 export type SendOptions = { signal?: AbortSignal | undefined };
 
@@ -21,6 +42,7 @@ export type SessionOptions = {
 	enquireLinkInterval?: number | undefined;
 	idleTimeout?: number | undefined;
 	log?: LogInt | undefined;
+	maxOctets?: number | undefined;
 	maxOutstanding?: number | undefined;
 	maxReassembly?: number | undefined;
 	/**
@@ -50,4 +72,34 @@ export const defaults = {
 	reassemblyTimeout: 300_000,
 	responseTimeout: 30_000,
 	systemId: defaultSystemId,
+};
+
+/**
+ * A count below 1 does not fail loudly anywhere downstream: `maxOutstanding: 0` leaves every send
+ * queued behind a slot that is never freed, so the call never settles at all.
+ */
+export function checkSessionOptions(options: SessionCounts): VoidResult {
+	const limits: [string, number, number][] = [
+		['idleTimeout', options.idleTimeout ?? 0, 0],
+		['maxOutstanding', options.maxOutstanding ?? defaults.maxOutstanding, 1],
+		['maxReassembly', options.maxReassembly ?? defaults.maxReassembly, 1],
+		['reassemblyTimeout', options.reassemblyTimeout ?? defaults.reassemblyTimeout, 0],
+		['responseTimeout', options.responseTimeout ?? defaults.responseTimeout, 0],
+	];
+
+	for (const [name, value, min] of limits) {
+		if (!Number.isInteger(value) || value < min) {
+			return { err: new Error(`${name} must be ${String(min)} or more, got ${String(value)}`) };
+		}
+	}
+
+	return {};
+}
+
+export type SessionCounts = {
+	idleTimeout?: number | undefined;
+	maxOutstanding?: number | undefined;
+	maxReassembly?: number | undefined;
+	reassemblyTimeout?: number | undefined;
+	responseTimeout?: number | undefined;
 };

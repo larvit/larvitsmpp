@@ -156,6 +156,10 @@ exactly 140.
 
 ## Decisions
 
+- **A close arriving after our own `unbind` is a clean unbind, not an error.** Maintainer's call,
+  2026-08-26: most SMSCs drop the socket instead of answering, so the documented shutdown would
+  otherwise always report a failure. It does mask a socket that died mid-unbind for an unrelated
+  reason, which is accepted — the peer sees the same TCP close either way.
 - **The published surface is frozen at what `src/index.ts` exports today.** `Session` is exported and
   publicly constructible, which is why `SessionOptions` and `ReconnectOptions` are public too — that
   is correct, not a leak, and it has been raised twice. The collaborators `session.ts` delegates to

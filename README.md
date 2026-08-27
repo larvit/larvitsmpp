@@ -82,7 +82,7 @@ Every one is optional.
 | `tls` | `false` | `true` for defaults, or a `tls.ConnectionOptions` object for a private CA or a client certificate. |
 | `enquireLinkInterval` | `20000` | How often to send `enquire_link` on a quiet link. |
 | `idleTimeout` | `2 × enquireLinkInterval` | Give up on a link the peer has stopped answering; with `reconnect` set, it re-binds. |
-| `responseTimeout` | `30000` | How long to wait for a response before giving up on it. |
+| `responseTimeout` | `30000` | How long to wait for a response before giving up on it; `0` waits forever. |
 | `maxOutstanding` | `10` | Requests allowed on the wire at once; further sends queue. |
 | `reconnect` | off | `{ minDelay, maxDelay }` to re-bind automatically after a drop or an idle timeout, with exponential backoff. |
 | `log` | silent | A `@larvit/log` instance. |
@@ -111,9 +111,10 @@ const { err, pduObjs, smsIds } = await session.sendSms({ from, message, to });
 ```
 
 `err` is set when the SMSC refuses a segment, and it names the status it refused with. Because every
-segment goes on the wire together, `smsIds` then holds the ids of the segments the SMSC did accept —
-retry only what is missing from it. A message needing more than 255 segments is refused before
-anything is sent, since the concatenation header numbers segments in a single octet.
+segment goes on the wire together, `pduObjs` and `smsIds` then hold what the SMSC did accept — enough
+to reconcile against a later receipt, not enough to resend the rest, so treat a partial failure as a
+failed message. A message needing more than 255 segments is refused before anything is sent, since
+the concatenation header numbers segments in a single octet.
 
 ## Server
 
@@ -178,6 +179,7 @@ await smpp.close();      // stop listening and close every live session
 | `tls` | `false` | A `tls.TlsOptions` object with your certificate and key. |
 | `idleTimeout` | `40000` | Drop a peer that has been silent this long. |
 | `maxReassembly` | `1000` | Incomplete multipart messages held per session. |
+| `maxOctets` | `67108864` | Bytes of incomplete multipart messages held per session. |
 | `reassemblyTimeout` | `300000` | How long a late segment can still join an incomplete message. |
 | `responseTimeout`, `maxOutstanding`, `log`, `signal` | as for the client | |
 
@@ -205,7 +207,7 @@ is exactly what this library promises not to do.
 | --- | --- |
 | `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and the `smsId` it was answered with. |
 | `dlr` | A delivery report arrives, one per segment. |
-| `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on. |
+| `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. |
 | `close` | The connection closed. |
 | `reconnected` | The client re-bound after a drop (only with `reconnect` configured). |
 | `sessionError` | Something failed on a live session, including a hook or listener that threw. |
@@ -255,8 +257,9 @@ The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `
   resolving to a result object with an optional `err`. Nothing rejects.
 - **`server()` resolves once, when it is listening**, and gives you a handle with `close()`, `port`
   and a `session` event. It no longer calls your callback once per incoming connection.
-- **The id a message is answered with goes to `sendResp({ smsId })`**, and `sms.smsId` is read-only.
-  Assigning it no longer works, so set the id where the response is sent rather than before it.
+- **The id a message is answered with goes to `sendResp({ smsId })`**, and `sms.smsId` is read-only:
+  it reports what the response actually carried. Delete any `sms.smsId = …` line — assigning to it
+  throws a `TypeError`, since modules are always strict mode — and pass the id to `sendResp()`.
 - **`checkuserpass` is now `authenticate`**, takes `{ password, session, systemId, systemType }` and
   returns `false` or `{ userData }`.
 - **Renamed options:** `enqLinkTiming` → `enquireLinkInterval`, server `timeout` → `idleTimeout`.
@@ -299,6 +302,9 @@ have worked around any of these, remove the workaround:
 - Binds now declare `interface_version` 0x34. 0.4.0 declared 0x00, which tells the SMSC the ESME
   speaks SMPP 3.3 or earlier — and a spec-following SMSC then withholds every optional parameter,
   including the TLVs delivery receipts are carried in.
+- A response reporting a failure now carries no body, which is what the spec defines and what other
+  implementations send. 0.4.0 filled the body with empty defaults, so a refused `submit_sm_resp` went
+  out with an empty `message_id` a caller could mistake for a real one.
 - `submit_multi` was missing its `sm_length` field, so its `short_message` never round-tripped.
 
 The corrected framing is cross-checked against [node-smpp](https://github.com/farhadi/node-smpp), an

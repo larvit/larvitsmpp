@@ -1,13 +1,11 @@
-import type { Dlr } from './dlr.ts';
 import type { ErrorName } from './defs/errors.ts';
 import type { LogInt } from '@larvit/log';
 import type { MessageDlr } from './dlr-merger.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
-import type { ReconnectOptions, SendOptions, SessionOptions } from './session-options.ts';
+import type { ReconnectOptions, SendOptions, SessionEvents, SessionOptions } from './session-options.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { SendSmsOptions, SendSmsResult } from './send-sms.ts';
-import type { Sms } from './sms.ts';
 import type { Socket } from 'node:net';
 import { DlrMerger } from './dlr-merger.ts';
 import { EventEmitter } from 'node:events';
@@ -20,33 +18,23 @@ import { SendWindow } from './send-window.ts';
 import { concatInfo } from './udh.ts';
 import { consts, optionalParamsMinVersion } from './defs/constants.ts';
 import { createSms } from './sms.ts';
-import { defaultSystemId, defaults } from './session-options.ts';
+import { bindCommands, defaultSystemId, defaults } from './session-options.ts';
 import { dlrFromPdu } from './dlr.ts';
 import { isResp, objToPdu, pduReturn, pduToObj } from './pdu.ts';
 import { paramText } from './defs/types.ts';
 import { silentLog } from './log.ts';
 import { submitSms } from './send-sms.ts';
 
-export type { MessageDlr, ReconnectOptions, SendOptions, SendSmsOptions, SessionOptions };
-export { defaultSystemId };
-
-export type SessionEvents = {
-	close: [];
-	data: [Buffer];
-	dlr: [Dlr, PduObject];
-	incomingPdu: [Buffer];
-	incomingPduObj: [PduObject];
-	messageDlr: [MessageDlr];
-	reconnected: [];
-	sessionError: [Error];
-	sms: [Sms];
+export type {
+	MessageDlr,
+	ReconnectOptions,
+	SendOptions,
+	SendSmsOptions,
+	SendSmsResult,
+	SessionEvents,
+	SessionOptions,
 };
-
-export const bindCommands: readonly string[] = [
-	'bind_receiver',
-	'bind_transceiver',
-	'bind_transmitter',
-];
+export { bindCommands, defaultSystemId };
 
 export class Session extends EventEmitter<SessionEvents> {
 	/** Replaced on reconnect, so hold the session rather than this. */
@@ -70,6 +58,25 @@ export class Session extends EventEmitter<SessionEvents> {
 	private concatReference = 0;
 	private framer = new PduFramer();
 
+	/** A listener that throws is the application's bug; it must not become ours. Hard rule 1. */
+	override emit<K extends keyof SessionEvents>(
+		event: K,
+		...args: K extends keyof SessionEvents ? SessionEvents[K] : never
+	): boolean {
+		try {
+			return super.emit(event, ...args);
+		} catch (thrown: unknown) {
+			const err = thrown instanceof Error ? thrown : new Error(String(thrown));
+
+			this.log.error('session - a listener threw', { event, message: err.message });
+
+			// Guarded against the listener that throws being the one listening for this.
+			if (event !== 'sessionError') this.emit('sessionError', err);
+
+			return false;
+		}
+	}
+
 	constructor(options: SessionOptions) {
 		super();
 
@@ -84,6 +91,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.reassembler = new Reassembler({
 			log: this.log,
 			max: options.maxReassembly ?? defaults.maxReassembly,
+			maxOctets: options.maxOctets,
 			timeout: options.reassemblyTimeout ?? defaults.reassemblyTimeout,
 		});
 		this.reconnectLoop = this.loopFor(options.reconnect);
@@ -138,7 +146,8 @@ export class Session extends EventEmitter<SessionEvents> {
 		const built = pduReturn(pdu, status, params, tlvs);
 		const sent = built.err ? { err: built.err } : this.write(built.buffer);
 
-		if (sent.err) {
+		// A peer that unbinds and drops the link takes our response with it; that is not a failure.
+		if (sent.err && !this.closed) {
 			this.log.warn('session - could not answer a request', {
 				cmdName: pdu.cmdName,
 				message: sent.err.message,

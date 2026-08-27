@@ -49,6 +49,14 @@ describe('string (Octet String)', () => {
 		assert.deepEqual(types.string.read(encoded, 0), { bytesRead: 9, value: expected });
 	});
 
+	// The length is one octet, so a longer value has nowhere to say how long it is.
+	test('refuses a value longer than the length octet can count', () => {
+		const tooLong = 'x'.repeat(256);
+
+		assert.ok(types.string.size(tooLong).err instanceof Error);
+		assert.ok(types.string.write(tooLong, Buffer.alloc(300), 0).err instanceof Error);
+	});
+
 	test('sizes as the string plus its length octet', () => {
 		assert.deepEqual(types.string.size(expected), { size: 9 });
 	});
