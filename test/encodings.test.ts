@@ -50,6 +50,12 @@ describe('LATIN1', () => {
 			assert.equal(encodings.LATIN1.decode(Buffer.from(bytes)), str);
 		}
 	});
+
+	test('carries every octet through unchanged, which is what makes it the binary codec', () => {
+		const every = Buffer.from(Array.from({ length: 256 }, (_, byte) => byte));
+
+		assert.deepEqual(encodings.LATIN1.encode(encodings.LATIN1.decode(every)), every);
+	});
 });
 
 describe('UCS2', () => {
@@ -77,6 +83,15 @@ describe('UCS2', () => {
 		encodings.UCS2.decode(buffer);
 
 		assert.deepEqual(buffer, Buffer.from([0x00, 0x20]));
+	});
+
+	// swap16() throws ERR_INVALID_BUFFER_SIZE on an odd octet count, and sm_length is peer-controlled.
+	test('drops an incomplete trailing octet instead of throwing', () => {
+		const odd = Buffer.from([0x00, 0x41, 0x00, 0x42, 0x00]);
+
+		assert.equal(encodings.UCS2.decode(odd), 'AB');
+		assert.equal(encodings.UCS2.decode(Buffer.from([0x41])), '');
+		assert.deepEqual(odd, Buffer.from([0x00, 0x41, 0x00, 0x42, 0x00]));
 	});
 });
 
@@ -109,6 +124,12 @@ describe('encodingByDataCoding()', () => {
 		assert.equal(encodingByDataCoding(0x10), 'ASCII');
 		assert.equal(encodingByDataCoding(0x18), 'UCS2');
 		assert.equal(encodingByDataCoding(0xF0), 'ASCII');
+	});
+
+	test('resolves the 8-bit binary codings to the codec that keeps every octet', () => {
+		for (const dataCoding of [0x02, 0x04, 0x14, 0xF4, 0xF7]) {
+			assert.equal(encodingByDataCoding(dataCoding), 'LATIN1');
+		}
 	});
 
 	test('falls back to ASCII for alphabets it has no codec for', () => {

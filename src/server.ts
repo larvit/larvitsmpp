@@ -5,7 +5,7 @@ import type { Server as NetServer, Socket } from 'node:net';
 import type { Server as TlsServer, TlsOptions } from 'node:tls';
 import { EventEmitter } from 'node:events';
 import { Session, bindCommands, defaultSystemId } from './session.ts';
-import { checkSessionOptions } from './session-options.ts';
+import { checkSessionOptions, undeclaredInterfaceVersion } from './session-options.ts';
 import { createServer as createNetServer } from 'node:net';
 import { createServer as createTlsServer } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
@@ -148,7 +148,9 @@ async function acceptBind(
 	const declared = pduObj.params.interface_version;
 
 	session.loggedIn = true;
-	session.peerInterfaceVersion = typeof declared === 'number' ? declared : undefined;
+	session.peerInterfaceVersion = typeof declared === 'number'
+		? declared
+		: undeclaredInterfaceVersion;
 
 	await session.sendReturn(pduObj, 'ESME_ROK', identity, bindRespTlvs(session, options));
 }

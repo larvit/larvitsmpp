@@ -3,7 +3,7 @@ import type { LogInt } from '@larvit/log';
 import type { Result, VoidResult } from './result.ts';
 import type { Socket } from 'node:net';
 import { Session } from './session.ts';
-import { checkSessionOptions } from './session-options.ts';
+import { checkSessionOptions, undeclaredInterfaceVersion } from './session-options.ts';
 import { connect as netConnect } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
@@ -107,11 +107,10 @@ function bindParams(options: ClientOptions, systemId: string) {
 async function bind(session: Session, options: ClientOptions): Promise<VoidResult> {
 	const bindType = options.bindType ?? defaults.bindType;
 	const systemId = options.username ?? defaults.username;
-	const sent = await session.send({
-		cmdName: `bind_${bindType}`,
-		params: bindParams(options, systemId),
-		...(options.signal ? { signal: options.signal } : {}),
-	});
+	const sent = await session.send(
+		{ cmdName: `bind_${bindType}`, params: bindParams(options, systemId) },
+		options.signal ? { signal: options.signal } : {},
+	);
 
 	if (sent.err) return { err: sent.err };
 
@@ -124,7 +123,12 @@ async function bind(session: Session, options: ClientOptions): Promise<VoidResul
 		return { err: new Error(`Remote host refused login: ${sent.pduObj.cmdStatus ?? 'unknown'}`) };
 	}
 
+	const declared = sent.pduObj.tlvs.sc_interface_version?.tagValue;
+
 	session.loggedIn = true;
+	session.peerInterfaceVersion = typeof declared === 'number'
+		? declared
+		: undeclaredInterfaceVersion;
 	session.log.info('client - bound', { bindType, systemId });
 
 	return {};

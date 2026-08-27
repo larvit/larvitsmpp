@@ -204,7 +204,7 @@ describe('the reference encoder against our parser', () => {
 });
 
 describe('a live session against the reference implementation', () => {
-	test('our client binds to a reference server and delivers an SMS', async () => {
+	test('our client binds to a reference server and delivers an SMS', async t => {
 		const received: { from: string; message: string }[] = [];
 		const refServer = reference.createServer({}, (session: ReferenceSession) => {
 			session.on('bind_transceiver', pdu => {
@@ -226,10 +226,13 @@ describe('a live session against the reference implementation', () => {
 			});
 		});
 
+		t.after(() => new Promise<void>(resolve => { refServer.close(() => { resolve(); }); }));
 		await new Promise<void>(resolve => { refServer.listen(0, () => { resolve(); }); });
 
 		const port = refServer.address()?.port ?? 0;
 		const { err, session } = await client({ port });
+
+		t.after(() => { session?.close(); });
 
 		assert.equal(err, undefined);
 		assert.ok(session);
@@ -243,13 +246,12 @@ describe('a live session against the reference implementation', () => {
 		assert.equal(sent.err, undefined);
 		assert.deepEqual(sent.smsIds, ['ref-id']);
 		assert.deepEqual(received, [{ from: 'MyBrand', message: 'interop check' }]);
-
-		session.close();
-		await new Promise<void>(resolve => { refServer.close(() => { resolve(); }); });
 	});
 
-	test('a reference client binds to our server and delivers an SMS', async () => {
+	test('a reference client binds to our server and delivers an SMS', async t => {
 		const { err: serverErr, server: smpp } = await server({ port: 0 });
+
+		t.after(async () => { await smpp?.close(); });
 
 		assert.equal(serverErr, undefined);
 		assert.ok(smpp);
@@ -261,6 +263,8 @@ describe('a live session against the reference implementation', () => {
 		const refSession = reference.connect({
 			url: `smpp://localhost:${String(smpp.port)}`,
 		});
+
+		t.after(() => { refSession.close(); });
 
 		await new Promise<void>(resolve => {
 			refSession.bind_transceiver({ password: 'bar', system_id: 'foo' }, () => { resolve(); });
@@ -277,8 +281,5 @@ describe('a live session against the reference implementation', () => {
 		assert.equal(sms.from, '46701113311');
 		assert.equal(sms.message, 'from the reference client');
 		await sms.sendResp();
-
-		refSession.close();
-		await smpp.close();
 	});
 });

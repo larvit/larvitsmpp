@@ -5,7 +5,7 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 190 tests, lint and typecheck clean, verified on Node
+The rewrite is **feature complete and green**: 208 tests, lint and typecheck clean, verified on Node
 18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
@@ -22,10 +22,10 @@ public surface is documented in [README.md](README.md); this is the short form.
 import { client, server } from '@larvit/smpp';
 
 const { err, session } = await client({ host, password, port, username });
-const { err, pduObjs, smsIds } = await session.sendSms({ dlr, from, message, to });
+const { err: sendErr, pduObjs, smsIds } = await session.sendSms({ dlr, from, message, to });
 await session.unbind();
 
-const { err, server: smpp } = await server({ authenticate, port });
+const { err: serverErr, server: smpp } = await server({ authenticate, port });
 smpp.on('session', session => {
 	session.on('sms', async sms => {
 		await sms.sendResp();

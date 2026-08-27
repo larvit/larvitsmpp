@@ -104,6 +104,14 @@ describe('dlrFromPdu()', () => {
 		}
 	});
 
+	test('leaves an impossible receipt date undefined rather than rolling it over', () => {
+		const rolled = dlrFromPdu(deliverSm('id:x stat:DELIVRD done date:9902310000'));
+
+		assert.ok(rolled);
+		assert.equal(rolled.doneDate, undefined);
+		assert.equal(dlrFromPdu(deliverSm('id:x stat:DELIVRD done date:2501012560'))?.doneDate, undefined);
+	});
+
 	test('returns nothing when the PDU identifies no message', () => {
 		assert.equal(dlrFromPdu(deliverSm('just a normal sms')), undefined);
 	});

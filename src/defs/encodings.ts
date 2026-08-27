@@ -87,7 +87,10 @@ const latin1: Encoding = {
 
 const ucs2: Encoding = {
 	decode(buffer) {
-		return Buffer.from(buffer).swap16().toString('utf16le');
+		// A peer-controlled sm_length can cut a character in half, and swap16() refuses odd lengths.
+		const whole = buffer.length - (buffer.length % 2);
+
+		return Buffer.from(buffer.subarray(0, whole)).swap16().toString('utf16le');
 	},
 
 	encode(value) {
@@ -113,22 +116,35 @@ export function detect(value: string): EncodingName {
 	return 'UCS2';
 }
 
-/**
- * SMPP data_coding is a flat table for 0x00-0x0E, but the 0x1X and 0xFX ranges carry a GSM message
- * class and encode the alphabet in bits 3-2 (or bit 2) instead — which is how a flash UCS2 message
- * arrives as 0x18. Alphabets with no codec here fall back to ASCII.
- */
-export function encodingByDataCoding(dataCoding: number): EncodingName {
+/** The 0x1X and 0xFX ranges carry a GSM message class and put the alphabet in bits 3-2 or bit 2. */
+function messageClassEncoding(dataCoding: number): EncodingName | undefined {
 	if ((dataCoding & 0xF0) === 0x10) {
-		return ((dataCoding >> 2) & 0x03) === 0x02 ? 'UCS2' : 'ASCII';
+		const alphabet = (dataCoding >> 2) & 0x03;
+
+		if (alphabet === 0x01) return 'LATIN1';
+
+		return alphabet === 0x02 ? 'UCS2' : 'ASCII';
 	}
 
 	if ((dataCoding & 0xF0) === 0xF0) {
-		return 'ASCII';
+		return (dataCoding & 0x04) === 0x04 ? 'LATIN1' : 'ASCII';
 	}
 
-	if (dataCoding === 0x03) return 'LATIN1';
+	return undefined;
+}
+
+/**
+ * SMPP data_coding is a flat table for 0x00-0x0E, and the message class ranges are how a flash UCS2
+ * message arrives as 0x18. The 8-bit binary codings resolve to LATIN1, the one codec here that maps
+ * every octet to a code point and back unchanged, so a binary payload survives; alphabets with no
+ * codec fall back to ASCII.
+ */
+export function encodingByDataCoding(dataCoding: number): EncodingName {
+	const messageClass = messageClassEncoding(dataCoding);
+
+	if (messageClass) return messageClass;
 	if (dataCoding === 0x08) return 'UCS2';
 
-	return 'ASCII';
+	// 0x02 and 0x04 are 8-bit binary, 0x03 is Latin-1.
+	return dataCoding >= 0x02 && dataCoding <= 0x04 ? 'LATIN1' : 'ASCII';
 }

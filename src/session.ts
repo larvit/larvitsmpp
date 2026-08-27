@@ -9,19 +9,15 @@ import type { SendSmsOptions, SendSmsResult } from './send-sms.ts';
 import type { Socket } from 'node:net';
 import { DlrMerger } from './dlr-merger.ts';
 import { EventEmitter } from 'node:events';
+import { IncomingRequests } from './incoming-requests.ts';
 import { LinkTimers } from './link-timers.ts';
 import { PduFramer } from './pdu-framer.ts';
 import { PendingRequests } from './pending-requests.ts';
 import { ReconnectLoop } from './reconnect-loop.ts';
-import { Reassembler, decodeSegments } from './reassembly.ts';
 import { SendWindow } from './send-window.ts';
-import { concatInfo } from './udh.ts';
-import { consts, optionalParamsMinVersion } from './defs/constants.ts';
-import { createSms } from './sms.ts';
+import { optionalParamsMinVersion } from './defs/constants.ts';
 import { bindCommands, defaultSystemId, defaults } from './session-options.ts';
-import { dlrFromPdu } from './dlr.ts';
 import { isResp, objToPdu, pduReturn, pduToObj } from './pdu.ts';
-import { paramText } from './defs/types.ts';
 import { silentLog } from './log.ts';
 import { submitSms } from './send-sms.ts';
 
@@ -42,14 +38,14 @@ export class Session extends EventEmitter<SessionEvents> {
 	readonly log: LogInt;
 
 	loggedIn = false;
-	/** The interface_version the peer declared when binding; undefined until a bind is accepted. */
+	/** What the peer declared when binding: 0x00 if it declared none, undefined before any bind. */
 	peerInterfaceVersion: number | undefined = undefined;
 	userData: unknown = undefined;
 
 	private readonly dlrMerger: DlrMerger;
+	private readonly incoming: IncomingRequests;
 	private readonly options: SessionOptions;
 	private readonly pending: PendingRequests;
-	private readonly reassembler: Reassembler;
 	private readonly reconnectLoop: ReconnectLoop | undefined;
 	private readonly timers: LinkTimers;
 	private readonly window: SendWindow;
@@ -87,13 +83,17 @@ export class Session extends EventEmitter<SessionEvents> {
 			max: defaults.maxDlrMerges,
 			timeout: defaults.dlrMergeTimeout,
 		});
-		this.pending = new PendingRequests(this.log);
-		this.reassembler = new Reassembler({
+		this.incoming = new IncomingRequests({
+			dlrMerger: this.dlrMerger,
 			log: this.log,
-			max: options.maxReassembly ?? defaults.maxReassembly,
 			maxOctets: options.maxOctets,
-			timeout: options.reassemblyTimeout ?? defaults.reassemblyTimeout,
+			maxReassembly: options.maxReassembly,
+			onRequest: options.onRequest,
+			reassemblyTimeout: options.reassemblyTimeout,
+			session: this,
+			systemId: options.systemId,
 		});
+		this.pending = new PendingRequests(this.log);
 		this.reconnectLoop = this.loopFor(options.reconnect);
 		this.sock = options.sock;
 		this.timers = new LinkTimers({
@@ -243,6 +243,11 @@ export class Session extends EventEmitter<SessionEvents> {
 		input: PduObjectInput,
 		options: SendOptions,
 	): Promise<Result<{ pduObj: PduObject }>> {
+		// pending.wait() alone settles the caller while the request still goes out to the peer.
+		if (options.signal?.aborted === true) {
+			return { err: new Error('Aborted before the request was sent') };
+		}
+
 		const seqNr = this.pending.nextSeqNr();
 		const built = objToPdu({ ...input, seqNr });
 
@@ -270,7 +275,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.timers.clear();
 		this.pending.settleAll(new Error('Session closed before a response arrived'));
 		this.dlrMerger.clear();
-		this.reassembler.clear();
+		this.incoming.clear();
 		this.sock.destroy();
 		this.emit('close');
 	}
@@ -343,101 +348,12 @@ export class Session extends EventEmitter<SessionEvents> {
 
 		this.emit('incomingPduObj', pduObj);
 		// Every application hook and listener reached from an incoming PDU funnels through here.
-		void this.handle(pduObj).catch((thrown: unknown) => {
+		void this.incoming.handle(pduObj).catch((thrown: unknown) => {
 			const err = thrown instanceof Error ? thrown : new Error(String(thrown));
 
 			this.log.error('session - a handler threw', { message: err.message });
 			this.emit('sessionError', err);
 		});
-	}
-
-	private async handle(pduObj: PduObject): Promise<void> {
-		const onRequest = this.options.onRequest;
-
-		if (onRequest && await onRequest(this, pduObj)) return;
-
-		switch (pduObj.cmdName) {
-			case 'deliver_sm':
-				await this.onDeliverSm(pduObj);
-				break;
-			case 'enquire_link':
-				await this.sendReturn(pduObj);
-				break;
-			case 'submit_sm':
-				this.onSubmitSm(pduObj);
-				break;
-			case 'unbind':
-				await this.sendReturn(pduObj);
-				this.close();
-				break;
-			default:
-				await this.unhandled(pduObj);
-		}
-	}
-
-	private async unhandled(pduObj: PduObject): Promise<void> {
-		if (bindCommands.includes(pduObj.cmdName)) {
-			this.log.info('session - bind on an already bound session', { cmdName: pduObj.cmdName });
-			await this.sendReturn(pduObj, 'ESME_RALYBND', {
-				system_id: this.options.systemId ?? defaults.systemId,
-			});
-
-			return;
-		}
-
-		this.log.info('session - no handler for command', { cmdName: pduObj.cmdName });
-		await this.sendReturn(pduObj, 'ESME_RINVCMDID');
-	}
-
-	private onSubmitSm(pduObj: PduObject): void {
-		const message = pduObj.params.short_message;
-		const esmClass = pduObj.params.esm_class;
-		const hasUdh = typeof esmClass === 'number'
-			&& (esmClass & consts.ESM_CLASS.UDH_INDICATOR) === consts.ESM_CLASS.UDH_INDICATOR;
-		const concat = hasUdh && Buffer.isBuffer(message) ? concatInfo(message) : undefined;
-
-		if (!concat) {
-			this.emitSms([pduObj]);
-
-			return;
-		}
-
-		const whole = this.reassembler.collect(pduObj, concat);
-
-		if (whole) this.emitSms(whole);
-	}
-
-	private emitSms(pduObjs: PduObject[]): void {
-		const first = pduObjs[0];
-
-		if (!first) return;
-
-		this.emit('sms', createSms({
-			from: paramText(first.params.source_addr),
-			message: decodeSegments(pduObjs),
-			pduObjs,
-			session: this,
-			to: paramText(first.params.destination_addr),
-		}));
-	}
-
-	private async onDeliverSm(pduObj: PduObject): Promise<void> {
-		const dlr = dlrFromPdu(pduObj);
-
-		if (!dlr) {
-			this.log.info('session - deliver_sm carries no delivery report', { seqNr: pduObj.seqNr });
-			await this.sendReturn(pduObj, 'ESME_RINVTLVSTREAM');
-
-			return;
-		}
-
-		this.emit('dlr', dlr, pduObj);
-
-		const merged = this.dlrMerger.collect(dlr);
-
-		if (merged) this.emit('messageDlr', merged);
-
-		await this.sendReturn(pduObj);
 	}
 
 	private resetTimers(): void {

@@ -22,7 +22,7 @@ const specs = tlvSpecs({
 	source_addr_subunit: { id: 0x000D, tag: 'source_addr_subunit', type: tlv.int8 },
 	source_network_type: { id: 0x000E, tag: 'source_network_type', type: tlv.int8 },
 	source_bearer_type: { id: 0x000F, tag: 'source_bearer_type', type: tlv.int8 },
-	source_telematics_id: { id: 0x0010, tag: 'source_telematics_id', type: tlv.int16 },
+	source_telematics_id: { id: 0x0010, tag: 'source_telematics_id', type: tlv.int8 },
 	qos_time_to_live: { id: 0x0017, tag: 'qos_time_to_live', type: tlv.int32 },
 	payload_type: { id: 0x0019, tag: 'payload_type', type: tlv.int8 },
 	additional_status_info_text: { id: 0x001D, tag: 'additional_status_info_text', type: tlv.cstring },

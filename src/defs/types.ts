@@ -142,6 +142,15 @@ function wantUnsuccessSmes(value: ParamValue): Result<{ smes: UnsuccessSme[] }> 
 }
 
 function readCstring(buffer: Buffer, offset: number): Result<{ bytesRead: number; value: string }> {
+	// An offset at the end exactly is an absent trailing field, which real peers do send.
+	if (outOfRange(buffer, offset, 0)) {
+		return {
+			err: new Error(
+				`C-Octet String starts at offset ${String(offset)}, past a ${String(buffer.length)} octet buffer`,
+			),
+		};
+	}
+
 	let length = 0;
 
 	while (buffer[offset + length]) {
@@ -196,6 +205,29 @@ function intType(octets: number, max: number, readAt: (b: Buffer, o: number) => 
 export const int8 = intType(1, 0xFF, (b, o) => b.readUInt8(o), (b, v, o) => b.writeUInt8(v, o));
 export const int16 = intType(2, 0xFFFF, (b, o) => b.readUInt16BE(o), (b, v, o) => b.writeUInt16BE(v, o));
 export const int32 = intType(4, 0xFFFFFFFF, (b, o) => b.readUInt32BE(o), (b, v, o) => b.writeUInt32BE(v, o));
+
+const intByOctets: Record<number, WireType<number>> = { 1: int8, 2: int16, 4: int32 };
+
+/**
+ * The TLV header's length is what the parser skips past, so it is also the width the value is read
+ * at — a peer that types a tag one octet wider than the table says still gets the value it meant.
+ */
+function tlvInt(declared: WireType<number>): WireType<number> {
+	return {
+		...declared,
+		read(buffer, offset, length) {
+			if (length === undefined) return declared.read(buffer, offset);
+
+			const width = intByOctets[length];
+
+			if (!width) {
+				return { err: new Error(`Integer TLV declares ${String(length)} octets, expected 1, 2 or 4`) };
+			}
+
+			return width.read(buffer, offset);
+		},
+	};
+}
 
 /** Octet String: a length octet followed by that many octets. */
 export const string: WireType<string> = {
@@ -513,9 +545,9 @@ export const tlv = {
 			return err ? { err } : writeCstring(text, buf, offset);
 		},
 	} satisfies WireType<string>,
-	int8,
-	int16,
-	int32,
+	int8: tlvInt(int8),
+	int16: tlvInt(int16),
+	int32: tlvInt(int32),
 	string: {
 		default: '',
 		read(buf: Buffer, offset: number, length = 0) {

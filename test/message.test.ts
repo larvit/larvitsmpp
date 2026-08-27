@@ -110,6 +110,16 @@ describe('encodeMessage() and decodeMessage()', () => {
 		assert.equal(decodeMessage(buffer, 0x08).message, 'hej 一');
 	});
 
+	test('keeps a binary payload octet for octet instead of running it through GSM 03.38', () => {
+		const payload = Buffer.from([0x00, 0x1B, 0x60, 0x80, 0xFF]);
+
+		assert.deepEqual(Buffer.from(decodeMessage(payload, 0x04).message, 'latin1'), payload);
+	});
+
+	test('decodes the whole characters of a UCS2 payload cut in half by sm_length', () => {
+		assert.equal(decodeMessage(Buffer.from([0x00, 0x68, 0x00, 0x65, 0x00]), 0x08).message, 'he');
+	});
+
 	test('strips a UDH when the esm_class says one is present', () => {
 		const withUdh = Buffer.concat([
 			Buffer.from([0x05, 0x00, 0x03, 0x01, 0x02, 0x01]),

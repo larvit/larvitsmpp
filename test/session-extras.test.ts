@@ -28,8 +28,18 @@ async function startServer(options: Parameters<typeof server>[0] = {}): Promise<
 	return smpp;
 }
 
+/** An event that never fires would otherwise block until the CI job limit, asserting nothing. */
 function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
-	return new Promise<T>(resolve => { register(resolve); });
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			reject(new Error('waited 5000 ms for an event that never fired'));
+		}, 5000);
+
+		register(value => {
+			clearTimeout(timer);
+			resolve(value);
+		});
+	});
 }
 
 describe('merged delivery reports', () => {
@@ -342,6 +352,16 @@ describe('reassembly bounds', () => {
 
 		assert.ok(whole);
 		assert.deepEqual(whole.map(pduObj => pduObj.seqNr), [1, 2, 3]);
+		assert.equal(reassembler.size, 0);
+	});
+
+	// The UDH is peer-controlled, and the default authenticate() accepts every peer.
+	test('refuses a segment whose concatenation metadata cannot be honoured', () => {
+		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+
+		assert.equal(collect(reassembler, 1, 1, 0), undefined);
+		assert.equal(collect(reassembler, 2, 0, 3), undefined);
+		assert.equal(collect(reassembler, 3, 4, 3), undefined);
 		assert.equal(reassembler.size, 0);
 	});
 

@@ -82,8 +82,7 @@ function receiptDate(value: string | undefined): Date | undefined {
 
 	const [, years, months, days, hours, minutes, seconds] = match;
 	const century = Math.floor(new Date().getUTCFullYear() / 100) * 100;
-
-	return new Date(Date.UTC(
+	const date = new Date(Date.UTC(
 		century + Number(years),
 		Number(months) - 1,
 		Number(days),
@@ -91,6 +90,15 @@ function receiptDate(value: string | undefined): Date | undefined {
 		Number(minutes),
 		Number(seconds ?? 0),
 	));
+
+	// Date.UTC rolls 31 February over into March rather than refusing it.
+	const rolled = date.getUTCMonth() !== Number(months) - 1
+		|| date.getUTCDate() !== Number(days)
+		|| date.getUTCHours() !== Number(hours)
+		|| date.getUTCMinutes() !== Number(minutes)
+		|| date.getUTCSeconds() !== Number(seconds ?? 0);
+
+	return rolled ? undefined : date;
 }
 
 /**

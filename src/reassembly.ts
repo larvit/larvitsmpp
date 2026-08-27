@@ -122,6 +122,15 @@ export class Reassembler {
 	collect(pduObj: PduObject, concat: ConcatInfo): PduObject[] | undefined {
 		this.sweep();
 
+		if (concat.part < 1 || concat.total < 1 || concat.part > concat.total) {
+			this.log.warn('reassembler - dropping a segment the UDH numbers impossibly', {
+				part: concat.part,
+				total: concat.total,
+			});
+
+			return undefined;
+		}
+
 		const key = groupKey(pduObj, concat.reference);
 		const group = this.groups.get(key) ?? this.open(key, concat.total);
 		const replaced = group.parts.get(concat.part);

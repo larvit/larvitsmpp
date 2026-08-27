@@ -90,7 +90,7 @@ export class ReconnectLoop {
 			return false;
 		}
 
-		const up = await this.options.onConnected(opened.sock);
+		const up = await this.bringUp(opened.sock);
 
 		if (up.err) {
 			this.options.log.warn('reconnect - could not come back up', { message: up.err.message });
@@ -101,5 +101,20 @@ export class ReconnectLoop {
 		this.delay = this.options.minDelay;
 
 		return false;
+	}
+
+	/** The loop owns the socket until the owner is up on it, so a failed handover must not leak it. */
+	private async bringUp(sock: Socket): Promise<VoidResult> {
+		try {
+			const up = await this.options.onConnected(sock);
+
+			if (up.err) sock.destroy();
+
+			return up;
+		} catch (thrown: unknown) {
+			sock.destroy();
+
+			return { err: thrown instanceof Error ? thrown : new Error(String(thrown)) };
+		}
 	}
 }

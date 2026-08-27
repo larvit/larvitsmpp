@@ -43,6 +43,7 @@ src/
 	dlr.ts               Delivery receipts: text and TLV parsing, receipt status codes
 	dlr-merger.ts        DlrMerger: per-segment receipts counted into one MessageDlr
 	expiring-groups.ts   ExpiringGroups: the capped, expiring store both of those share
+	incoming-requests.ts Every request the peer sends: messages, receipts, links, unknown commands
 	link-timers.ts       LinkTimers: the enquire_link heartbeat and the idle timeout
 	log.ts               silentLog — the default when the application passes none
 	message.ts           Encoding detection, splitting, bit counting, SMPP date formatting
@@ -118,6 +119,8 @@ implementation (see todo.md).
 | Unrangechecked writes | Integer params are handed to `writeUInt8`/`writeUInt16BE` unvalidated, so an out-of-range value throws from inside Node |
 | `submit_multi` missing `sm_length` | The field is commented out of the command table, so `short_message` never round-trips for that command |
 | Per-parameter defaults never applied | `calcCmdLength` reads `paramType.default` (the wire type's) rather than the parameter's, so `interface_version: 0x50` on the bind commands did nothing and every bind declared version 0x00 |
+| `source_telematics_id` width | Defined as a 2-octet integer; SMPP 3.4 5.3.2.8 makes it 1 octet, unlike `dest_telematics_id`, which really is 2 |
+| Binary payloads decoded as text | `data_coding` 0x02, 0x04, 0x14 and 0xF4-0xF7 are 8-bit binary and land on the GSM 03.38 table, which rewrites every octet outside it. They resolve to LATIN1 now, so the payload survives as bytes |
 | `ESME_RINVBCASTCHANIND` typo | Defined as `0x011`, three hex digits; the spec value is `0x0112` |
 
 ## Multipart sends and the send window
@@ -170,10 +173,12 @@ exactly 140.
   because silently stripping a caller's explicit TLVs off a deliberately public low-level surface
   would be worse than sending them. The guarantee is "what this library sends honours the rule",
   never "the session cannot send optional parameters to an old peer".
-- **Only the server feeds `peerInterfaceVersion`.** `acceptBind()` records what the peer declared;
-  the client never reads `sc_interface_version` out of its bind response, so a client session is
-  permissive. That is not a defect today — this library's ESME direction sends no TLVs at all — but
-  anyone adding a client-side TLV owes the other half of the feed.
+- **Both ends feed `peerInterfaceVersion`, and a peer that declared nothing is pre-3.4.**
+  `acceptBind()` records what the ESME declared in its bind request; the client's `bind()` records
+  the `sc_interface_version` the SMSC answered with. A peer that declared no version is recorded as
+  `undeclaredInterfaceVersion` (0x00) and is sent no optional parameters — the spec reads an absent
+  `sc_interface_version` as an SMSC that supports none. `undefined` is left to mean one thing only:
+  no bind has been accepted on this session yet.
 - **The library speaks SMPP 3.4 on the wire, and `defs/` keeps the 5.0 tables as a superset.**
   Maintainer's call, 2026-08-26: 3.4 is what SMSCs actually run, while the wider tables let the codec
   parse and build whatever a peer sends. The declared version is an option on both `client()` and

@@ -116,6 +116,21 @@ to reconcile against a later receipt, not enough to resend the rest, so treat a 
 failed message. A message needing more than 255 segments is refused before anything is sent, since
 the concatenation header numbers segments in a single octet.
 
+### Receiving
+
+A `receiver` or `transceiver` client gets mobile-originated messages as `sms` events — the same
+handle the server side gets, answered the same way:
+
+```javascript
+session.on('sms', async sms => {
+	// sms.from, sms.to, sms.message
+	await sms.sendResp();
+});
+```
+
+Delivery receipts travel on the same SMPP command but reach you as `dlr`, so nothing you write has
+to tell the two apart.
+
 ## Server
 
 The simplest possible server — no authentication, listening on port 2775:
@@ -167,6 +182,9 @@ await smpp.close();      // stop listening and close every live session
 
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
 `ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`.
+
+A message whose `data_coding` says 8-bit binary arrives as Latin-1, so `Buffer.from(sms.message,
+'latin1')` gives you back the original octets.
 
 ### Server options
 
@@ -229,7 +247,7 @@ const { err, pduObj } = await session.send({
 
 `acceptsOptionalParams()` answers whether the peer declared SMPP 3.4 or later, which is the version
 at and above which the spec allows optional parameters to be sent to it; `peerInterfaceVersion` is
-the raw value it declared. The library's own senders consult the first before attaching a TLV — a
+the version it declared, `0x00` if it declared none. The library's own senders consult the first before attaching a TLV — a
 `send()` you build yourself is passed through as written, so consult it too when you attach TLVs.
 
 ## Working with PDUs directly

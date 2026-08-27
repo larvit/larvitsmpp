@@ -28,6 +28,13 @@ export const bindCommands: readonly string[] = [
 export type SendOptions = { signal?: AbortSignal | undefined };
 
 /**
+ * First refusal on every incoming request. Returning true means the hook answered it and the
+ * built-in handling is skipped — this is how the server owns bind without the session also
+ * replying "invalid command".
+ */
+export type OnRequest = (session: Session, pduObj: PduObject) => Promise<boolean>;
+
+/**
  * How to come back after an unexpected disconnect. The session owns the retry loop; the caller
  * supplies how to open a socket and what to do once it is open (bind, for a client).
  */
@@ -45,12 +52,7 @@ export type SessionOptions = {
 	maxOctets?: number | undefined;
 	maxOutstanding?: number | undefined;
 	maxReassembly?: number | undefined;
-	/**
-	 * First refusal on every incoming request. Returning true means the hook answered it and the
-	 * built-in handling is skipped — this is how the server owns bind without the session also
-	 * replying "invalid command".
-	 */
-	onRequest?: ((session: Session, pduObj: PduObject) => Promise<boolean>) | undefined;
+	onRequest?: OnRequest | undefined;
 	reassemblyTimeout?: number | undefined;
 	reconnect?: ReconnectOptions | undefined;
 	responseTimeout?: number | undefined;
@@ -60,6 +62,9 @@ export type SessionOptions = {
 };
 
 export const defaultSystemId = '';
+
+/** SMPP 3.4: a peer that declares no version at all is one from before optional parameters. */
+export const undeclaredInterfaceVersion = 0x00;
 
 export const defaults = {
 	/** Receipts of a multipart message can be a working day apart, so the cap does the bounding. */

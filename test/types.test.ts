@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 import type { DestAddress, UnsuccessSme } from '../src/defs/types.ts';
+import { tlvs } from '../src/defs/tlvs.ts';
 import { types } from '../src/defs/types.ts';
 
 describe('integers', () => {
@@ -101,6 +102,42 @@ describe('cstring (C-Octet String)', () => {
 
 	test('refuses a string with no terminator rather than running off the end', () => {
 		assert.ok(types.cstring.read(Buffer.from('abcd'), 0).err instanceof Error);
+	});
+
+	test('refuses one that starts past the end instead of inventing an empty value', () => {
+		assert.ok(types.cstring.read(encoded, encoded.length + 1).err instanceof Error);
+		assert.ok(types.cstring.read(encoded, -1).err instanceof Error);
+
+		// At the end exactly the field is absent, not corrupt: peers truncate a NULL-only body.
+		assert.deepEqual(types.cstring.read(encoded, encoded.length), { bytesRead: 1, value: '' });
+	});
+});
+
+describe('integer TLVs', () => {
+	const encoded = Buffer.from([0x00, 0x00, 0x01, 0x02]);
+
+	// The TLV header's length is what the parser skips, so it is what the value must be read at.
+	test('read the width the TLV header declares', () => {
+		assert.deepEqual(types.tlv.int8.read(encoded, 0, 4), { bytesRead: 4, value: 0x00000102 });
+		assert.deepEqual(types.tlv.int16.read(encoded, 2, 2), { bytesRead: 2, value: 0x0102 });
+		assert.deepEqual(types.tlv.int32.read(encoded, 3, 1), { bytesRead: 1, value: 0x02 });
+		assert.deepEqual(types.tlv.int16.read(encoded, 2), { bytesRead: 2, value: 0x0102 });
+	});
+
+	test('refuse a length no integer field can have', () => {
+		assert.ok(types.tlv.int8.read(encoded, 0, 0).err instanceof Error);
+		assert.ok(types.tlv.int16.read(encoded, 0, 3).err instanceof Error);
+		assert.ok(types.tlv.int32.read(encoded, 0, 8).err instanceof Error);
+	});
+
+	test('stay bounds-checked at the declared width', () => {
+		assert.ok(types.tlv.int8.read(Buffer.alloc(2), 0, 4).err instanceof Error);
+	});
+
+	// SMPP 3.4 5.3.2.7-8: the two telematics ids are deliberately different widths.
+	test('are the width the spec gives each tag', () => {
+		assert.equal(tlvs.source_telematics_id.type, types.tlv.int8);
+		assert.equal(tlvs.dest_telematics_id.type, types.tlv.int16);
 	});
 });
 

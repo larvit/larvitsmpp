@@ -5,15 +5,19 @@ import type { Dlr } from '../src/dlr.ts';
 import type { PduObject, PduObjectInput } from '../src/pdu.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
+import type { TestContext } from 'node:test';
+import type { VoidResult } from '../src/result.ts';
 import { DlrMerger } from '../src/dlr-merger.ts';
 import { PduFramer } from '../src/pdu-framer.ts';
 import { ReconnectLoop } from '../src/reconnect-loop.ts';
 import { Session, bindCommands } from '../src/session.ts';
 import { client } from '../src/client.ts';
+import { consts } from '../src/defs/constants.ts';
 import { isCommand, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
 import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
+import { splitMessage } from '../src/message.ts';
 
 async function startServer(options: Parameters<typeof server>[0] = {}): Promise<SmppServer> {
 	const { err, server: smpp } = await server({ ...options, port: 0 });
@@ -391,6 +395,33 @@ describe('bind', () => {
 		peer.close();
 		await smpp.close();
 	});
+
+	test('records the version the SMSC declared in its bind response', async t => {
+		const smpp = await startServer({ interfaceVersion: 0x50 });
+
+		t.after(() => smpp.close());
+
+		const { session } = await connect(smpp);
+
+		assert.ok(session);
+		t.after(() => { session.close(); });
+		assert.equal(session.peerInterfaceVersion, 0x50);
+		assert.ok(session.acceptsOptionalParams());
+	});
+
+	// The spec: an absent sc_interface_version means the SMSC supports no optional parameters.
+	test('takes an SMSC that declares no version as older than 3.4', async t => {
+		const peer = await bindOnlyPeer();
+
+		t.after(() => peer.close());
+
+		const { session } = await client({ port: peer.port });
+
+		assert.ok(session);
+		t.after(() => { session.close(); });
+		assert.equal(session.peerInterfaceVersion, 0x00);
+		assert.equal(session.acceptsOptionalParams(), false);
+	});
 });
 
 describe('sending', () => {
@@ -514,6 +545,84 @@ describe('sending', () => {
 
 		session.close();
 		await smpp.close();
+	});
+});
+
+describe('receiving', () => {
+	async function inbound(t: TestContext): Promise<{ peer: Session; session: Session }> {
+		const smpp = await startServer();
+
+		t.after(() => smpp.close());
+
+		const bound = once<Session>(resolve => { smpp.on('session', resolve); });
+		const { session } = await connect(smpp);
+
+		assert.ok(session);
+		t.after(() => { session.close(); });
+
+		return { peer: await bound, session };
+	}
+
+	test('hands a client a deliver_sm that is not a delivery receipt', async t => {
+		const { peer, session } = await inbound(t);
+		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
+		const delivered = peer.send({
+			cmdName: 'deliver_sm',
+			params: {
+				destination_addr: '46709771337',
+				short_message: 'inbound hello',
+				source_addr: '46701113311',
+			},
+		});
+		const sms = await raceWithin(2000, incoming);
+
+		assert.ok(sms, 'a deliver_sm that carries no receipt is an inbound SMS');
+		assert.equal(sms.from, '46701113311');
+		assert.equal(sms.to, '46709771337');
+		assert.equal(sms.message, 'inbound hello');
+
+		await sms.sendResp({ smsId: 'inbound-id' });
+
+		const answered = await delivered;
+
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdName, 'deliver_sm_resp');
+		assert.equal(answered.pduObj.params.message_id, 'inbound-id');
+	});
+
+	test('reassembles a multipart inbound SMS before the sms event', async t => {
+		const message = 'Inbound lorem ipsum dolor sit amet consectetur, '.repeat(6);
+		const { peer, session } = await inbound(t);
+		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
+		const segments = splitMessage(message, { reference: 42 });
+
+		assert.equal(segments.length, 2);
+
+		const delivered = Promise.all(segments.map(segment => peer.send({
+			cmdName: 'deliver_sm',
+			params: {
+				destination_addr: '46709771337',
+				esm_class: consts.ESM_CLASS.UDH_INDICATOR,
+				short_message: segment,
+				source_addr: '46701113311',
+			},
+		})));
+		const sms = await raceWithin(2000, incoming);
+
+		assert.ok(sms, 'both segments should reassemble into one message');
+		assert.equal(sms.message, message);
+		assert.equal(sms.pduObjs.length, 2);
+
+		await sms.sendResp({ smsId: 'inbound-long' });
+
+		const ids: string[] = [];
+
+		for (const answered of await delivered) {
+			assert.ok(answered.pduObj);
+			ids.push(paramText(answered.pduObj.params.message_id));
+		}
+
+		assert.deepEqual(ids, ['inbound-long-1', 'inbound-long-2']);
 	});
 });
 
@@ -859,6 +968,75 @@ describe('robustness', () => {
 
 		assert.ok(await closed);
 		await smpp.close();
+	});
+
+	// An aborted send that still reaches the SMSC bills a message the caller believes never went out.
+	test('puts nothing on the wire for a signal that is already aborted', async t => {
+		const smpp = await startServer();
+
+		t.after(() => smpp.close());
+
+		const bound = once<Session>(resolve => { smpp.on('session', resolve); });
+		const { session } = await connect(smpp);
+
+		assert.ok(session);
+		t.after(() => { session.close(); });
+
+		const peer = await bound;
+		const controller = new AbortController();
+		const seen: string[] = [];
+
+		peer.on('incomingPduObj', pduObj => { seen.push(pduObj.cmdName); });
+		controller.abort();
+
+		const sent = await session.sendSms({
+			from: '46701113311',
+			message: 'must never reach the peer',
+			to: '46709771337',
+		}, { signal: controller.signal });
+
+		assert.ok(sent.err instanceof Error);
+		await delay(50);
+		assert.deepEqual(seen, []);
+	});
+
+	// A socket the loop opened and never handed over is one leaked per retry, forever.
+	test('leaves no socket open when coming back up fails', async () => {
+		const opened: net.Socket[] = [];
+
+		function onConnected(): Promise<VoidResult> {
+			if (opened.length === 1) return Promise.resolve({ err: new Error('bind refused') });
+
+			throw new Error('bind exploded');
+		}
+
+		const loop = new ReconnectLoop({
+			connect: () => {
+				const sock = new net.Socket();
+
+				opened.push(sock);
+
+				return Promise.resolve({ sock });
+			},
+			log: silentLog,
+			maxDelay: 10,
+			minDelay: 1,
+			onConnected,
+		});
+
+		loop.schedule();
+
+		const destroyed = await waitFor(() => opened.length >= 2
+			&& opened[0]?.destroyed === true
+			&& opened[1]?.destroyed === true);
+
+		loop.stop();
+
+		for (const sock of opened) {
+			sock.destroy();
+		}
+
+		assert.ok(destroyed, 'a failed setup should leave no socket open');
 	});
 });
 
