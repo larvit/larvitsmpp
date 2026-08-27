@@ -51,7 +51,9 @@ export default tseslint.config(
 	{
 		// An async event listener is a documented, supported shape; EventEmitter types listeners void.
 		files: ['test/*.test.ts'],
-		rules: { '@typescript-eslint/no-misused-promises': 'off' },
+		rules: {
+			'@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: { arguments: false } }],
+		},
 	},
 	{
 		files: ['eslint.config.js'],

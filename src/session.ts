@@ -78,10 +78,11 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	/** The same guard for a listener that rejects rather than throws; captureRejections routes here. */
 	override [EventEmitter.captureRejectionSymbol](
-		error: Error,
+		reason: unknown,
 		...args: [event: keyof SessionEvents, ...rest: unknown[]]
 	): void {
 		const [event] = args;
+		const error = reason instanceof Error ? reason : new Error(String(reason));
 
 		this.log.error('session - a listener rejected', { event, message: error.message });
 

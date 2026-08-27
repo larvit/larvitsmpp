@@ -218,8 +218,9 @@ exactly 140.
   `[EventEmitter.captureRejectionSymbol]`, which lands a rejected `async` listener on `sessionError`
   or `serverError` beside the synchronous guard in `emit()`. Dispatching `rawListeners()` from
   `emit()` instead needs a cast to call them with the event's argument tuple, which hard rule 4
-  forbids. `Session.on()` still types its listeners as void-returning, because widening that needs
-  the same cast — which is why `test/*.test.ts` turns `no-misused-promises` off.
+  forbids. A rejection reason is `unknown`, so the handler normalises it the way the synchronous
+  guard does. `Session.on()` still types its listeners as void-returning, because widening that needs
+  the same cast — which is why `test/*.test.ts` turns off `no-misused-promises` on arguments.
 
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image

@@ -111,6 +111,14 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
+- [ ] **Should `on()` accept a promise-returning listener in its types?** A listener that rejects is
+      routed to `sessionError` now, but `EventEmitter` types every listener as void-returning, so the
+      `session.on('sms', async sms => …)` the README documents trips `no-misused-promises` in a
+      consumer's project exactly as it does in this repository's own tests. Widening the parameter
+      needs a cast, which hard rule 4 forbids; a declaration overload over an implementation
+      signature Node's types accept might not. Raised by review, 2026-08-27; worth deciding while
+      the surface is still movable.
+
 - [ ] **In-flight sends across a reconnect.** They currently fail with "Session closed before a
       response arrived" and the caller retries. Re-queueing them automatically would be friendlier
       but risks duplicate delivery, so it needs a decision before it is built.

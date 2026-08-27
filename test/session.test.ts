@@ -1291,15 +1291,16 @@ describe('application hooks that throw or reject', () => {
 		await smpp.close();
 	});
 
-	test('turns a rejecting async sms listener into a session error', async () => {
+	test('normalises whatever a rejecting async sms listener threw into a session error', async () => {
 		const smpp = await startServer();
+		const reason: unknown = null;
 		const failed = once<Error>(resolve => {
 			smpp.on('session', session => {
 				session.on('sessionError', resolve);
 				session.on('sms', async sms => {
 					await sms.sendResp();
 
-					throw new Error('listener rejected');
+					throw reason;
 				});
 			});
 		});
@@ -1316,7 +1317,7 @@ describe('application hooks that throw or reject', () => {
 
 		assert.equal(sent.err, undefined);
 		assert.ok(reported instanceof Error, 'a rejecting sms listener should reach the session');
-		assert.equal(reported.message, 'listener rejected');
+		assert.equal(reported.message, 'null');
 
 		session.close();
 		await smpp.close();
