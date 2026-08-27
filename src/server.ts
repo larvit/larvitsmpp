@@ -9,6 +9,7 @@ import { bindTypeFromCommand, checkSessionOptions, undeclaredInterfaceVersion } 
 import { createServer as createNetServer } from 'node:net';
 import { createServer as createTlsServer } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
+import { errorFrom } from './error-from.ts';
 import { paramText } from './defs/types.ts';
 import { silentLog } from './log.ts';
 
@@ -50,8 +51,19 @@ const defaults = {
 	systemId: defaultSystemId,
 };
 
+/** A listener may return a promise: an `async` one that rejects is routed like one that throws. */
+type ServerListener<K extends keyof ServerEvents> = (...args: ServerEvents[K]) => unknown;
+
 /** A listening SMPP server. Sessions arrive as `session` events; `close()` stops listening. */
 export class SmppServer extends EventEmitter<ServerEvents> {
+	declare addListener: <K extends keyof ServerEvents>(event: K, listener: ServerListener<K>) => this;
+	declare off: <K extends keyof ServerEvents>(event: K, listener: ServerListener<K>) => this;
+	declare on: <K extends keyof ServerEvents>(event: K, listener: ServerListener<K>) => this;
+	declare once: <K extends keyof ServerEvents>(event: K, listener: ServerListener<K>) => this;
+	declare prependListener: <K extends keyof ServerEvents>(event: K, listener: ServerListener<K>) => this;
+	declare prependOnceListener: <K extends keyof ServerEvents>(event: K, listener: ServerListener<K>) => this;
+	declare removeListener: <K extends keyof ServerEvents>(event: K, listener: ServerListener<K>) => this;
+
 	readonly sessions = new Set<Session>();
 
 	private readonly log: SmppLog;
@@ -78,7 +90,7 @@ export class SmppServer extends EventEmitter<ServerEvents> {
 		try {
 			return super.emit(event, ...args);
 		} catch (thrown: unknown) {
-			const err = thrown instanceof Error ? thrown : new Error(String(thrown));
+			const err = errorFrom(thrown);
 
 			this.log.error('server - a listener threw', { event, message: err.message });
 
@@ -95,7 +107,7 @@ export class SmppServer extends EventEmitter<ServerEvents> {
 		...args: [event: keyof ServerEvents, ...rest: unknown[]]
 	): void {
 		const [event] = args;
-		const error = reason instanceof Error ? reason : new Error(String(reason));
+		const error = errorFrom(reason);
 
 		this.log.error('server - a listener rejected', { event, message: error.message });
 
@@ -109,7 +121,7 @@ export class SmppServer extends EventEmitter<ServerEvents> {
 				try {
 					session.close();
 				} catch (thrown: unknown) {
-					this.emit('serverError', thrown instanceof Error ? thrown : new Error(String(thrown)));
+					this.emit('serverError', errorFrom(thrown));
 				}
 			}
 
@@ -332,7 +344,7 @@ export function server(options: ServerOptions = {}): Promise<Result<{ server: Sm
 				resolve({ server: smpp });
 			});
 		} catch (thrown: unknown) {
-			onStartupError(thrown instanceof Error ? thrown : new Error(String(thrown)));
+			onStartupError(errorFrom(thrown));
 		}
 	});
 }

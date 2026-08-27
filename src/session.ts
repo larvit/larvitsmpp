@@ -15,6 +15,7 @@ import { PduFramer } from './pdu-framer.ts';
 import { PendingRequests } from './pending-requests.ts';
 import { ReconnectLoop } from './reconnect-loop.ts';
 import { SendWindow } from './send-window.ts';
+import { errorFrom } from './error-from.ts';
 import { optionalParamsMinVersion } from './defs/constants.ts';
 import { bindCarries, bindCommands, defaultSystemId, defaults } from './session-options.ts';
 import { isResp, objToPdu, pduReturn, pduToObj } from './pdu.ts';
@@ -33,7 +34,18 @@ export type {
 export type { BindType };
 export { bindCommands, defaultSystemId };
 
+/** A listener may return a promise: an `async` one that rejects is routed like one that throws. */
+type SessionListener<K extends keyof SessionEvents> = (...args: SessionEvents[K]) => unknown;
+
 export class Session extends EventEmitter<SessionEvents> {
+	declare addListener: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
+	declare off: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
+	declare on: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
+	declare once: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
+	declare prependListener: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
+	declare prependOnceListener: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
+	declare removeListener: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
+
 	/** Replaced on reconnect, so hold the session rather than this. */
 	sock: Socket;
 	readonly log: SmppLog;
@@ -65,7 +77,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		try {
 			return super.emit(event, ...args);
 		} catch (thrown: unknown) {
-			const err = thrown instanceof Error ? thrown : new Error(String(thrown));
+			const err = errorFrom(thrown);
 
 			this.log.error('session - a listener threw', { event, message: err.message });
 
@@ -82,7 +94,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		...args: [event: keyof SessionEvents, ...rest: unknown[]]
 	): void {
 		const [event] = args;
-		const error = reason instanceof Error ? reason : new Error(String(reason));
+		const error = errorFrom(reason);
 
 		this.log.error('session - a listener rejected', { event, message: error.message });
 
@@ -379,7 +391,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.emit('incomingPduObj', pduObj);
 		// Every application hook and listener reached from an incoming PDU funnels through here.
 		void this.incoming.handle(pduObj).catch((thrown: unknown) => {
-			const err = thrown instanceof Error ? thrown : new Error(String(thrown));
+			const err = errorFrom(thrown);
 
 			this.log.error('session - a handler threw', { message: err.message });
 			this.emit('sessionError', err);

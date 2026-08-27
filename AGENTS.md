@@ -42,6 +42,7 @@ src/
 	sms.ts               The live handle emitted as the 'sms' event (sendResp/sendDlr)
 	dlr.ts               Delivery receipts: text and TLV parsing, receipt status codes
 	dlr-merger.ts        DlrMerger: per-segment receipts counted into one MessageDlr
+	error-from.ts        errorFrom(): whatever was thrown or rejected, as an Error
 	expiring-groups.ts   ExpiringGroups: the capped, expiring store both of those share
 	incoming-requests.ts Every request the peer sends: messages, receipts, links, unknown commands
 	link-timers.ts       LinkTimers: the enquire_link heartbeat and the idle timeout
@@ -218,9 +219,18 @@ exactly 140.
   `[EventEmitter.captureRejectionSymbol]`, which lands a rejected `async` listener on `sessionError`
   or `serverError` beside the synchronous guard in `emit()`. Dispatching `rawListeners()` from
   `emit()` instead needs a cast to call them with the event's argument tuple, which hard rule 4
-  forbids. A rejection reason is `unknown`, so the handler normalises it the way the synchronous
-  guard does. `Session.on()` still types its listeners as void-returning, because widening that needs
-  the same cast — which is why `test/*.test.ts` turns off `no-misused-promises` on arguments.
+  forbids. A rejection reason is `unknown` and `String()` throws on a null-prototype object, so both
+  handlers normalise through `errorFrom()` rather than inline — a route out of the handler would land
+  on a bare `process.nextTick` with nothing to catch it.
+
+- **Both emitters re-declare their listener methods to accept a promise.** Maintainer's call,
+  2026-08-27: `EventEmitter` types every listener as void-returning, so the
+  `session.on('sms', async sms => …)` the README documents reads as a misused promise in any strict
+  consumer. `declare on: …` and its six siblings re-type the inherited methods to return `unknown`,
+  which emits nothing, needs no cast and leaves the runtime method on the prototype. Overriding them
+  as real methods instead cannot work: the `super.on()` call needs a cast to satisfy the conditional
+  `Listener` type. `unknown` rather than `void | Promise<void>` because a listener may return
+  anything — `session.on('close', () => set.delete(session))` returns a boolean.
 
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image
