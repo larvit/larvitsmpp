@@ -160,7 +160,7 @@ function receiptBody(pduObj: PduObject): string {
 }
 
 function receiptId(tlvId: ParamValue | undefined, receipt: Receipt | undefined): string | undefined {
-	return nonEmptyText(tlvId) ?? (receipt?.id === '' ? undefined : receipt?.id);
+	return nonEmptyText(tlvId) ?? nonEmptyText(receipt?.id);
 }
 
 function isMessageState(name: string | undefined): name is MessageState {

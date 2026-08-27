@@ -207,7 +207,7 @@ exactly 140.
   `esm_class` at 0, and reading that as the spec's "default message type" would lose every one of
   them. A non-empty `receipted_message_id` TLV marks a receipt on the same footing there, since
   nothing but a receipt carries one. What gets scraped is the decoded `short_message` with any UDH
-  stripped; receipts never reach the reassembler, so an SMSC that splits one across segments gets a
+  stripped; a receipt this library recognises never reaches the reassembler, so an SMSC that splits one across segments gets a
   `dlr` per segment rather than one merged report.
   The `message_state` TLV is authoritative only where it names a state in the table — SMPP reserves
   0x80-0xFF for MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves
