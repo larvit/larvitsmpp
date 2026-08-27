@@ -125,6 +125,24 @@ session message is a change to every call site.
 - [ ] **In-flight sends across a reconnect.** They currently fail with "Session closed before a
       response arrived" and the caller retries. Re-queueing them automatically would be friendlier
       but risks duplicate delivery, so it needs a decision before it is built.
+- [ ] **A drop discards delivery receipts already acknowledged to the peer.** `teardown()` calls
+      `dlrMerger.clear()`, and it runs on every path — an idle timeout and a failed rebind, not only
+      `close()`. `onDeliverSm()` answers each receipt with `sendReturn()` before the merge completes,
+      so a peer that has sent two of three segment receipts will never resend them and `messageDlr`
+      can never fire for that message. `dlrMergeTimeout` budgets a day for the last receipt to
+      arrive, while the state does not survive a thirty-second link drop. Reassembly is not affected
+      the same way: inbound segments go unanswered until the message is whole, so the peer keeps
+      them. Clearing is right when `close()` ends the session for good and wrong on the reconnect
+      path; separating the two is most of the fix. Surviving a process restart as well means
+      exposing the merge state for the application to persist and hand back, which is a
+      public-surface decision.
+- [ ] **`close()` and `unbind()` drop in-flight requests instead of draining them.** `teardown()`
+      settles every pending request with "Session closed before a response arrived" and destroys the
+      socket in the same tick, so a submit the SMSC has already accepted is reported to the caller
+      as a failure — the ambiguous outcome that produces a duplicate on retry. Give both a drain:
+      refuse new sends, wait out the pending responses up to a `shutdownTimeout`, then tear down
+      whatever is left. Distinct from re-queueing across a reconnect above — this is the deliberate
+      shutdown path, where there is nothing to come back to.
 - [ ] **`session.ts` is 386 lines.** The one seam left in it is a socket-to-PDU transport, which
       would move the deliberately public `sock` field out of `Session` or turn it into a getter —
       a public-surface change, so it waits for a decision.
@@ -165,10 +183,13 @@ session message is a change to every call site.
 
 ## Declined
 
-- **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** An SMSC's rate limit
-  is account-wide, but this library keeps state only in memory in a single process: a bucket here
-  dies with the process and cannot be shared with a second binding of the same account, so it would
-  be wrong in exactly the cases it exists for. Pacing an account belongs to whatever the application
-  already uses to coordinate across processes, since it needs the durable shared state this library
-  deliberately has none of. `sendSms()` surfaces `ESME_RTHROTTLED` to the caller instead, and
-  `maxOutstanding` stays what it is — a cap on requests in flight, not on rate.
+- **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** Two reasons, either
+  sufficient. An operator's rate limit is scoped to the account, while the widest thing this library
+  owns is a session: a bucket here cannot see a second process binding the same account, so it is
+  wrong in exactly the case it exists for. And a rate limiter's queue drains at a fixed ceiling
+  rather than at the peer's response rate, so a submit rate sustained above the limit grows it
+  without bound — and a queue holding messages the caller was told were accepted loses them on
+  restart, which is worse than refusing them up front. Pacing an account needs durable shared state
+  this library deliberately has none of. `sendSms()` surfaces `ESME_RTHROTTLED` to the caller
+  instead, and `maxOutstanding` stays: a window slot frees on the peer's next response, which is
+  self-limiting in a way a rate ceiling is not.
