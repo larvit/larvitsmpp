@@ -1,7 +1,7 @@
 import type { MessageState } from './defs/constants.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject } from './pdu.ts';
-import { consts, constsById } from './defs/constants.ts';
+import { consts, constsById, messageTypeOf } from './defs/constants.ts';
 import { decodeMessage } from './message.ts';
 import { paramNumber, paramText } from './defs/types.ts';
 
@@ -123,13 +123,10 @@ export function parseReceipt(message: string): Receipt {
 	};
 }
 
-/** esm_class bits 5-2 name the message type; the rest are the messaging mode and the GSM features. */
-const messageTypeBits = 0x3c;
-
 type MessageType = 'other' | 'receipt' | 'unmarked';
 
 function messageType(pduObj: PduObject): MessageType {
-	const type = paramNumber(pduObj.params.esm_class, 0) & messageTypeBits;
+	const type = messageTypeOf(paramNumber(pduObj.params.esm_class, 0));
 
 	if (type === consts.ESM_CLASS.MC_DELIVERY_RECEIPT) return 'receipt';
 	if (type !== 0) return 'other';

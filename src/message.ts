@@ -1,6 +1,6 @@
 import type { Result } from './result.ts';
 import type { EncodingName } from './defs/encodings.ts';
-import { consts } from './defs/constants.ts';
+import { hasUdh } from './defs/constants.ts';
 import { detect, encodingByDataCoding, encodings } from './defs/encodings.ts';
 
 /** A single SMS carries 1120 bits, whatever the alphabet. */
@@ -33,7 +33,7 @@ export function decodeMessage(
 ): { message: string; udh: Buffer | undefined } {
 	const encoding = encodingByDataCoding(dataCoding);
 
-	if ((esmClass & consts.ESM_CLASS.UDH_INDICATOR) !== consts.ESM_CLASS.UDH_INDICATOR) {
+	if (!hasUdh(esmClass)) {
 		return { message: encodings[encoding].decode(buffer), udh: undefined };
 	}
 

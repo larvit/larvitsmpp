@@ -4,7 +4,7 @@ import type { ParamValue } from './defs/types.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Tlv } from './defs/tlvs.ts';
 import { cmds, commandNameById, isCommandName } from './defs/commands.ts';
-import { consts } from './defs/constants.ts';
+import { consts, hasUdh } from './defs/constants.ts';
 import { decodeMessage, encodeMessage } from './message.ts';
 import { detect, encodingByDataCoding } from './defs/encodings.ts';
 import { errorNameById, errors, isErrorName } from './defs/errors.ts';
@@ -327,7 +327,7 @@ function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolea
 	const esmClass = paramNumber(params.esm_class, 0);
 
 	// A message carrying a UDH stays a buffer; the session needs the header intact to reassemble.
-	if (Buffer.isBuffer(message) && (esmClass & consts.ESM_CLASS.UDH_INDICATOR) !== consts.ESM_CLASS.UDH_INDICATOR) {
+	if (Buffer.isBuffer(message) && !hasUdh(esmClass)) {
 		params.short_message = decodeMessage(message, paramNumber(params.data_coding, 0)).message;
 	}
 

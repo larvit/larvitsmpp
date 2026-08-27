@@ -147,12 +147,6 @@ session message is a change to every call site.
       `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `reconnect-loop`, `pending-requests`
       and `send-sms`, so the directory would make that boundary visible. Do it on the next
       extraction out of `session.ts`, not as a move of its own.
-- [ ] **Nothing owns the `esm_class` bits.** Three modules read them with their own literals:
-      `pdu.ts` decides decode-or-not, `incoming-requests.ts` reassemble-or-not and `dlr.ts`
-      receipt-or-not. That divergence is what let a UDH-carrying receipt reach `dlrFromPdu()` as an
-      undecoded buffer. Two predicates next to the constants would collapse it without touching
-      `index.ts`.
-
 - [ ] **`submit_multi` and the broadcast commands** encode and decode, but nothing exercises them
       end to end. The interop suite is the natural place.
 - [ ] **Move to TypeScript 7** once `typescript-eslint` supports it; `renovate.json` pins TypeScript

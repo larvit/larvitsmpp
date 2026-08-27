@@ -206,6 +206,8 @@ exactly 140.
   keeps the scrape: SMSCs that send text-only receipts leave `esm_class` at 0, and reading that as
   the spec's "default message type" would lose every one of them. A `receipted_message_id` TLV marks
   a receipt on the same footing where the message type is 0, since nothing but a receipt carries one.
+  What gets scraped is the decoded `short_message` with any UDH stripped, so a concatenated receipt
+  is read like any other.
   The `message_state` TLV is authoritative only where it names a state in the table — SMPP reserves
   0x80-0xFF for MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves
   `statusMsg` to the body.

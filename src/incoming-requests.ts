@@ -6,10 +6,10 @@ import type { SmppLog } from './log.ts';
 import { Reassembler, decodeSegments } from './reassembly.ts';
 import { bindCommands, defaults } from './session-options.ts';
 import { concatInfo } from './udh.ts';
-import { consts } from './defs/constants.ts';
+import { hasUdh } from './defs/constants.ts';
 import { createSms } from './sms.ts';
 import { dlrFromPdu } from './dlr.ts';
-import { paramText } from './defs/types.ts';
+import { paramNumber, paramText } from './defs/types.ts';
 
 export type IncomingRequestsOptions = {
 	dlrMerger: DlrMerger;
@@ -115,10 +115,8 @@ export class IncomingRequests {
 
 	private onMessage(pduObj: PduObject): void {
 		const message = pduObj.params.short_message;
-		const esmClass = pduObj.params.esm_class;
-		const hasUdh = typeof esmClass === 'number'
-			&& (esmClass & consts.ESM_CLASS.UDH_INDICATOR) === consts.ESM_CLASS.UDH_INDICATOR;
-		const concat = hasUdh && Buffer.isBuffer(message) ? concatInfo(message) : undefined;
+		const carriesUdh = hasUdh(paramNumber(pduObj.params.esm_class, 0));
+		const concat = carriesUdh && Buffer.isBuffer(message) ? concatInfo(message) : undefined;
 
 		if (!concat) {
 			this.emitSms([pduObj]);

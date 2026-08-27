@@ -103,6 +103,15 @@ export const consts = {
 	},
 } as const;
 
+/** esm_class bits 5-2 name the message type; bit 6 is the UDH indicator. */
+export function hasUdh(esmClass: number): boolean {
+	return (esmClass & consts.ESM_CLASS.UDH_INDICATOR) === consts.ESM_CLASS.UDH_INDICATOR;
+}
+
+export function messageTypeOf(esmClass: number): number {
+	return esmClass & 0x3c;
+}
+
 export type ConstGroup = keyof typeof consts;
 export type MessageState = keyof typeof consts.MESSAGE_STATE;
 
