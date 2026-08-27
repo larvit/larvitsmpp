@@ -49,8 +49,8 @@ export default tseslint.config(
 		rules: { 'no-control-regex': 'off' },
 	},
 	{
-		// Mirrors the README's examples as written; an async event listener is part of what they show.
-		files: ['test/readme.test.ts'],
+		// An async event listener is a documented, supported shape; EventEmitter types listeners void.
+		files: ['test/*.test.ts'],
 		rules: { '@typescript-eslint/no-misused-promises': 'off' },
 	},
 	{

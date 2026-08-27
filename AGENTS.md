@@ -213,6 +213,14 @@ exactly 140.
   0x80-0xFF for MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves
   `statusMsg` to the body.
 
+- **A listener that rejects is routed by Node's `captureRejections`, not by hand-dispatching.** Both
+  emitters construct with `captureRejections: true` and implement
+  `[EventEmitter.captureRejectionSymbol]`, which lands a rejected `async` listener on `sessionError`
+  or `serverError` beside the synchronous guard in `emit()`. Dispatching `rawListeners()` from
+  `emit()` instead needs a cast to call them with the event's argument tuple, which hard rule 4
+  forbids. `Session.on()` still types its listeners as void-returning, because widening that needs
+  the same cast — which is why `test/*.test.ts` turns `no-misused-promises` off.
+
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image
   `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI

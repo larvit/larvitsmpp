@@ -300,7 +300,7 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 | `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. |
 | `close` | The connection closed. |
 | `reconnected` | The client re-bound after a drop (only with `reconnect` configured). |
-| `sessionError` | Something failed on a live session, including a hook or listener that threw. |
+| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. |
 | `data` | Raw bytes arrived on the socket. |
 | `incomingPdu` | A complete PDU arrived, as a buffer. |
 | `incomingPduObj` | The same PDU, parsed into an object. |

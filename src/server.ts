@@ -58,7 +58,7 @@ export class SmppServer extends EventEmitter<ServerEvents> {
 	private readonly server: NetServer;
 
 	constructor(server: NetServer, log: SmppLog) {
-		super();
+		super({ captureRejections: true });
 		this.log = log;
 		this.server = server;
 	}
@@ -87,6 +87,18 @@ export class SmppServer extends EventEmitter<ServerEvents> {
 
 			return false;
 		}
+	}
+
+	/** The same guard for a listener that rejects rather than throws; captureRejections routes here. */
+	override [EventEmitter.captureRejectionSymbol](
+		error: Error,
+		...args: [event: keyof ServerEvents, ...rest: unknown[]]
+	): void {
+		const [event] = args;
+
+		this.log.error('server - a listener rejected', { event, message: error.message });
+
+		if (event !== 'serverError') this.emit('serverError', error);
 	}
 
 	/** Stops listening and closes every live session. */

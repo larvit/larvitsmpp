@@ -1221,7 +1221,7 @@ describe('robustness', () => {
 	});
 });
 
-describe('application hooks that throw', () => {
+describe('application hooks that throw or reject', () => {
 	test('turns a throwing authenticate into a session error', async () => {
 		const smpp = await startServer({
 			authenticate: () => { throw new Error('authenticate exploded'); },
@@ -1288,6 +1288,77 @@ describe('application hooks that throw', () => {
 		assert.ok(sent.err instanceof Error);
 
 		session.close();
+		await smpp.close();
+	});
+
+	test('turns a rejecting async sms listener into a session error', async () => {
+		const smpp = await startServer();
+		const failed = once<Error>(resolve => {
+			smpp.on('session', session => {
+				session.on('sessionError', resolve);
+				session.on('sms', async sms => {
+					await sms.sendResp();
+
+					throw new Error('listener rejected');
+				});
+			});
+		});
+		const { session } = await connect(smpp, { responseTimeout: 200 });
+
+		assert.ok(session);
+
+		const sent = await session.sendSms({
+			from: '46701113311',
+			message: 'rejects after answering',
+			to: '46709771337',
+		});
+		const reported = await raceWithin(500, failed);
+
+		assert.equal(sent.err, undefined);
+		assert.ok(reported instanceof Error, 'a rejecting sms listener should reach the session');
+		assert.equal(reported.message, 'listener rejected');
+
+		session.close();
+		await smpp.close();
+	});
+
+	test('survives a sessionError listener that rejects as well', async () => {
+		const smpp = await startServer();
+
+		smpp.on('session', session => {
+			session.on('sessionError', () => Promise.reject(new Error('the reporter rejected too')));
+			session.on('sms', () => Promise.reject(new Error('listener rejected')));
+		});
+
+		const { session } = await connect(smpp, { responseTimeout: 200 });
+
+		assert.ok(session);
+
+		const sent = await session.sendSms({
+			from: '46701113311',
+			message: 'rejects in both listeners',
+			to: '46709771337',
+		});
+
+		assert.ok(sent.err instanceof Error);
+
+		session.close();
+		await smpp.close();
+	});
+
+	test('turns a rejecting session listener into a server error', async () => {
+		const smpp = await startServer();
+		const failed = once<Error>(resolve => { smpp.on('serverError', resolve); });
+
+		smpp.on('session', () => Promise.reject(new Error('session listener rejected')));
+
+		const { session } = await connect(smpp);
+		const reported = await raceWithin(500, failed);
+
+		assert.ok(reported instanceof Error, 'a rejecting session listener should reach the server');
+		assert.equal(reported.message, 'session listener rejected');
+
+		session?.close();
 		await smpp.close();
 	});
 

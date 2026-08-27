@@ -5,7 +5,7 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 231 tests, lint and typecheck clean, verified on Node
+The rewrite is **feature complete and green**: 234 tests, lint and typecheck clean, verified on Node
 18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
@@ -57,6 +57,7 @@ Rules the API follows:
 | Merged multipart DLRs, reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
+| A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts` |
 | Cross-checked against node-smpp both ways and over a live session | `test/interop.test.ts` |
 | CI on Node 18/20/22/24, Renovate, tag-triggered publish | `.github/workflows/` |
 
@@ -109,15 +110,6 @@ session message is a change to every call site.
 - [ ] Decide what happens to `master`: this branch is an orphan, so merging it is a deliberate act.
 
 ## Worth doing, not blocking
-
-- [ ] **An `async` event listener that rejects escapes the guard.** `Session.emit()` wraps
-      `super.emit()` in try/catch, which catches a listener that throws synchronously but not one
-      that returns a rejected promise — that surfaces as an unhandled rejection and takes the
-      process down, which hard rule 1 says must not happen. Every README example uses
-      `session.on('sms', async sms => …)`, so the shape is the one applications will write. The
-      library's own calls inside such a listener never reject, so the examples themselves are safe.
-      Fixing it means dispatching `rawListeners()` by hand in `emit()` and routing a rejection to
-      `sessionError` — a change to the hottest path, so it needs a decision before 1.0.0.
 
 - [ ] **In-flight sends across a reconnect.** They currently fail with "Session closed before a
       response arrived" and the caller retries. Re-queueing them automatically would be friendlier
