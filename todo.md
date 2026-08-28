@@ -114,8 +114,7 @@ session message is a change to every call site.
 - [ ] **In-flight sends across a reconnect.** They currently fail with "Session closed before a
       response arrived" and the caller retries. Re-queueing them automatically would be friendlier
       but risks duplicate delivery, so it needs a decision before it is built.
-- [ ] **Merge state does not survive a process restart.** A drop no longer discards it — `close()`
-      and a drop with no reconnect left clear the merges, `teardown()` does not — but a restart still
+- [ ] **Merge state does not survive a process restart.** A drop no longer discards it, but a restart
       loses every incomplete group, and a peer has no reason to resend a receipt it already had
       answered. Surviving one means exposing the merge state for the application to persist and hand
       back, which is a public-surface decision.
@@ -139,6 +138,18 @@ session message is a change to every call site.
       SMS. Kannel treats 0x04, 0x08 and 0x20 alike as report-bearing. Against it: a non-final report
       would take a segment's slot in `DlrMerger` and complete the group early. Raised by review,
       2026-08-27; needs a decision.
+
+- [ ] **A failing session test hangs the run rather than ending it.** Every test that starts a server
+      closes it on its last line, so an assertion that throws leaves the listener open and
+      `node --test` never exits: all four CI legs burn the ten-minute cap instead of reporting the
+      five-second failure. `t.after(() => smpp.close())` fixes it, at every call site.
+- [ ] **`DlrMerger.open()` evicts a live group when the base is already held.** `groups.set()`
+      overwrites without growing the store, so the `dropOldest()` before it discarded another
+      message's receipts for nothing, and logged the eviction. Guard it on `groups.get(base)`.
+- [ ] **A peer that reuses message ids folds one message's receipts into another's report.**
+      `collect()` keys on the base alone, so a straggler for a group that is gone joins the next group
+      opened under the same base — reporting a fully delivered message as UNDELIVERABLE. An SMSC whose
+      id counter restarts with its process is the realistic case. Found by review, 2026-08-28.
 
 - [ ] **`submit_multi` and the broadcast commands** encode and decode, but nothing exercises them
       end to end. The interop suite is the natural place.

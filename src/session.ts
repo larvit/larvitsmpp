@@ -228,7 +228,6 @@ export class Session extends EventEmitter<SessionEvents> {
 	close(): void {
 		this.reconnectLoop?.stop();
 		this.teardown();
-		// Held across a drop instead: the peer never resends a receipt this session already answered.
 		this.dlrMerger.clear();
 	}
 
