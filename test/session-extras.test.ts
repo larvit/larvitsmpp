@@ -8,6 +8,7 @@ import type { MessageDlr } from '../src/session.ts';
 import type { PduObject, PduObjectInput } from '../src/pdu.ts';
 import type { Result } from '../src/result.ts';
 import type { SendSmsResult } from '../src/send-sms.ts';
+import type { Session } from '../src/session.ts';
 import type { SmppLog } from '../src/log.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
@@ -271,6 +272,34 @@ describe('sendSms()', () => {
 });
 
 describe('reconnect', () => {
+	/** The server's side of the one connection under test, replaced by every reconnect. */
+	function peerOf(smpp: SmppServer): Session {
+		const [peer] = smpp.sessions;
+
+		assert.equal(smpp.sessions.size, 1);
+		assert.ok(peer);
+
+		return peer;
+	}
+
+	async function sendReceipt(peer: Session, smsId: string): Promise<void> {
+		const sent = await peer.send({
+			cmdName: 'deliver_sm',
+			params: {
+				destination_addr: '46701113311',
+				esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+				short_message: `id:${smsId} stat:DELIVRD err:000 text:`,
+				source_addr: '46709771337',
+			},
+			tlvs: {
+				message_state: { tagValue: consts.MESSAGE_STATE.DELIVERED },
+				receipted_message_id: { tagValue: smsId },
+			},
+		});
+
+		assert.equal(sent.err, undefined);
+	}
+
 	test('re-binds after the connection drops, keeping the same session object', async () => {
 		const smpp = await startServer();
 		const messages: string[] = [];
@@ -311,6 +340,51 @@ describe('reconnect', () => {
 
 		assert.equal(sent.err, undefined);
 		assert.deepEqual(messages, ['after reconnect']);
+
+		session.close();
+		await smpp.close();
+	});
+
+	test('merges the receipts of a multipart message across a drop', async () => {
+		const smpp = await startServer();
+
+		smpp.on('session', bound => {
+			bound.on('sms', sms => { void sms.sendResp({ smsId: 'across-the-drop' }); });
+		});
+
+		const { session } = await client({
+			port: smpp.port,
+			reconnect: { maxDelay: 100, minDelay: 20 },
+		});
+
+		assert.ok(session);
+
+		const sent = await session.sendSms({
+			dlr: true,
+			from: '46701113311',
+			message: 'x'.repeat(400),
+			to: '46709771337',
+		});
+
+		assert.deepEqual(sent.smsIds, ['across-the-drop-1', 'across-the-drop-2', 'across-the-drop-3']);
+
+		// Answered on the link that then drops, so an SMSC has no reason to ever send it again.
+		await sendReceipt(peerOf(smpp), 'across-the-drop-1');
+
+		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+
+		peerOf(smpp).close();
+		await reconnected;
+
+		const merged = once<MessageDlr>(resolve => { session.on('messageDlr', resolve); });
+
+		await sendReceipt(peerOf(smpp), 'across-the-drop-2');
+		await sendReceipt(peerOf(smpp), 'across-the-drop-3');
+
+		const report = await merged;
+
+		assert.equal(report.smsId, 'across-the-drop');
+		assert.equal(report.segments.length, 3);
 
 		session.close();
 		await smpp.close();

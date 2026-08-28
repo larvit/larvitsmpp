@@ -5,7 +5,7 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 235 tests, lint and typecheck clean, verified on Node
+The rewrite is **feature complete and green**: 236 tests, lint and typecheck clean, verified on Node
 18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
@@ -54,7 +54,7 @@ Rules the API follows:
 | Stream framing | `test/pdu-framer.test.ts` |
 | Delivery receipt parsing, TLV and text | `test/dlr.test.ts` |
 | Session, client, server: bind, auth, send, reassembly, DLRs, timeouts, abort, send window | `test/session.test.ts` |
-| Merged multipart DLRs, reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
+| Merged multipart DLRs including across a reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
@@ -114,17 +114,11 @@ session message is a change to every call site.
 - [ ] **In-flight sends across a reconnect.** They currently fail with "Session closed before a
       response arrived" and the caller retries. Re-queueing them automatically would be friendlier
       but risks duplicate delivery, so it needs a decision before it is built.
-- [ ] **A drop discards delivery receipts already acknowledged to the peer.** `teardown()` calls
-      `dlrMerger.clear()`, and it runs on every path — an idle timeout and a failed rebind, not only
-      `close()`. `onDeliverSm()` answers each receipt with `sendReturn()` before the merge completes,
-      so a peer that has sent two of three segment receipts will never resend them and `messageDlr`
-      can never fire for that message. `dlrMergeTimeout` budgets a day for the last receipt to
-      arrive, while the state does not survive a thirty-second link drop. Reassembly is not affected
-      the same way: inbound segments go unanswered until the message is whole, so the peer keeps
-      them. Clearing is right when `close()` ends the session for good and wrong on the reconnect
-      path; separating the two is most of the fix. Surviving a process restart as well means
-      exposing the merge state for the application to persist and hand back, which is a
-      public-surface decision.
+- [ ] **Merge state does not survive a process restart.** A drop no longer discards it — `close()`
+      and a drop with no reconnect left clear the merges, `teardown()` does not — but a restart still
+      loses every incomplete group, and a peer has no reason to resend a receipt it already had
+      answered. Surviving one means exposing the merge state for the application to persist and hand
+      back, which is a public-surface decision.
 - [ ] **`close()` and `unbind()` drop in-flight requests instead of draining them.** `teardown()`
       settles every pending request with "Session closed before a response arrived" and destroys the
       socket in the same tick, so a submit the SMSC has already accepted is reported to the caller

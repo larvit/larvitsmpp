@@ -228,6 +228,8 @@ export class Session extends EventEmitter<SessionEvents> {
 	close(): void {
 		this.reconnectLoop?.stop();
 		this.teardown();
+		// Held across a drop instead: the peer never resends a receipt this session already answered.
+		this.dlrMerger.clear();
 	}
 
 	private loopFor(reconnect: ReconnectOptions | undefined): ReconnectLoop | undefined {
@@ -316,7 +318,6 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.closed = true;
 		this.timers.clear();
 		this.pending.settleAll(new Error('Session closed before a response arrived'));
-		this.dlrMerger.clear();
 		this.incoming.clear();
 		this.sock.destroy();
 		this.emit('close');
@@ -406,6 +407,13 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	private onClose(): void {
 		this.teardown();
-		this.reconnectLoop?.schedule();
+
+		if (this.reconnectLoop && !this.reconnectLoop.isStopped()) {
+			this.reconnectLoop.schedule();
+
+			return;
+		}
+
+		this.dlrMerger.clear();
 	}
 }

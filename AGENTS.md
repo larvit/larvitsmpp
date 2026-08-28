@@ -233,6 +233,16 @@ exactly 140.
   override them as methods — re-declaring them the same way is its way out. `unknown` rather than `void | Promise<void>` because a listener may return
   anything — `session.on('close', () => set.delete(session))` returns a boolean.
 
+- **A reconnect keeps the delivery-receipt merges; everything else the link held is dropped.**
+  `onDeliverSm()` answers each receipt before the group it belongs to is complete, and `teardown()`
+  runs on every path — an idle timeout and a failed rebind, not only `close()` — so clearing the
+  merges there loses receipts no peer has a reason to send again. They are cleared where the session
+  is over instead: `close()`, or a drop with no reconnect loop left to bring the link back. Inbound
+  segments stay in `teardown()`, because they go unanswered until the message is whole: the peer
+  still holds them, and answering it on a later link with the old segments' sequence numbers would
+  correlate with nothing. Surviving a process restart is a separate, public-surface question, and is
+  in todo.md.
+
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image
   `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI
