@@ -456,14 +456,13 @@ export class Session extends EventEmitter<SessionEvents> {
 	}
 
 	private onClose(): void {
-		this.teardown();
-
 		if (this.reconnectLoop && !this.reconnectLoop.isStopped()) {
+			this.teardown();
 			this.reconnectLoop.schedule();
 
 			return;
 		}
 
-		this.dlrMerger.clear();
+		this.end();
 	}
 }
