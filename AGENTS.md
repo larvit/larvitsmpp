@@ -287,3 +287,16 @@ exactly 140.
   `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI
   and fail on every developer machine, and a committed key leaks in a public repository. Valid while
   the dev image has no openssl.
+
+- **The notation a peer writes message ids in is named per place, and normalisation never reaches
+  inside a `<base>-<n>` id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's
+  `id:` in decimal, so one transform over both sides cannot make them equal — `smsIdFormat` names
+  `receipt` and `submitResp` separately and reads both into a plain decimal value before `smsIds`
+  and `dlr.smsId` are compared. Omitting a place is what leaving it alone means, so there is no
+  `raw` notation, and a caller-supplied formatter is refused because it would make the promise that
+  those two are comparable unverifiable — `onRequest` and the PDU on the `dlr` event are the escape
+  hatches, and the `onReceipt` hook in todo.md is the seam if one is wanted. An id no notation reads
+  is left exactly as it arrived, which is what keeps `DlrMerger` working: a `<base>-<n>` id parses
+  as no number and so reaches `expect()` and `collect()` unchanged. Normalising the base instead
+  would break that pair. The option is on `client()` only — a `server()` session generates its own
+  ids and writes its own receipts, so both places are already one notation.

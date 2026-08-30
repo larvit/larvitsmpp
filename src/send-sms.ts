@@ -3,7 +3,7 @@ import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput } from './pdu.ts';
 import type { Result } from './result.ts';
 import type { SmppLog } from './log.ts';
-import type { SmsIdFormat } from './sms-id.ts';
+import type { SmsIdNotation } from './sms-id.ts';
 import { consts } from './defs/constants.ts';
 import { detect } from './defs/encodings.ts';
 import { normaliseSmsId } from './sms-id.ts';
@@ -34,7 +34,7 @@ export type SendSmsResult = { err?: Error; pduObjs: PduObject[]; smsIds: string[
 export type SendSmsDeps = {
 	log: SmppLog;
 	reference: number;
-	respIdFormat?: SmsIdFormat | undefined;
+	respIdNotation?: SmsIdNotation | undefined;
 	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 };
 
@@ -103,7 +103,7 @@ function checkSegments(allowed: number, segments: number): Error | undefined {
 
 function collectSent(
 	sent: Result<{ pduObj: PduObject }>[],
-	format: SmsIdFormat | undefined,
+	notation: SmsIdNotation | undefined,
 ): SendSmsResult {
 	const pduObjs: PduObject[] = [];
 	const smsIds: string[] = [];
@@ -114,7 +114,7 @@ function collectSent(
 			failure ??= one.err;
 		} else if (one.pduObj.cmdStatus === 'ESME_ROK') {
 			pduObjs.push(one.pduObj);
-			smsIds.push(normaliseSmsId(paramText(one.pduObj.params.message_id), format));
+			smsIds.push(normaliseSmsId(paramText(one.pduObj.params.message_id), notation));
 		} else {
 			const refusal = one.pduObj.cmdStatus ?? String(one.pduObj.cmdStatusId);
 
@@ -144,5 +144,5 @@ export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise
 		params: submitSmParams(sms, segment, { encoding, multipart }),
 	})));
 
-	return collectSent(sent, deps.respIdFormat);
+	return collectSent(sent, deps.respIdNotation);
 }

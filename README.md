@@ -172,8 +172,8 @@ before you see them:
 const { err, session } = await client({ smsIdFormat: { receipt: 'decimal', submitResp: 'hex' } });
 ```
 
-An id that is not a number in the notation given is left exactly as it arrived, and `pduObjs` and
-`dlr.receipt` carry the id as the peer wrote it either way.
+An id that is not a number in the notation given is left exactly as it arrived, and the PDUs carry
+what the peer wrote either way — `pduObjs` from the send, and the second argument of the `dlr` event.
 
 ## Server
 

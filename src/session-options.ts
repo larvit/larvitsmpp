@@ -4,10 +4,10 @@ import type { PduObject } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
 import type { SmppLog } from './log.ts';
-import type { SmsIdFormats } from './sms-id.ts';
+import type { SmsIdFormat } from './sms-id.ts';
 import type { Sms } from './sms.ts';
 import type { Socket } from 'node:net';
-import { isSmsIdFormat } from './sms-id.ts';
+import { isSmsIdNotation, smsIdNotations, smsIdPlaces } from './sms-id.ts';
 
 export type SessionEvents = {
 	close: [];
@@ -86,7 +86,7 @@ export type SessionOptions = {
 	/** How long a drain waits for the requests already on the wire. 0 waits forever. */
 	shutdownTimeout?: number | undefined;
 	/** The notation the peer writes message ids in, where it is not the one they are compared in. */
-	smsIdFormat?: SmsIdFormats | undefined;
+	smsIdFormat?: SmsIdFormat | undefined;
 	sock: Socket;
 	/** This end's own identity, answered to the peer in place of the one it sent. */
 	systemId?: string | undefined;
@@ -131,19 +131,31 @@ export function checkSessionOptions(options: CheckableOptions): VoidResult {
 		}
 	}
 
-	return checkSmsIdFormats(options.smsIdFormat);
+	return checkSmsIdFormat(options.smsIdFormat);
 }
 
-function checkSmsIdFormats(smsIdFormat: CheckableOptions['smsIdFormat']): VoidResult {
-	const formats: [string, string | undefined][] = [
-		['receipt', smsIdFormat?.receipt],
-		['submitResp', smsIdFormat?.submitResp],
-	];
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
-	for (const [place, format] of formats) {
-		if (format !== undefined && !isSmsIdFormat(format)) {
-			return { err: new Error(`smsIdFormat.${place} must be decimal or hex, got ${format}`) };
-		}
+function checkSmsIdFormat(smsIdFormat: unknown): VoidResult {
+	if (smsIdFormat === undefined) return {};
+
+	if (!isRecord(smsIdFormat)) {
+		return { err: new Error('smsIdFormat names a notation per place, as { receipt, submitResp }') };
+	}
+
+	const allowed = smsIdNotations.join(' or ');
+
+	for (const place of smsIdPlaces) {
+		const notation = smsIdFormat[place];
+
+		if (notation === undefined || isSmsIdNotation(notation)) continue;
+
+		// String() throws on a null-prototype object, and this value is whatever the caller passed.
+		const got = typeof notation === 'string' ? notation : typeof notation;
+
+		return { err: new Error(`smsIdFormat.${place} must be ${allowed}, got ${got}`) };
 	}
 
 	return {};
@@ -157,5 +169,5 @@ export type CheckableOptions = {
 	reassemblyTimeout?: number | undefined;
 	responseTimeout?: number | undefined;
 	shutdownTimeout?: number | undefined;
-	smsIdFormat?: { receipt?: string | undefined; submitResp?: string | undefined } | undefined;
+	smsIdFormat?: unknown;
 };

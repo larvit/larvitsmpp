@@ -2,7 +2,7 @@ import type { ConnectionOptions } from 'node:tls';
 import type { Result, VoidResult } from './result.ts';
 import type { BindType } from './session-options.ts';
 import type { SmppLog } from './log.ts';
-import type { SmsIdFormats } from './sms-id.ts';
+import type { SmsIdFormat } from './sms-id.ts';
 import type { Socket } from 'node:net';
 export type { BindType };
 
@@ -30,7 +30,7 @@ export type ClientOptions = {
 	responseTimeout?: number;
 	shutdownTimeout?: number;
 	signal?: AbortSignal;
-	smsIdFormat?: SmsIdFormats;
+	smsIdFormat?: SmsIdFormat;
 	systemType?: string;
 	tls?: ConnectionOptions | boolean;
 	username?: string;
