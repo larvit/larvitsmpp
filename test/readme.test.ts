@@ -173,6 +173,7 @@ describe('README: Server', () => {
 
 		assert.equal(clientErr, undefined);
 		assert.ok(session);
+		closeAfter(t, session);
 
 		await session.sendSms({ from: '46701113311', message: 'Hello world', to: '46709771337' });
 		await session.unbind();
@@ -212,6 +213,7 @@ describe('README: Server', () => {
 
 		assert.equal(clientErr, undefined);
 		assert.ok(session);
+		closeAfter(t, session);
 
 		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
 		const sent = await session.sendSms({
@@ -223,8 +225,6 @@ describe('README: Server', () => {
 
 		assert.equal(sent.err, undefined);
 		assert.equal((await reported).statusMsg, 'DELIVERED');
-
-		await session.unbind();
 	});
 });
 

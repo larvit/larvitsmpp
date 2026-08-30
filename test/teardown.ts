@@ -9,13 +9,19 @@ export function closeAfter(t: TestContext, closable: Closable): void {
 	t.after(() => closable.close({ signal: AbortSignal.abort() }));
 }
 
-/** A listener with a socket still on it never closes, so the sockets go first. */
-export function endListenerAfter(t: TestContext, listener: Server, sockets: Socket[]): void {
+/**
+ * Stops a listener, given every socket it accepted — one still open and it never closes. The wait is
+ * bounded because a caller that misses one must not hang the net itself.
+ */
+export function closeListenerAfter(t: TestContext, listener: Server, accepted: Socket[]): void {
 	t.after(async () => {
-		for (const sock of sockets) {
+		for (const sock of accepted) {
 			sock.destroy();
 		}
 
-		await new Promise<void>(resolve => { listener.close(() => { resolve(); }); });
+		await Promise.race([
+			new Promise<void>(resolve => { listener.close(() => { resolve(); }); }),
+			new Promise<void>(resolve => { setTimeout(resolve, 1000).unref(); }),
+		]);
 	});
 }

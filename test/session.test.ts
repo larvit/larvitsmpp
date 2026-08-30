@@ -12,7 +12,7 @@ import { PduFramer } from '../src/pdu-framer.ts';
 import { ReconnectLoop } from '../src/reconnect-loop.ts';
 import { Session, bindCommands } from '../src/session.ts';
 import { client } from '../src/client.ts';
-import { closeAfter, endListenerAfter } from './teardown.ts';
+import { closeAfter, closeListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
 import { isCommand, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
 import { paramText } from '../src/defs/types.ts';
@@ -316,9 +316,6 @@ describe('bind', () => {
 		assert.ok(byDefault);
 		assert.ok(asFive);
 		assert.deepEqual(declared, [0x34, 0x50]);
-
-		await byDefault.unbind();
-		await asFive.unbind();
 	});
 
 	test('tells a 3.4 peer the version it supports in the bind response', async t => {
@@ -472,12 +469,13 @@ describe('bind direction', () => {
 		assert.ok(session);
 
 		const [sms] = await Promise.all([
-			incoming,
+			incoming.then(async received => {
+				await received.sendResp();
+
+				return received;
+			}),
 			session.sendSms({ dlr: true, from: '46701113311', message: 'one way', to: '46709771337' }),
 		]);
-
-		await sms.sendResp();
-
 		const report = await sms.sendDlr();
 
 		assert.ok(report.err instanceof Error);
@@ -606,7 +604,11 @@ describe('sending', () => {
 		assert.ok(session);
 
 		const [sms] = await Promise.all([
-			incoming,
+			incoming.then(async received => {
+				await received.sendResp();
+
+				return received;
+			}),
 			session.sendSms({
 				destinationAddrNpi: consts.NPI.ISDN,
 				destinationAddrTon: consts.TON.NATIONAL,
@@ -929,7 +931,7 @@ describe('robustness', () => {
 		const silent = net.createServer(sock => { accepted.push(sock); sock.resume(); });
 
 		await new Promise<void>(resolve => silent.listen(0, resolve));
-		endListenerAfter(t, silent, accepted);
+		closeListenerAfter(t, silent, accepted);
 
 		const address = silent.address();
 		const port = typeof address === 'object' && address !== null ? address.port : 0;
@@ -1269,13 +1271,12 @@ describe('application hooks that throw or reject', () => {
 
 		smpp.on('session', () => Promise.reject(new Error('session listener rejected')));
 
-		const { session } = await connect(t, smpp);
+		await connect(t, smpp);
+
 		const reported = await raceWithin(500, failed);
 
 		assert.ok(reported instanceof Error, 'a rejecting session listener should reach the server');
 		assert.equal(reported.message, 'session listener rejected');
-
-		await session?.close();
 	});
 
 	test('closes even when an application close listener throws', async t => {

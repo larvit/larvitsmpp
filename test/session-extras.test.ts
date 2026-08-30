@@ -16,7 +16,7 @@ import { Reassembler, decodeSegments } from '../src/reassembly.ts';
 import { Session } from '../src/session.ts';
 import { DlrMerger } from '../src/dlr-merger.ts';
 import { client } from '../src/client.ts';
-import { closeAfter, endListenerAfter } from './teardown.ts';
+import { closeAfter, closeListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
 import { errors } from '../src/defs/errors.ts';
 import { objToPdu } from '../src/pdu.ts';
@@ -575,7 +575,7 @@ describe('AbortSignal on a send', () => {
 		});
 
 		await new Promise<void>(resolve => silent.listen(0, resolve));
-		endListenerAfter(t, silent, accepted);
+		closeListenerAfter(t, silent, accepted);
 
 		const address = silent.address();
 		const port = typeof address === 'object' && address !== null ? address.port : 0;
@@ -711,7 +711,7 @@ describe('graceful shutdown', () => {
 	});
 
 	test('stops accepting the moment close() is called, not when the drain ends', async t => {
-		const smpp = await startServer(t, { shutdownTimeout: 30_000 });
+		const smpp = await startServer(t, { shutdownTimeout: 500 });
 		const arrived = once<Session>(resolve => { smpp.on('session', resolve); });
 		const silent = net.connect({ port: smpp.port });
 
@@ -758,7 +758,8 @@ describe('graceful shutdown', () => {
 	});
 
 	test('does not report a reconnect on a session closed while it was coming back up', async t => {
-		const listener = net.createServer(sock => { sock.resume(); });
+		const accepted: net.Socket[] = [];
+		const listener = net.createServer(sock => { accepted.push(sock); sock.resume(); });
 
 		await new Promise<void>(resolve => { listener.listen(0, resolve); });
 
@@ -793,7 +794,8 @@ describe('graceful shutdown', () => {
 		const reported: string[] = [];
 
 		closeAfter(t, session);
-		endListenerAfter(t, listener, opened);
+		t.after(() => { for (const sock of opened) sock.destroy(); });
+		closeListenerAfter(t, listener, accepted);
 		session.on('reconnected', () => reported.push('reconnected'));
 		first.sock.destroy();
 

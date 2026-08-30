@@ -227,7 +227,6 @@ describe('a live session against the reference implementation', () => {
 			});
 		});
 
-		t.after(() => new Promise<void>(resolve => { refServer.close(() => { resolve(); }); }));
 		await new Promise<void>(resolve => { refServer.listen(0, () => { resolve(); }); });
 
 		const port = refServer.address()?.port ?? 0;
@@ -236,6 +235,7 @@ describe('a live session against the reference implementation', () => {
 		assert.equal(err, undefined);
 		assert.ok(session);
 		closeAfter(t, session);
+		t.after(() => new Promise<void>(resolve => { refServer.close(() => { resolve(); }); }));
 
 		const sent = await session.sendSms({
 			from: 'MyBrand',

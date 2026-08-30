@@ -155,10 +155,14 @@ exactly 140.
 - `message_id` values the library generates are UUID v7.
 - A test that needs a dummy peer must `resume()` its sockets. An unread socket never processes the
   peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
-- Everything a test opens is handed to `test/teardown.ts` as it is opened, never closed on the test's
+- Everything a test opens gets its teardown registered as it is opened, never closed on the test's
   last line: an assertion that throws skips that line, and the listener it leaves behind keeps
-  `node --test` alive until CI's ten-minute cap. The teardown aborts rather than drains, so a test
-  that fails holding the send window still ends.
+  `node --test` alive until CI's ten-minute cap. `test/teardown.ts` covers a session, a server and a
+  listener; anything else takes a bare `t.after`. Its close aborts rather than drains, so a test that
+  fails holding the send window still ends.
+- `t.after` hooks run in registration order, so registering at creation tears the outermost resource
+  down first — the wrong way round for a listener, which blocks until every connection on it is gone.
+  A listener's own hook goes last, after the hooks that close what is connected to it.
 - `assert.equal` from `node:assert/strict` narrows its first argument, so a following `?.` on the
   same value is flagged as unnecessary. Assert once with `assert.ok(x)` and use plain access after.
 
