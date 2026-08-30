@@ -1621,6 +1621,10 @@ describe('merged delivery report bounds', () => {
 		dlrMerger.expect(['reused-1', 'reused-2']);
 
 		assert.equal(dlrMerger.size, 0);
+
+		dlrMerger.expect(['other-1', 'other-2']);
+
+		assert.equal(dlrMerger.size, 1);
 	});
 
 	test('keeps another message when a held base is opened again', () => {
