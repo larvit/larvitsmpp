@@ -104,13 +104,15 @@ describe('README: Client', () => {
 		closeAfter(t, session);
 
 		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
-		const { smsIds } = await session.sendSms({
+		const { err: sendErr, smsIds } = await session.sendSms({
 			dlr: true,
 			from: '46701113311',
 			message: 'Hello world',
 			to: '46709771337',
 		});
 
+		assert.equal(sendErr, undefined);
+		assert.equal(smsIds.length, 1);
 		// The generated ids the server answers with read as no notation, so they arrive untouched.
 		assert.equal((await reported).smsId, smsIds[0]);
 	});

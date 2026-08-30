@@ -11,7 +11,7 @@ export type SmsIdNotation = keyof typeof notations;
 /** The notation per place the peer writes an id. An omitted place is left as it arrived. */
 export type SmsIdFormat = Partial<Record<typeof places[number], SmsIdNotation | undefined>>;
 
-export const smsIdNotations: string[] = Object.keys(notations);
+export const smsIdNotations: readonly string[] = Object.keys(notations);
 
 export const smsIdPlaces: readonly string[] = places;
 

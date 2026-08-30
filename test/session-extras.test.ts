@@ -878,7 +878,6 @@ describe('message id notation', () => {
 
 		assert.ok(checked.err instanceof Error);
 		assert.match(checked.err.message, /smsIdFormat\.receipt/);
-		// The shape todo.md sketched, which a caller without types would otherwise pass unnoticed.
 		assert.ok(checkSessionOptions({ smsIdFormat: 'hex' }).err instanceof Error);
 		assert.match(
 			checkSessionOptions({ smsIdFormat: { receipts: 'decimal' } }).err?.message ?? '',

@@ -83,7 +83,6 @@ export function submitSmParams(
 	return params;
 }
 
-/** Puts a message on the wire as one submit_sm per segment. */
 /** Nothing goes on the wire until the whole message fits: a half-sent message bills twice. */
 function checkSegments(allowed: number, segments: number): Error | undefined {
 	if (!Number.isInteger(allowed) || allowed < 1 || allowed > maxSegments) {
@@ -125,6 +124,7 @@ function collectSent(
 	return failure ? { err: failure, pduObjs, smsIds } : { pduObjs, smsIds };
 }
 
+/** Puts a message on the wire as one submit_sm per segment. */
 export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise<SendSmsResult> {
 	const allowed = sms.maxSegments ?? maxSegments;
 	const encoding = sms.encoding ?? detect(sms.message);

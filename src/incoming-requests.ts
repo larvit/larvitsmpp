@@ -19,8 +19,8 @@ export type IncomingRequestsOptions = {
 	maxReassembly?: number | undefined;
 	onRequest?: OnRequest | undefined;
 	reassemblyTimeout?: number | undefined;
-	smsIdFormat?: SmsIdFormat | undefined;
 	session: Session;
+	smsIdFormat?: SmsIdFormat | undefined;
 	systemId?: string | undefined;
 };
 
