@@ -419,7 +419,7 @@ describe('reconnect', () => {
 		session.on('reconnected', () => { reconnects++; });
 		await session.close();
 
-		await new Promise(resolve => setTimeout(resolve, 150));
+		await delay(150);
 
 		assert.equal(reconnects, 0);
 		await smpp.close();

@@ -273,7 +273,7 @@ export class Session extends EventEmitter<SessionEvents> {
 			return { err: bound.err };
 		}
 
-		// close() can land while the rebind is in flight, and it has nothing left to tear down.
+		// close() can land while the rebind is in flight.
 		if (this.reconnectLoop?.isStopped() === true) {
 			this.teardown();
 

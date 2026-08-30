@@ -124,9 +124,9 @@ session message is a change to every call site.
       loses every incomplete group, and a peer has no reason to resend a receipt it already had
       answered. Surviving one means exposing the merge state for the application to persist and hand
       back, which is a public-surface decision.
-- [ ] **`session.ts` is 468 lines.** The one seam left in it is a socket-to-PDU transport, which
-      would move the deliberately public `sock` field out of `Session` or turn it into a getter —
-      a public-surface change, so it waits for a decision.
+- [ ] **`session.ts` has one seam left in it**, a socket-to-PDU transport, which would move the
+      deliberately public `sock` field out of `Session` or turn it into a getter — a public-surface
+      change, so it waits for a decision.
 - [ ] **Group the session's collaborators under `src/session/`.** Only `session.ts` imports
       `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `reconnect-loop`, `pending-requests`
       and `send-sms`, so the directory would make that boundary visible. Do it on the next
