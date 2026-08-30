@@ -143,13 +143,6 @@ session message is a change to every call site.
       closes it on its last line, so an assertion that throws leaves the listener open and
       `node --test` never exits: all four CI legs burn the ten-minute cap instead of reporting the
       five-second failure. `t.after(() => smpp.close())` fixes it, at every call site.
-- [ ] **`DlrMerger.open()` evicts a live group when the base is already held.** `groups.set()`
-      overwrites without growing the store, so the `dropOldest()` before it discarded another
-      message's receipts for nothing, and logged the eviction. Guard it on `groups.get(base)`.
-- [ ] **A peer that reuses message ids folds one message's receipts into another's report.**
-      `collect()` keys on the base alone, so a straggler for a group that is gone joins the next group
-      opened under the same base — reporting a fully delivered message as UNDELIVERABLE. An SMSC whose
-      id counter restarts with its process is the realistic case. Found by review, 2026-08-28.
 
 - [ ] **`submit_multi` and the broadcast commands** encode and decode, but nothing exercises them
       end to end. The interop suite is the natural place.

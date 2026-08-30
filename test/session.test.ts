@@ -1576,6 +1576,41 @@ describe('merged delivery report bounds', () => {
 
 		assert.equal(dlrMerger.collect(receipt('late-1')), undefined);
 		assert.equal(dlrMerger.size, 0);
+
+		dlrMerger.expect(['late-1', 'late-2']);
+
+		assert.equal(dlrMerger.collect(receipt('late-1')), undefined);
+		assert.equal(dlrMerger.collect(receipt('late-2')), undefined);
+	});
+
+	test('leaves a base the peer hands out twice unmerged', () => {
+		const dlrMerger = merger();
+
+		dlrMerger.expect(['reused-1', 'reused-2']);
+
+		assert.equal(dlrMerger.collect(receipt('reused-1')), undefined);
+		assert.ok(dlrMerger.collect(receipt('reused-2')));
+
+		dlrMerger.expect(['reused-1', 'reused-2']);
+
+		assert.equal(dlrMerger.size, 0);
+		assert.equal(dlrMerger.collect(receipt('reused-1')), undefined);
+		assert.equal(dlrMerger.collect(receipt('reused-2')), undefined);
+	});
+
+	test('keeps another message when a held base is opened again', () => {
+		const dlrMerger = merger({ max: 2 });
+
+		dlrMerger.expect(['first-1', 'first-2']);
+		dlrMerger.expect(['second-1', 'second-2']);
+		dlrMerger.expect(['second-1', 'second-2']);
+
+		assert.equal(dlrMerger.collect(receipt('first-1')), undefined);
+
+		const merged = dlrMerger.collect(receipt('first-2'));
+
+		assert.ok(merged);
+		assert.equal(merged.smsId, 'first');
 	});
 });
 

@@ -243,6 +243,14 @@ exactly 140.
   correlate with nothing. Surviving a process restart is a separate, public-surface question, and is
   in todo.md.
 
+- **A message id base is merged at most once.** A receipt carries nothing but `<base>-<n>`, so a
+  straggler for a message whose group is gone cannot be told from a receipt for a later message the
+  peer handed the same ids — an SMSC whose id counter restarts with its process is the realistic
+  case. `DlrMerger` remembers the bases it has finished with, capped and expiring exactly like the
+  groups, and refuses to open one a second time: the later message gets no `messageDlr` rather than
+  the earlier one's receipts folded into its report. Every segment still reaches the application as
+  a `dlr`.
+
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image
   `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI

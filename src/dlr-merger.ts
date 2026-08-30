@@ -21,11 +21,6 @@ type Group = {
 const numbered = /^(.*)-(\d+)$/;
 
 /**
- * Merges the per-segment receipts of a multipart message into one report, but only when the peer
- * numbered its ids `<base>-<n>` off one base — the convention this library's own server follows. An
- * SMSC that hands out unrelated ids per segment cannot be merged, so nothing is reported for it.
- */
-/**
  * MESSAGE_STATE is a flat enum, not a ranking — ACCEPTED is 6 where UNDELIVERABLE is 5 — so reducing
  * on the wire value reports a part-failed message as delivered. Rank it deliberately instead.
  */
@@ -42,10 +37,18 @@ const severity: Record<MessageState, number> = {
 	UNDELIVERABLE: 9,
 };
 
+/**
+ * Merges the per-segment receipts of a multipart message into one report, but only when the peer
+ * numbered its ids `<base>-<n>` off one base — the convention this library's own server follows. An
+ * SMSC that hands out unrelated ids per segment cannot be merged, so nothing is reported for it.
+ * A base is merged at most once: a receipt under an id the peer has handed out before cannot be
+ * told from a straggler for the message that held it first.
+ */
 export class DlrMerger {
 	private readonly groups: ExpiringGroups<Group>;
 	private readonly log: SmppLog;
 	private readonly max: number;
+	private readonly spent: ExpiringGroups<true>;
 
 	constructor(options: DlrMergerOptions) {
 		this.groups = new ExpiringGroups<Group>({
@@ -56,6 +59,12 @@ export class DlrMerger {
 		});
 		this.log = options.log;
 		this.max = options.max;
+		this.spent = new ExpiringGroups<true>({
+			max: options.max,
+			now: options.now,
+			onSweep: () => { this.sweep(); },
+			timeout: options.timeout,
+		});
 	}
 
 	get size(): number {
@@ -103,7 +112,7 @@ export class DlrMerger {
 
 		if (group.parts.size < group.expected) return undefined;
 
-		this.groups.delete(base);
+		this.close(base);
 
 		const segments = [...group.parts.entries()].sort(([a], [b]) => a - b).map(([, one]) => one);
 		const worst = segments.reduce((carry, one) => (severity[one.statusMsg] > severity[carry.statusMsg] ? one : carry));
@@ -113,24 +122,49 @@ export class DlrMerger {
 
 	clear(): void {
 		this.groups.clear();
+		this.spent.clear();
 	}
 
 	/** Drops every group past its deadline. Runs before each collect and on its own timer. */
 	sweep(): void {
 		for (const [base, group] of this.groups.takeExpired()) {
+			this.close(base);
 			this.log.info('dlrMerger - incomplete receipts expired', { base, expected: group.expected });
 		}
+
+		this.spent.takeExpired();
 	}
 
 	private open(base: string, expected: number): void {
+		if (this.groups.get(base) !== undefined || this.spent.get(base) === true) {
+			this.close(base);
+			this.log.warn('dlrMerger - message id handed out again, leaving its receipts unmerged', { base });
+
+			return;
+		}
+
 		if (this.groups.full) this.dropOldest();
 
 		this.groups.set(base, { expected, parts: new Map() });
 	}
 
-	private dropOldest(): void {
-		if (!this.groups.takeOldest()) return;
+	/** Ends the base: whatever it still held goes, and it is remembered so nothing merges under it again. */
+	private close(base: string): void {
+		this.groups.delete(base);
 
+		if (this.spent.full && this.spent.get(base) === undefined) this.spent.takeOldest();
+
+		this.spent.set(base, true);
+	}
+
+	private dropOldest(): void {
+		const oldest = this.groups.takeOldest();
+
+		if (!oldest) return;
+
+		const [base] = oldest;
+
+		this.close(base);
 		this.log.warn('dlrMerger - buffer full, dropping the oldest message', { max: this.max });
 	}
 }
