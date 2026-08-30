@@ -5,7 +5,7 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 242 tests, lint and typecheck clean, verified on Node
+The rewrite is **feature complete and green**: 246 tests, lint and typecheck clean, verified on Node
 18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
@@ -55,7 +55,7 @@ Rules the API follows:
 | Delivery receipt parsing, TLV and text | `test/dlr.test.ts` |
 | Session, client, server: bind, auth, send, reassembly, DLRs, timeouts, abort, send window | `test/session.test.ts` |
 | Merged multipart DLRs including across a reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
-| A draining `close()` and `unbind()`, bounded by `shutdownTimeout` | `test/session-extras.test.ts` |
+| A draining `close()` and `unbind()`, bounded by `shutdownTimeout` or an abort | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
@@ -115,6 +115,11 @@ session message is a change to every call site.
 - [ ] **In-flight sends across a reconnect.** They currently fail with "Session closed before a
       response arrived" and the caller retries. Re-queueing them automatically would be friendlier
       but risks duplicate delivery, so it needs a decision before it is built.
+- [ ] **The drain covers only what this end sent.** `close()` and `unbind()` wait on the send window,
+      which `sendReturn()` never enters, so a server session tears down without waiting for the
+      application to answer the messages it is holding — the duplicate-on-retry outcome again, in
+      the SMSC direction. A full inbound drain needs a completion signal the `sms` event does not
+      carry, so it is a public-surface decision. Raised by review, 2026-08-30.
 - [ ] **Merge state does not survive a process restart.** A drop no longer discards it, but a restart
       loses every incomplete group, and a peer has no reason to resend a receipt it already had
       answered. Surviving one means exposing the merge state for the application to persist and hand

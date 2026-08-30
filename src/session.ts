@@ -2,7 +2,7 @@ import type { ErrorName } from './defs/errors.ts';
 import type { MessageDlr } from './dlr-merger.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
-import type { BindType, ReconnectOptions, SendOptions, SessionEvents, SessionOptions } from './session-options.ts';
+import type { BindType, CloseOptions, ReconnectOptions, SendOptions, SessionEvents, SessionOptions } from './session-options.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { SendSmsOptions, SendSmsResult } from './send-sms.ts';
 import type { SmppLog } from './log.ts';
@@ -23,6 +23,7 @@ import { silentLog } from './log.ts';
 import { submitSms } from './send-sms.ts';
 
 export type {
+	CloseOptions,
 	MessageDlr,
 	ReconnectOptions,
 	SendOptions,
@@ -221,17 +222,15 @@ export class Session extends EventEmitter<SessionEvents> {
 	 * unbind, which is fine. Reports the unbind's own failure ahead of an unfinished drain.
 	 */
 	async unbind(): Promise<VoidResult> {
-		this.reconnectLoop?.stop();
-
-		const drained = await this.drain();
+		const drained = await this.drain(undefined);
 		const wasOpen = !this.closed;
-		// request(), not send(): the drain gate would refuse it, and the window is empty by now.
+		// request(), not send(): the drain gate refuses a send, and the unbind goes out either way.
 		const sent = wasOpen
 			? await this.request({ cmdName: 'unbind' }, {})
 			: { err: new Error('Session is closed') };
 		const closedOnUnbind = wasOpen && this.closed;
 
-		this.shutdown();
+		this.end();
 
 		return sent.err && !closedOnUnbind ? { err: sent.err } : drained;
 	}
@@ -240,12 +239,10 @@ export class Session extends EventEmitter<SessionEvents> {
 	 * Closes for good: refuses new sends, waits out the requests already on the wire up to
 	 * `shutdownTimeout`, then tears down whatever is left. A session closed this way never reconnects.
 	 */
-	async close(): Promise<VoidResult> {
-		this.reconnectLoop?.stop();
+	async close(options: CloseOptions = {}): Promise<VoidResult> {
+		const drained = await this.drain(options.signal);
 
-		const drained = await this.drain();
-
-		this.shutdown();
+		this.end();
 
 		return drained;
 	}
@@ -330,32 +327,39 @@ export class Session extends EventEmitter<SessionEvents> {
 		return response;
 	}
 
-	/** Stops new sends and waits out the ones already issued. A dead link has nothing to wait for. */
-	private async drain(): Promise<VoidResult> {
+	/**
+	 * Stops new sends and waits out the ones already issued, which only covers what this end sent:
+	 * a request the peer sent us is answered through sendReturn(), which never enters the window.
+	 */
+	private async drain(signal: AbortSignal | undefined): Promise<VoidResult> {
+		this.reconnectLoop?.stop();
 		this.draining = true;
-		this.timers.clear();
 
 		if (this.closed || this.sock.destroyed) return {};
 
 		const timeout = this.options.shutdownTimeout ?? defaults.shutdownTimeout;
-		const inFlight = await this.window.idle(timeout);
+		const unfinished = await this.window.idle(timeout, signal);
 
-		if (inFlight === 0) return {};
+		// The window empties on a drop too: teardown() settles everything the link was carrying.
+		if (this.isClosed()) return { err: new Error('The link dropped before the drain finished') };
 
-		this.log.warn('session - shutting down with requests still in flight', { inFlight, timeout });
+		if (unfinished === 0) return {};
 
-		return { err: new Error(`Shut down with ${String(inFlight)} request(s) still in flight`) };
+		this.log.warn('session - shutting down with requests unfinished', { timeout, unfinished });
+
+		return { err: new Error(`Shut down with ${String(unfinished)} request(s) unfinished`) };
 	}
 
-	private shutdown(): void {
+	/** Read through a method: teardown() can land while the drain is awaiting. */
+	private isClosed(): boolean {
+		return this.closed;
+	}
+
+	/** The session is over now, drained or not. Nothing brings it back. */
+	private end(): void {
+		this.reconnectLoop?.stop();
 		this.teardown();
 		this.dlrMerger.clear();
-	}
-
-	/** The link is unusable, so nothing can answer and there is nothing to drain. */
-	private abort(): void {
-		this.reconnectLoop?.stop();
-		this.shutdown();
 	}
 
 	private teardown(): void {
@@ -395,7 +399,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		if (framed.err) {
 			this.log.warn('session - unusable stream, closing', { message: framed.err.message });
 			this.emit('sessionError', framed.err);
-			this.abort();
+			this.end();
 
 			return;
 		}
@@ -416,7 +420,7 @@ export class Session extends EventEmitter<SessionEvents> {
 				message: parsed.err.message,
 			});
 			this.emit('sessionError', parsed.err);
-			this.abort();
+			this.end();
 
 			return false;
 		}

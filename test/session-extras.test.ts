@@ -646,7 +646,7 @@ describe('graceful shutdown', () => {
 		const closed = await session.close();
 
 		assert.ok(closed.err instanceof Error);
-		assert.match(closed.err.message, /still in flight/);
+		assert.match(closed.err.message, /unfinished/);
 
 		const result = await sent;
 
@@ -654,5 +654,92 @@ describe('graceful shutdown', () => {
 		assert.equal(result.err.message, 'Session closed before a response arrived');
 
 		await smpp.close();
+	});
+
+	// The window empties on a drop as well as on an answer, so it cannot be what the result reads.
+	test('reports a link that dropped mid-drain rather than calling it a clean shutdown', async () => {
+		const { sent, session, smpp } = await submitInFlight();
+		const closing = session.close();
+
+		for (const bound of smpp.sessions) {
+			bound.sock.destroy();
+		}
+
+		const closed = await closing;
+
+		assert.ok(closed.err instanceof Error);
+		assert.match(closed.err.message, /dropped/);
+		assert.ok((await sent).err instanceof Error);
+
+		await smpp.close();
+	});
+
+	// The queued segments are the whole reason the drain waits on the window and not on the pending map.
+	test('counts the segments still queued behind a full window', async () => {
+		const smpp = await startServer();
+		const onWire = once<PduObject>(resolve => {
+			smpp.on('session', bound => bound.on('incomingPduObj', resolve));
+		});
+		const { session } = await client({ maxOutstanding: 1, port: smpp.port, shutdownTimeout: 50 });
+
+		assert.ok(session);
+
+		const sent = session.sendSms({
+			from: '46701113311',
+			message: 'x'.repeat(400),
+			to: '46709771337',
+		});
+
+		await onWire;
+
+		const closed = await session.close();
+
+		assert.ok(closed.err instanceof Error);
+		assert.match(closed.err.message, /3 request\(s\)/);
+		assert.ok((await sent).err instanceof Error);
+
+		await smpp.close();
+	});
+
+	test('an aborted close tears down at once instead of waiting out the drain', async () => {
+		const { sent, session, smpp } = await submitInFlight({ shutdownTimeout: 30_000 });
+		const controller = new AbortController();
+		const started = Date.now();
+
+		controller.abort();
+
+		const closed = await session.close({ signal: controller.signal });
+
+		assert.ok(Date.now() - started < 1000);
+		assert.ok(closed.err instanceof Error);
+		assert.ok(session.sock.destroyed);
+		assert.ok((await sent).err instanceof Error);
+
+		await smpp.close();
+	});
+
+	test('stops accepting the moment close() is called, not when the drain ends', async () => {
+		const smpp = await startServer({ shutdownTimeout: 30_000 });
+		const arrived = once<Session>(resolve => { smpp.on('session', resolve); });
+		const silent = net.connect({ port: smpp.port });
+
+		silent.resume();
+
+		const bound = await arrived;
+		const unanswered = bound.send({ cmdName: 'enquire_link' });
+		const closing = smpp.close();
+		const late = await new Promise<boolean>(resolve => {
+			const sock = net.connect({ port: smpp.port });
+
+			sock.on('connect', () => { sock.destroy(); resolve(true); });
+			sock.on('error', () => { resolve(false); });
+		});
+
+		assert.equal(late, false);
+
+		silent.destroy();
+		await closing;
+
+		assert.ok((await unanswered).err instanceof Error);
 	});
 });

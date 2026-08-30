@@ -21,7 +21,7 @@ by hand on top of a library; it is built in here.
 | **Submit window** | `maxOutstanding` holds requests in flight at 10; further sends queue instead of overrunning the SMSC. |
 | **Delivery receipts** | Correlated by `receipted_message_id`/`message_state` where the SMSC sends them, falling back to parsing the receipt text — what Kannel and several others send. |
 | **Multipart** | Long messages split on send; concatenated `deliver_sm` reassembled into one `sms`. |
-| **Graceful shutdown** | `close()` and `unbind()` wait out the requests already on the wire, so a submit the SMSC accepted is not reported as a failure. |
+| **Graceful shutdown** | `close()` and `unbind()` wait out the requests this end already sent, so a submit the SMSC accepted is not reported as a failure. |
 | **Never throws** | Everything fallible resolves to `{ err?, … }`, the codec included. |
 
 Throughput throttling is deliberately absent: an operator's rate limit is scoped to the account, and
@@ -101,7 +101,7 @@ Every one is optional.
 | `enquireLinkInterval` | `20000` | How often to send `enquire_link` on a quiet link. |
 | `idleTimeout` | `2 × enquireLinkInterval` | Give up on a link the peer has stopped answering; with `reconnect` set, it re-binds. |
 | `responseTimeout` | `30000` | How long to wait for a response before giving up on it; `0` waits forever. |
-| `shutdownTimeout` | `5000` | How long `close()` and `unbind()` wait for the requests already on the wire; `0` waits forever. |
+| `shutdownTimeout` | `5000` | How long `close()` and `unbind()` wait for the requests this end already sent; `0` waits forever. |
 | `maxOutstanding` | `10` | Requests allowed on the wire at once; further sends queue. |
 | `reconnect` | off | `{ minDelay, maxDelay }` to re-bind automatically after a drop or an idle timeout, with exponential backoff. |
 | `log` | silent | Any object with `debug`, `error`, `info`, `verbose` and `warn` methods — see [Logging](#logging). |
@@ -208,7 +208,7 @@ smpp.on('session', session => {
 });
 
 console.log(smpp.port);  // the port actually bound, useful when 0 was requested
-await smpp.close();      // drain and close every live session, then stop listening
+await smpp.close();      // stop listening, then drain and close every live session
 ```
 
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
@@ -310,10 +310,12 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 ### Methods
 
 `sendSms()`, `send()`, `sendReturn()`, `unbind()` and `close()`. `close()` and `unbind()` both
-refuse further sends, wait out the requests already on the wire up to `shutdownTimeout`, and then
-tear down whatever is left; each resolves to an `err` naming how many requests it gave up on.
-`send()` reaches any of the 33 SMPP commands the codec knows, not just the four the session handles
-natively:
+refuse further sends, wait out the requests this end already sent — up to `shutdownTimeout`, or
+until an `AbortSignal` given as `close({ signal })` says to stop now — and then tear down whatever
+is left, resolving to an `err` that says what was lost. A request the peer sent *us* is answered
+through `sendReturn()` and is not waited for, and `unbind()` waits a further `responseTimeout` for
+its own response. `send()` reaches any of the 33 SMPP commands the codec knows, not just the four
+the session handles natively:
 
 ```javascript
 const { err, pduObj } = await session.send({

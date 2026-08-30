@@ -46,6 +46,7 @@ export type {
 	ServerOptions,
 } from './server.ts';
 export type {
+	CloseOptions,
 	MessageDlr,
 	ReconnectOptions,
 	SendOptions,

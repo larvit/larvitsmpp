@@ -49,6 +49,9 @@ export function bindCarries(bindType: BindType | undefined, cmdName: string): bo
 
 export type SendOptions = { signal?: AbortSignal | undefined };
 
+/** An already-aborted signal skips the drain; one that fires during it cuts the wait short. */
+export type CloseOptions = { signal?: AbortSignal | undefined };
+
 /**
  * First refusal on every incoming request. Returning true means the hook answered it and the
  * built-in handling is skipped — this is how the server owns bind without the session also

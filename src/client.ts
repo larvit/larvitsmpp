@@ -196,18 +196,18 @@ export async function client(options: ClientOptions = {}): Promise<Result<{ sess
 	const signal = options.signal;
 
 	if (signal?.aborted === true) {
-		void session.close();
+		void session.close({ signal });
 
 		return { err: new Error('Aborted before binding') };
 	}
 
 	// Registered before the bind: an abort landing while it is in flight has to close the session.
-	signal?.addEventListener('abort', () => { void session.close(); }, { once: true });
+	signal?.addEventListener('abort', () => { void session.close({ signal }); }, { once: true });
 
 	const bound = await bind(session, options);
 
 	if (bound.err) {
-		void session.close();
+		void session.close({ signal });
 
 		return { err: bound.err };
 	}

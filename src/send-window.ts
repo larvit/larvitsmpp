@@ -37,9 +37,19 @@ export class SendWindow {
 		}
 	}
 
-	/** Resolves once nothing is in flight, or on the timeout with how many still are. 0 never times out. */
-	idle(timeout: number): Promise<number> {
+	/** Everything the caller is still owed: on the wire, plus queued behind a full window. */
+	unfinished(): number {
+		return this.inFlight + this.waiting.length;
+	}
+
+	/**
+	 * Resolves 0 once nothing is left, or with what still is when the timeout or the signal cuts the
+	 * wait short. A timeout of 0 waits forever.
+	 */
+	idle(timeout: number, signal?: AbortSignal): Promise<number> {
 		if (this.inFlight === 0) return Promise.resolve(0);
+
+		if (signal?.aborted === true) return Promise.resolve(this.unfinished());
 
 		return new Promise<number>(resolve => {
 			let timer: NodeJS.Timeout | undefined = undefined;
@@ -49,7 +59,8 @@ export class SendWindow {
 				if (timer) clearTimeout(timer);
 				if (index !== -1) this.waitingForIdle.splice(index, 1);
 
-				resolve(this.inFlight);
+				signal?.removeEventListener('abort', done);
+				resolve(this.unfinished());
 			};
 
 			if (timeout > 0) {
@@ -57,6 +68,7 @@ export class SendWindow {
 				timer.unref();
 			}
 
+			signal?.addEventListener('abort', done, { once: true });
 			this.waitingForIdle.push(done);
 		});
 	}

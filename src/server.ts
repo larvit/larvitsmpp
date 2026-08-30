@@ -1,3 +1,4 @@
+import type { CloseOptions } from './session-options.ts';
 import type { PduObject, TlvInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Server as NetServer, Socket } from 'node:net';
@@ -115,19 +116,22 @@ export class SmppServer extends EventEmitter<ServerEvents> {
 		if (event !== 'serverError') this.emit('serverError', error);
 	}
 
-	/** Stops listening and closes every live session, draining each one first. */
-	async close(): Promise<void> {
+	/** Stops listening, then drains and closes every session that was live when it stopped. */
+	async close(options: CloseOptions = {}): Promise<void> {
+		// Before the drain, or the listener keeps accepting connections nothing will ever close.
+		const stopped = new Promise<void>(resolve => { this.server.close(() => { resolve(); }); });
 		const live = [...this.sessions];
 
 		this.sessions.clear();
 
 		await Promise.all(live.map(async session => {
-			const closed = await session.close().catch((thrown: unknown) => ({ err: errorFrom(thrown) }));
+			const closed = await session.close(options)
+				.catch((thrown: unknown) => ({ err: errorFrom(thrown) }));
 
 			if (closed.err) this.emit('serverError', closed.err);
 		}));
 
-		return new Promise(resolve => { this.server.close(() => { resolve(); }); });
+		return stopped;
 	}
 }
 
@@ -311,7 +315,9 @@ function onListening(listener: NetServer, smpp: SmppServer, options: ServerOptio
 
 	log.info('server - listening', { host: options.host ?? '*', port: smpp.port });
 
-	options.signal?.addEventListener('abort', () => { void smpp.close(); }, { once: true });
+	const signal = options.signal;
+
+	signal?.addEventListener('abort', () => { void smpp.close({ signal }); }, { once: true });
 }
 
 /** Starts listening for SMPP connections. Resolves once the socket is bound. */

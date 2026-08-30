@@ -252,14 +252,22 @@ exactly 140.
   one's. Every segment still reaches the application as a `dlr`. The rule covers the bases the
   merger opened — `expect()` ignores a lone id, so a single-part message never claims one.
 
-- **A deliberate shutdown drains; an unusable link does not.** `close()` and `unbind()` refuse
-  further sends and wait for the send window to empty, not the pending map — the map misses a
-  segment still queued behind a full window, and finishing a half-sent multipart message is the
-  point. What `shutdownTimeout` leaves is torn down and reported as an `err`, and `0` waits forever
-  like every other timeout here. A stream the framer or the codec cannot read takes `abort()`
-  instead: nothing on that link can answer, so draining it would only hold a dead socket open for
-  the timeout. `unbind()` sends its own PDU past the window, since the drain already waited for
-  every slot.
+- **A deliberate shutdown drains; an unusable link and an abort do not.** `close()` and `unbind()`
+  refuse further sends and wait on the send window, not the pending map — the map misses a segment
+  still queued behind a full window, and finishing a half-sent multipart message is the point. The
+  window counts slots, never outcomes, so it says when to stop waiting and nothing about what
+  happened: it empties on a drop too, where `teardown()` settles everything the link was carrying,
+  which is why `drain()` reads `closed` before it reads the count. The wait covers what this end
+  sent — a request the peer sent us is answered through `sendReturn()`, which never enters the
+  window, so a server session waits for none of its inbound work; that half is in todo.md.
+  `shutdownTimeout` bounds the drain alone, and `0` waits forever like every other timeout here;
+  `unbind()` then waits `responseTimeout` for its own response, and sends that PDU through
+  `request()` past both the window and the drain gate because it must go out either way. A stream
+  the framer or the codec cannot read takes `end()` instead, and so does `close({ signal })` on an
+  aborted signal — nothing on a dead link can answer, and an abort means stop now, so draining
+  either would only hold a socket open for the timeout. `shutdownTimeout` stays a session option
+  rather than a `close()` argument: `server()` builds sessions on the caller's behalf, so the option
+  is the only composition point, and `close({ signal })` already covers a hard deadline.
 
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image
