@@ -120,8 +120,8 @@ export class Session extends EventEmitter<SessionEvents> {
 			maxReassembly: options.maxReassembly,
 			onRequest: options.onRequest,
 			reassemblyTimeout: options.reassemblyTimeout,
-			receiptIdNotation: options.smsIdFormat?.receipt,
 			session: this,
+			smsIdFormat: options.smsIdFormat,
 			systemId: options.systemId,
 		});
 		this.pending = new PendingRequests(this.log);

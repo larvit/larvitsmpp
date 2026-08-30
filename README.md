@@ -172,6 +172,8 @@ before you see them:
 const { err, session } = await client({ smsIdFormat: { receipt: 'decimal', submitResp: 'hex' } });
 ```
 
+`receipt` is the notation of the receipt body's `id:` field, `submitResp` that of the `message_id`
+a `submit_sm_resp` carries — and of a receipt's `receipted_message_id` TLV, which is that same id.
 An id that is not a number in the notation given is left exactly as it arrived, and the PDUs carry
 what the peer wrote either way — `pduObjs` from the send, and the second argument of the `dlr` event.
 

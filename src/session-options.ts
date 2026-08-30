@@ -145,17 +145,17 @@ function checkSmsIdFormat(smsIdFormat: unknown): VoidResult {
 		return { err: new Error('smsIdFormat names a notation per place, as { receipt, submitResp }') };
 	}
 
-	const allowed = smsIdNotations.join(' or ');
-
-	for (const place of smsIdPlaces) {
-		const notation = smsIdFormat[place];
+	for (const [place, notation] of Object.entries(smsIdFormat)) {
+		if (!smsIdPlaces.includes(place)) {
+			return { err: new Error(`smsIdFormat has no ${place}, name ${smsIdPlaces.join(' or ')}`) };
+		}
 
 		if (notation === undefined || isSmsIdNotation(notation)) continue;
 
 		// String() throws on a null-prototype object, and this value is whatever the caller passed.
 		const got = typeof notation === 'string' ? notation : typeof notation;
 
-		return { err: new Error(`smsIdFormat.${place} must be ${allowed}, got ${got}`) };
+		return { err: new Error(`smsIdFormat.${place} must be ${smsIdNotations.join(' or ')}, got ${got}`) };
 	}
 
 	return {};

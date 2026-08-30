@@ -79,7 +79,7 @@ function peerOf(smpp: SmppServer): Session {
 	return peer;
 }
 
-async function sendReceipt(peer: Session, smsId: string): Promise<void> {
+async function sendReceipt(peer: Session, smsId: string, tlvSmsId = smsId): Promise<void> {
 	const sent = await peer.send({
 		cmdName: 'deliver_sm',
 		params: {
@@ -90,7 +90,7 @@ async function sendReceipt(peer: Session, smsId: string): Promise<void> {
 		},
 		tlvs: {
 			message_state: { tagValue: consts.MESSAGE_STATE.DELIVERED },
-			receipted_message_id: { tagValue: smsId },
+			receipted_message_id: { tagValue: tlvSmsId },
 		},
 	});
 
@@ -831,15 +831,21 @@ describe('message id notation', () => {
 
 		assert.ok(session);
 
-		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
+		const reported = once<[Dlr, PduObject]>(resolve => {
+			session.on('dlr', (dlr, pduObj) => { resolve([dlr, pduObj]); });
+		});
 		const sent = await sendOne(session, 'one segment');
 
 		assert.deepEqual(sent.smsIds, ['6699']);
 		assert.equal(paramText(sent.pduObjs[0]?.params.message_id), '1a2b', 'the PDU keeps the id it carried');
 
-		await sendReceipt(peerOf(smpp), '6699');
+		// The receipt renders the id in decimal and mirrors the answered one in its TLV, as the spec has it.
+		await sendReceipt(peerOf(smpp), '6699', '1a2b');
 
-		assert.equal((await reported).smsId, sent.smsIds[0]);
+		const [dlr, pduObj] = await reported;
+
+		assert.equal(dlr.smsId, sent.smsIds[0]);
+		assert.equal(paramText(pduObj.tlvs.receipted_message_id?.tagValue), '1a2b');
 	});
 
 	test('leaves the segment ids of a multipart send to merge as they are', async t => {
@@ -874,6 +880,11 @@ describe('message id notation', () => {
 		assert.match(checked.err.message, /smsIdFormat\.receipt/);
 		// The shape todo.md sketched, which a caller without types would otherwise pass unnoticed.
 		assert.ok(checkSessionOptions({ smsIdFormat: 'hex' }).err instanceof Error);
+		assert.match(
+			checkSessionOptions({ smsIdFormat: { receipts: 'decimal' } }).err?.message ?? '',
+			/receipts/,
+			'a misspelled place is the same silent no-op',
+		);
 		assert.equal(checkSessionOptions({ smsIdFormat: { submitResp: 'hex' } }).err, undefined);
 	});
 });

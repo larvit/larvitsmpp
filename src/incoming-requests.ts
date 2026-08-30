@@ -3,7 +3,7 @@ import type { OnRequest } from './session-options.ts';
 import type { PduObject } from './pdu.ts';
 import type { Session } from './session.ts';
 import type { SmppLog } from './log.ts';
-import type { SmsIdNotation } from './sms-id.ts';
+import type { SmsIdFormat } from './sms-id.ts';
 import { Reassembler, decodeSegments } from './reassembly.ts';
 import { bindCommands, defaults } from './session-options.ts';
 import { concatInfo } from './udh.ts';
@@ -19,7 +19,7 @@ export type IncomingRequestsOptions = {
 	maxReassembly?: number | undefined;
 	onRequest?: OnRequest | undefined;
 	reassemblyTimeout?: number | undefined;
-	receiptIdNotation?: SmsIdNotation | undefined;
+	smsIdFormat?: SmsIdFormat | undefined;
 	session: Session;
 	systemId?: string | undefined;
 };
@@ -30,8 +30,8 @@ export class IncomingRequests {
 	private readonly log: SmppLog;
 	private readonly onRequest: OnRequest | undefined;
 	private readonly reassembler: Reassembler;
-	private readonly receiptIdNotation: SmsIdNotation | undefined;
 	private readonly session: Session;
+	private readonly smsIdFormat: SmsIdFormat;
 	private readonly systemId: string;
 
 	constructor(options: IncomingRequestsOptions) {
@@ -44,8 +44,8 @@ export class IncomingRequests {
 			maxOctets: options.maxOctets,
 			timeout: options.reassemblyTimeout ?? defaults.reassemblyTimeout,
 		});
-		this.receiptIdNotation = options.receiptIdNotation;
 		this.session = options.session;
+		this.smsIdFormat = options.smsIdFormat ?? {};
 		this.systemId = options.systemId ?? defaults.systemId;
 	}
 
@@ -101,7 +101,7 @@ export class IncomingRequests {
 
 	/** SMPP carries a mobile-originated message and a delivery receipt on the same command. */
 	private async onDeliverSm(pduObj: PduObject): Promise<void> {
-		const dlr = dlrFromPdu(pduObj, this.receiptIdNotation);
+		const dlr = dlrFromPdu(pduObj, this.smsIdFormat);
 
 		if (!dlr) {
 			this.onMessage(pduObj);

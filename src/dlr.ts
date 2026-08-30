@@ -1,7 +1,7 @@
 import type { MessageState } from './defs/constants.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject } from './pdu.ts';
-import type { SmsIdNotation } from './sms-id.ts';
+import type { SmsIdFormat } from './sms-id.ts';
 import { consts, constsById, messageTypeOf } from './defs/constants.ts';
 import { decodeMessage } from './message.ts';
 import { normaliseSmsId } from './sms-id.ts';
@@ -164,11 +164,16 @@ function receiptBody(pduObj: PduObject): string {
 function receiptId(
 	tlvId: ParamValue | undefined,
 	receipt: Receipt | undefined,
-	notation: SmsIdNotation | undefined,
+	format: SmsIdFormat,
 ): string | undefined {
-	const id = nonEmptyText(tlvId) ?? nonEmptyText(receipt?.id);
+	// SMPP 3.4 5.3.2.26: the TLV is the id the submit_sm_resp carried, where the body's is a rendering.
+	const fromTlv = nonEmptyText(tlvId);
 
-	return id === undefined ? undefined : normaliseSmsId(id, notation);
+	if (fromTlv !== undefined) return normaliseSmsId(fromTlv, format.submitResp);
+
+	const fromBody = nonEmptyText(receipt?.id);
+
+	return fromBody === undefined ? undefined : normaliseSmsId(fromBody, format.receipt);
 }
 
 function isMessageState(name: string | undefined): name is MessageState {
@@ -192,14 +197,14 @@ function receiptStatus(
 }
 
 /** The delivery report a deliver_sm carries, or nothing when it carries a message instead. */
-export function dlrFromPdu(pduObj: PduObject, notation?: SmsIdNotation): Dlr | undefined {
+export function dlrFromPdu(pduObj: PduObject, format: SmsIdFormat = {}): Dlr | undefined {
 	const type = messageType(pduObj);
 
 	if (type === 'other') return undefined;
 
 	const body = receiptBody(pduObj);
 	const receipt = body === '' ? undefined : parseReceipt(body);
-	const smsId = receiptId(pduObj.tlvs.receipted_message_id?.tagValue, receipt, notation);
+	const smsId = receiptId(pduObj.tlvs.receipted_message_id?.tagValue, receipt, format);
 	const { statusId, statusMsg } = receiptStatus(pduObj.tlvs.message_state?.tagValue, receipt);
 
 	if (type === 'unmarked' && (smsId === undefined || statusMsg === undefined)) return undefined;

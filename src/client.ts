@@ -168,7 +168,7 @@ async function connect(options: ClientOptions, log: SmppLog): Promise<Result<{ s
 	const checked = checkSessionOptions(options);
 
 	if (checked.err) {
-		log.warn('client - option out of range', { message: checked.err.message });
+		log.warn('client - unusable option', { message: checked.err.message });
 
 		return { err: checked.err };
 	}

@@ -292,7 +292,10 @@ exactly 140.
   inside a `<base>-<n>` id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's
   `id:` in decimal, so one transform over both sides cannot make them equal — `smsIdFormat` names
   `receipt` and `submitResp` separately and reads both into a plain decimal value before `smsIds`
-  and `dlr.smsId` are compared. Omitting a place is what leaving it alone means, so there is no
+  and `dlr.smsId` are compared. `submitResp` covers the `receipted_message_id` TLV too, which SMPP
+  3.4 5.3.2.26 defines as the id the `submit_sm_resp` carried: naming one notation for whichever id
+  a receipt yields would break the peer that sends both, whose TLV correlated before the option was
+  set. Omitting a place is what leaving it alone means, so there is no
   `raw` notation, and a caller-supplied formatter is refused because it would make the promise that
   those two are comparable unverifiable — `onRequest` and the PDU on the `dlr` event are the escape
   hatches, and the `onReceipt` hook in todo.md is the seam if one is wanted. An id no notation reads
