@@ -232,7 +232,7 @@ describe('a live session against the reference implementation', () => {
 		const port = refServer.address()?.port ?? 0;
 		const { err, session } = await client({ port });
 
-		t.after(() => { session?.close(); });
+		t.after(() => session?.close());
 
 		assert.equal(err, undefined);
 		assert.ok(session);

@@ -5,7 +5,7 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 236 tests, lint and typecheck clean, verified on Node
+The rewrite is **feature complete and green**: 242 tests, lint and typecheck clean, verified on Node
 18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
@@ -55,6 +55,7 @@ Rules the API follows:
 | Delivery receipt parsing, TLV and text | `test/dlr.test.ts` |
 | Session, client, server: bind, auth, send, reassembly, DLRs, timeouts, abort, send window | `test/session.test.ts` |
 | Merged multipart DLRs including across a reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
+| A draining `close()` and `unbind()`, bounded by `shutdownTimeout` | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
@@ -118,14 +119,7 @@ session message is a change to every call site.
       loses every incomplete group, and a peer has no reason to resend a receipt it already had
       answered. Surviving one means exposing the merge state for the application to persist and hand
       back, which is a public-surface decision.
-- [ ] **`close()` and `unbind()` drop in-flight requests instead of draining them.** `teardown()`
-      settles every pending request with "Session closed before a response arrived" and destroys the
-      socket in the same tick, so a submit the SMSC has already accepted is reported to the caller
-      as a failure — the ambiguous outcome that produces a duplicate on retry. Give both a drain:
-      refuse new sends, wait out the pending responses up to a `shutdownTimeout`, then tear down
-      whatever is left. Distinct from re-queueing across a reconnect above — this is the deliberate
-      shutdown path, where there is nothing to come back to.
-- [ ] **`session.ts` is 386 lines.** The one seam left in it is a socket-to-PDU transport, which
+- [ ] **`session.ts` is 465 lines.** The one seam left in it is a socket-to-PDU transport, which
       would move the deliberately public `sock` field out of `Session` or turn it into a getter —
       a public-surface change, so it waits for a decision.
 - [ ] **Group the session's collaborators under `src/session/`.** Only `session.ts` imports

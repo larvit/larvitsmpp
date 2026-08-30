@@ -77,7 +77,7 @@ describe('README: Client', () => {
 		});
 		if (err) throw err;
 
-		t.after(() => { session.close(); });
+		t.after(() => session.close());
 
 		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
 		const { err: sendErr, smsIds } = await session.sendSms({
@@ -100,7 +100,7 @@ describe('README: Client', () => {
 		const { err, session } = await client();
 		if (err) throw err;
 
-		t.after(() => { session.close(); });
+		t.after(() => session.close());
 
 		const { signal } = new AbortController();
 		const [sms, sent] = await Promise.all([
@@ -128,7 +128,7 @@ describe('README: Client', () => {
 		const { err, session } = await client();
 		if (err) throw err;
 
-		t.after(() => { session.close(); });
+		t.after(() => session.close());
 
 		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
 		const peer = await bound;

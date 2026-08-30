@@ -220,7 +220,7 @@ describe('bind', () => {
 		assert.ok(sent.err instanceof Error);
 		assert.equal(sent.err.message, 'Session closed before a response arrived');
 
-		session.close();
+		await session.close();
 		await peer.close();
 	});
 
@@ -268,7 +268,7 @@ describe('bind', () => {
 
 		assert.deepEqual(bound.userData, { userId: 123 });
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -404,7 +404,7 @@ describe('bind', () => {
 		const { session } = await connect(smpp);
 
 		assert.ok(session);
-		t.after(() => { session.close(); });
+		t.after(() => session.close());
 		assert.equal(session.peerInterfaceVersion, 0x50);
 		assert.ok(session.acceptsOptionalParams());
 	});
@@ -418,7 +418,7 @@ describe('bind', () => {
 		const { session } = await client({ port: peer.port });
 
 		assert.ok(session);
-		t.after(() => { session.close(); });
+		t.after(() => session.close());
 		assert.equal(session.peerInterfaceVersion, 0x00);
 		assert.equal(session.acceptsOptionalParams(), false);
 	});
@@ -440,7 +440,7 @@ describe('bind direction', () => {
 		assert.ok(sent.pduObj);
 		assert.equal(sent.pduObj.cmdStatus, 'ESME_RINVBNDSTS');
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -461,7 +461,7 @@ describe('bind direction', () => {
 		assert.deepEqual(sent.smsIds, []);
 		assert.equal(arrived.length, 0);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -481,7 +481,7 @@ describe('bind direction', () => {
 		assert.ok(sent.pduObj);
 		assert.equal(sent.pduObj.cmdStatus, 'ESME_RINVBNDSTS');
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -506,7 +506,7 @@ describe('bind direction', () => {
 		assert.ok(report.err instanceof Error);
 		assert.match(report.err.message, /transmitter-bound/);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 });
@@ -548,7 +548,7 @@ describe('sending', () => {
 		assert.equal(submitted.params.source_addr_ton, 5);
 		assert.equal(submitted.params.dest_addr_ton, 1);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -577,7 +577,7 @@ describe('sending', () => {
 		assert.equal(sent.pduObjs.length, 4);
 		assert.deepEqual(sent.smsIds, ['long-id-1', 'long-id-2', 'long-id-3', 'long-id-4']);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -603,7 +603,7 @@ describe('sending', () => {
 		assert.equal(sms.message, message);
 		assert.match(sms.smsId, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -630,7 +630,7 @@ describe('sending', () => {
 		assert.equal(sms.message, 'تست');
 		assert.ok(sms.flash);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -664,7 +664,7 @@ describe('sending', () => {
 		assert.equal(params.source_addr_npi, consts.NPI.PRIVATE);
 		assert.equal(params.source_addr_ton, consts.TON.ABBREVIATED);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 });
@@ -679,7 +679,7 @@ describe('receiving', () => {
 		const { session } = await connect(smpp);
 
 		assert.ok(session);
-		t.after(() => { session.close(); });
+		t.after(() => session.close());
 
 		return { peer: await bound, session };
 	}
@@ -808,7 +808,7 @@ describe('delivery reports', () => {
 		assert.equal(receipt.tlvs.receipted_message_id?.tagValue, 'dlr-id');
 		assert.equal(receipt.tlvs.message_state?.tagValue, 2);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -845,7 +845,7 @@ describe('delivery reports', () => {
 		// 0.4.0 wrote stat:UNDELIVERABLE, which is not the spec's seven-character field.
 		assert.match(await raw, /stat:UNDELIV /);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -918,7 +918,7 @@ describe('delivery reports', () => {
 		assert.deepEqual(perSegment, ['unrequested-1', 'unrequested-2', 'unrequested-3']);
 		assert.equal(merged, 0);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 });
@@ -1044,7 +1044,7 @@ describe('robustness', () => {
 
 		assert.ok(peak <= 2, `peak was ${String(peak)}`);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -1062,7 +1062,7 @@ describe('robustness', () => {
 		assert.ok(reported instanceof Error, 'a response that never reached the wire should be reported');
 		assert.equal(reported.message, sent.err.message);
 
-		session.close();
+		await session.close();
 	});
 
 	test('ignores events from the socket it left behind on a reconnect', async () => {
@@ -1080,7 +1080,7 @@ describe('robustness', () => {
 		const dead = session.sock;
 
 		for (const serverSession of smpp.sessions) {
-			serverSession.close();
+			await serverSession.close();
 		}
 
 		await reconnected;
@@ -1099,7 +1099,7 @@ describe('robustness', () => {
 		assert.equal(closes, 0);
 		assert.equal(sent.err, undefined);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -1129,7 +1129,7 @@ describe('robustness', () => {
 		const { session } = await connect(smpp);
 
 		assert.ok(session);
-		t.after(() => { session.close(); });
+		t.after(() => session.close());
 
 		const peer = await bound;
 		const controller = new AbortController();
@@ -1161,7 +1161,7 @@ describe('robustness', () => {
 		const { session } = await connect(smpp, { maxOutstanding: 1, responseTimeout: 5000 });
 
 		assert.ok(session);
-		t.after(() => { session.close(); });
+		t.after(() => session.close());
 
 		const held = session.sendSms({ from: '46701113311', message: 'holds the slot', to: '46709771337' });
 		const controller = new AbortController();
@@ -1177,7 +1177,7 @@ describe('robustness', () => {
 		assert.notEqual(aborted, false, 'an aborted send should not wait for the window');
 		assert.ok(aborted !== false && aborted.err instanceof Error);
 
-		session.close();
+		await session.close();
 		await held;
 	});
 
@@ -1262,7 +1262,7 @@ describe('application hooks that throw or reject', () => {
 		assert.ok(reported instanceof Error, 'a throwing sms listener should reach the session');
 		assert.equal(reported.message, 'listener exploded');
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -1287,7 +1287,7 @@ describe('application hooks that throw or reject', () => {
 
 		assert.ok(sent.err instanceof Error);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -1319,7 +1319,7 @@ describe('application hooks that throw or reject', () => {
 		assert.ok(reported instanceof Error, 'a rejecting sms listener should reach the session');
 		assert.equal(reported.message, 'null');
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -1343,7 +1343,7 @@ describe('application hooks that throw or reject', () => {
 
 		assert.ok(sent.err instanceof Error);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -1359,7 +1359,7 @@ describe('application hooks that throw or reject', () => {
 		assert.ok(reported instanceof Error, 'a rejecting session listener should reach the server');
 		assert.equal(reported.message, 'session listener rejected');
 
-		session?.close();
+		await session?.close();
 		await smpp.close();
 	});
 
@@ -1376,7 +1376,7 @@ describe('application hooks that throw or reject', () => {
 		await smpp.close();
 		assert.equal(smpp.sessions.size, 0);
 
-		session.close();
+		await session.close();
 	});
 
 	test('refuses a send window that can never free a slot', async () => {
@@ -1386,6 +1386,12 @@ describe('application hooks that throw or reject', () => {
 		assert.ok(err instanceof Error);
 		assert.match(err.message, /maxOutstanding/);
 		assert.equal(session, undefined);
+
+		const negative = await connect(smpp, { shutdownTimeout: -1 });
+
+		assert.ok(negative.err instanceof Error);
+		assert.match(negative.err.message, /shutdownTimeout/);
+		assert.equal(negative.session, undefined);
 
 		await smpp.close();
 	});
@@ -1492,7 +1498,7 @@ describe('link timers', () => {
 			'a peer that answers nothing should time the link out',
 		);
 
-		session.close();
+		await session.close();
 		await peer.close();
 	});
 
@@ -1510,7 +1516,7 @@ describe('link timers', () => {
 
 		assert.ok(await raceWithin(2000, back), 'a link that timed out should be reconnected');
 
-		session.close();
+		await session.close();
 		await peer.close();
 	});
 });

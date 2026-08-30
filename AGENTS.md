@@ -252,6 +252,15 @@ exactly 140.
   one's. Every segment still reaches the application as a `dlr`. The rule covers the bases the
   merger opened — `expect()` ignores a lone id, so a single-part message never claims one.
 
+- **A deliberate shutdown drains; an unusable link does not.** `close()` and `unbind()` refuse
+  further sends and wait for the send window to empty, not the pending map — the map misses a
+  segment still queued behind a full window, and finishing a half-sent multipart message is the
+  point. What `shutdownTimeout` leaves is torn down and reported as an `err`, and `0` waits forever
+  like every other timeout here. A stream the framer or the codec cannot read takes `abort()`
+  instead: nothing on that link can answer, so draining it would only hold a dead socket open for
+  the timeout. `unbind()` sends its own PDU past the window, since the drain already waited for
+  every slot.
+
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image
   `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI

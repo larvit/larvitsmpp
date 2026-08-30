@@ -34,6 +34,7 @@ export type ServerOptions = {
 	port?: number;
 	reassemblyTimeout?: number;
 	responseTimeout?: number;
+	shutdownTimeout?: number;
 	signal?: AbortSignal;
 	systemId?: string;
 	tls?: TlsOptions | boolean;
@@ -114,20 +115,19 @@ export class SmppServer extends EventEmitter<ServerEvents> {
 		if (event !== 'serverError') this.emit('serverError', error);
 	}
 
-	/** Stops listening and closes every live session. */
-	close(): Promise<void> {
-		return new Promise(resolve => {
-			for (const session of this.sessions) {
-				try {
-					session.close();
-				} catch (thrown: unknown) {
-					this.emit('serverError', errorFrom(thrown));
-				}
-			}
+	/** Stops listening and closes every live session, draining each one first. */
+	async close(): Promise<void> {
+		const live = [...this.sessions];
 
-			this.sessions.clear();
-			this.server.close(() => { resolve(); });
-		});
+		this.sessions.clear();
+
+		await Promise.all(live.map(async session => {
+			const closed = await session.close().catch((thrown: unknown) => ({ err: errorFrom(thrown) }));
+
+			if (closed.err) this.emit('serverError', closed.err);
+		}));
+
+		return new Promise(resolve => { this.server.close(() => { resolve(); }); });
 	}
 }
 
@@ -233,6 +233,7 @@ function onConnection(sock: Socket, options: ServerOptions, server: SmppServer):
 		onRequest: (bound, pduObj) => onRequest(bound, pduObj, options),
 		reassemblyTimeout: options.reassemblyTimeout,
 		responseTimeout: options.responseTimeout,
+		shutdownTimeout: options.shutdownTimeout,
 		sock,
 		systemId: options.systemId ?? defaults.systemId,
 	});

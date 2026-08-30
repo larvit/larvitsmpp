@@ -21,6 +21,7 @@ by hand on top of a library; it is built in here.
 | **Submit window** | `maxOutstanding` holds requests in flight at 10; further sends queue instead of overrunning the SMSC. |
 | **Delivery receipts** | Correlated by `receipted_message_id`/`message_state` where the SMSC sends them, falling back to parsing the receipt text — what Kannel and several others send. |
 | **Multipart** | Long messages split on send; concatenated `deliver_sm` reassembled into one `sms`. |
+| **Graceful shutdown** | `close()` and `unbind()` wait out the requests already on the wire, so a submit the SMSC accepted is not reported as a failure. |
 | **Never throws** | Everything fallible resolves to `{ err?, … }`, the codec included. |
 
 Throughput throttling is deliberately absent: an operator's rate limit is scoped to the account, and
@@ -100,6 +101,7 @@ Every one is optional.
 | `enquireLinkInterval` | `20000` | How often to send `enquire_link` on a quiet link. |
 | `idleTimeout` | `2 × enquireLinkInterval` | Give up on a link the peer has stopped answering; with `reconnect` set, it re-binds. |
 | `responseTimeout` | `30000` | How long to wait for a response before giving up on it; `0` waits forever. |
+| `shutdownTimeout` | `5000` | How long `close()` and `unbind()` wait for the requests already on the wire; `0` waits forever. |
 | `maxOutstanding` | `10` | Requests allowed on the wire at once; further sends queue. |
 | `reconnect` | off | `{ minDelay, maxDelay }` to re-bind automatically after a drop or an idle timeout, with exponential backoff. |
 | `log` | silent | Any object with `debug`, `error`, `info`, `verbose` and `warn` methods — see [Logging](#logging). |
@@ -206,7 +208,7 @@ smpp.on('session', session => {
 });
 
 console.log(smpp.port);  // the port actually bound, useful when 0 was requested
-await smpp.close();      // stop listening and close every live session
+await smpp.close();      // drain and close every live session, then stop listening
 ```
 
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
@@ -228,7 +230,7 @@ A message whose `data_coding` says 8-bit binary arrives as Latin-1, so `Buffer.f
 | `maxReassembly` | `1000` | Incomplete multipart messages held per session. |
 | `maxOctets` | `67108864` | Bytes of incomplete multipart messages held per session. |
 | `reassemblyTimeout` | `300000` | How long a late segment can still join an incomplete message. |
-| `responseTimeout`, `maxOutstanding`, `log`, `signal` | as for the client | |
+| `responseTimeout`, `shutdownTimeout`, `maxOutstanding`, `log`, `signal` | as for the client | |
 
 ### Bind direction
 
@@ -307,8 +309,11 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 
 ### Methods
 
-`sendSms()`, `send()`, `sendReturn()`, `unbind()` and `close()`. `send()` reaches any of the 33 SMPP
-commands the codec knows, not just the four the session handles natively:
+`sendSms()`, `send()`, `sendReturn()`, `unbind()` and `close()`. `close()` and `unbind()` both
+refuse further sends, wait out the requests already on the wire up to `shutdownTimeout`, and then
+tear down whatever is left; each resolves to an `err` naming how many requests it gave up on.
+`send()` reaches any of the 33 SMPP commands the codec knows, not just the four the session handles
+natively:
 
 ```javascript
 const { err, pduObj } = await session.send({

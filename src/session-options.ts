@@ -78,6 +78,8 @@ export type SessionOptions = {
 	reassemblyTimeout?: number | undefined;
 	reconnect?: ReconnectOptions | undefined;
 	responseTimeout?: number | undefined;
+	/** How long a drain waits for the requests already on the wire. 0 waits forever. */
+	shutdownTimeout?: number | undefined;
 	sock: Socket;
 	/** This end's own identity, answered to the peer in place of the one it sent. */
 	systemId?: string | undefined;
@@ -98,6 +100,7 @@ export const defaults = {
 	minDelay: 1000,
 	reassemblyTimeout: 300_000,
 	responseTimeout: 30_000,
+	shutdownTimeout: 5000,
 	systemId: defaultSystemId,
 };
 
@@ -112,6 +115,7 @@ export function checkSessionOptions(options: SessionCounts): VoidResult {
 		['maxReassembly', options.maxReassembly ?? defaults.maxReassembly, 1],
 		['reassemblyTimeout', options.reassemblyTimeout ?? defaults.reassemblyTimeout, 0],
 		['responseTimeout', options.responseTimeout ?? defaults.responseTimeout, 0],
+		['shutdownTimeout', options.shutdownTimeout ?? defaults.shutdownTimeout, 0],
 	];
 
 	for (const [name, value, min] of limits) {
@@ -129,4 +133,5 @@ export type SessionCounts = {
 	maxReassembly?: number | undefined;
 	reassemblyTimeout?: number | undefined;
 	responseTimeout?: number | undefined;
+	shutdownTimeout?: number | undefined;
 };

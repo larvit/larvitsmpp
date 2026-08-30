@@ -83,7 +83,7 @@ describe('merged delivery reports', () => {
 		assert.equal(report.statusMsg, 'DELIVERED');
 		assert.deepEqual(perSegment, ['merge-me-1', 'merge-me-2', 'merge-me-3']);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -119,7 +119,7 @@ describe('merged delivery reports', () => {
 		assert.equal(report.statusMsg, 'UNDELIVERABLE');
 		assert.equal(report.segments.length, 3);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 });
@@ -203,7 +203,7 @@ describe('sendSms()', () => {
 		assert.ok(sent.err instanceof Error);
 		assert.match(sent.err.message, /ESME_RMSGQFUL/);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -324,7 +324,7 @@ describe('reconnect', () => {
 
 		// Drop the connection from the server's side, as a peer restart would.
 		for (const serverSession of smpp.sessions) {
-			serverSession.close();
+			await serverSession.close();
 		}
 
 		await reconnected;
@@ -341,7 +341,7 @@ describe('reconnect', () => {
 		assert.equal(sent.err, undefined);
 		assert.deepEqual(messages, ['after reconnect']);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -373,7 +373,7 @@ describe('reconnect', () => {
 
 		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
 
-		peerOf(smpp).close();
+		await peerOf(smpp).close();
 		await reconnected;
 
 		const merged = once<MessageDlr>(resolve => { session.on('messageDlr', resolve); });
@@ -386,7 +386,7 @@ describe('reconnect', () => {
 		assert.equal(report.smsId, 'across-the-drop');
 		assert.equal(report.segments.length, 3);
 
-		session.close();
+		await session.close();
 		await smpp.close();
 	});
 
@@ -402,7 +402,7 @@ describe('reconnect', () => {
 		let reconnects = 0;
 
 		session.on('reconnected', () => { reconnects++; });
-		session.close();
+		await session.close();
 
 		await new Promise(resolve => setTimeout(resolve, 150));
 
@@ -586,10 +586,73 @@ describe('AbortSignal on a send', () => {
 
 		assert.ok(sent.err instanceof Error);
 
-		session.close();
+		await session.close();
 
 		for (const sock of accepted) sock.destroy();
 
 		await new Promise<void>(resolve => silent.close(() => { resolve(); }));
+	});
+});
+
+describe('graceful shutdown', () => {
+	async function submitInFlight(options: Parameters<typeof client>[0] = {}) {
+		const smpp = await startServer();
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', bound => bound.on('sms', resolve));
+		});
+		const { session } = await client({ port: smpp.port, ...options });
+
+		assert.ok(session);
+
+		const sent = session.sendSms({ from: '46701113311', message: 'answer me', to: '46709771337' });
+
+		return { sent, session, sms: await incoming, smpp };
+	}
+
+	test('close() waits out a submit already on the wire and refuses new ones', async () => {
+		const { sent, session, sms, smpp } = await submitInFlight();
+		const closed = session.close();
+		const refused = await session.sendSms({
+			from: '46701113311',
+			message: 'too late',
+			to: '46709771337',
+		});
+
+		assert.ok(refused.err instanceof Error);
+		assert.equal(refused.err.message, 'Session is shutting down');
+
+		await sms.sendResp({ smsId: 'answered-while-draining' });
+
+		assert.deepEqual((await sent).smsIds, ['answered-while-draining']);
+		assert.deepEqual(await closed, {});
+
+		await smpp.close();
+	});
+
+	test('unbind() waits out a submit already on the wire before it unbinds', async () => {
+		const { sent, session, sms, smpp } = await submitInFlight();
+		const unbound = session.unbind();
+
+		await sms.sendResp({ smsId: 'answered-before-unbind' });
+
+		assert.deepEqual((await sent).smsIds, ['answered-before-unbind']);
+		assert.deepEqual(await unbound, {});
+
+		await smpp.close();
+	});
+
+	test('gives up on a request that outlasts shutdownTimeout', async () => {
+		const { sent, session, smpp } = await submitInFlight({ shutdownTimeout: 50 });
+		const closed = await session.close();
+
+		assert.ok(closed.err instanceof Error);
+		assert.match(closed.err.message, /still in flight/);
+
+		const result = await sent;
+
+		assert.ok(result.err instanceof Error);
+		assert.equal(result.err.message, 'Session closed before a response arrived');
+
+		await smpp.close();
 	});
 });

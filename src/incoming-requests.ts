@@ -70,7 +70,7 @@ export class IncomingRequests {
 				break;
 			case 'unbind':
 				await this.session.sendReturn(pduObj);
-				this.session.close();
+				await this.session.close();
 				break;
 			default:
 				await this.unhandled(pduObj);

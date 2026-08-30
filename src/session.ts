@@ -67,6 +67,7 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	private closed = false;
 	private concatReference = 0;
+	private draining = false;
 	private framer = new PduFramer();
 
 	/** A listener that throws is the application's bug; it must not become ours. Hard rule 1. */
@@ -160,6 +161,8 @@ export class Session extends EventEmitter<SessionEvents> {
 
 		if (this.closed) return { err: new Error('Session is closed') };
 
+		if (this.draining) return { err: new Error('Session is shutting down') };
+
 		// Before the window, or a full window makes an aborted call wait for a slot it will not use.
 		if (options.signal?.aborted === true) {
 			return { err: new Error('Aborted before the request was sent') };
@@ -213,22 +216,38 @@ export class Session extends EventEmitter<SessionEvents> {
 		return sent;
 	}
 
-	/** Unbinds politely, then closes. Many SMSCs drop the link instead of answering, which is fine. */
+	/**
+	 * Drains, unbinds politely, then closes. Many SMSCs drop the link instead of answering the
+	 * unbind, which is fine. Reports the unbind's own failure ahead of an unfinished drain.
+	 */
 	async unbind(): Promise<VoidResult> {
+		this.reconnectLoop?.stop();
+
+		const drained = await this.drain();
 		const wasOpen = !this.closed;
-		const sent = await this.send({ cmdName: 'unbind' });
+		// request(), not send(): the drain gate would refuse it, and the window is empty by now.
+		const sent = wasOpen
+			? await this.request({ cmdName: 'unbind' }, {})
+			: { err: new Error('Session is closed') };
 		const closedOnUnbind = wasOpen && this.closed;
 
-		this.close();
+		this.shutdown();
 
-		return sent.err && !closedOnUnbind ? { err: sent.err } : {};
+		return sent.err && !closedOnUnbind ? { err: sent.err } : drained;
 	}
 
-	/** Closes for good. A session closed this way never reconnects. */
-	close(): void {
+	/**
+	 * Closes for good: refuses new sends, waits out the requests already on the wire up to
+	 * `shutdownTimeout`, then tears down whatever is left. A session closed this way never reconnects.
+	 */
+	async close(): Promise<VoidResult> {
 		this.reconnectLoop?.stop();
-		this.teardown();
-		this.dlrMerger.clear();
+
+		const drained = await this.drain();
+
+		this.shutdown();
+
+		return drained;
 	}
 
 	private loopFor(reconnect: ReconnectOptions | undefined): ReconnectLoop | undefined {
@@ -311,6 +330,34 @@ export class Session extends EventEmitter<SessionEvents> {
 		return response;
 	}
 
+	/** Stops new sends and waits out the ones already issued. A dead link has nothing to wait for. */
+	private async drain(): Promise<VoidResult> {
+		this.draining = true;
+		this.timers.clear();
+
+		if (this.closed || this.sock.destroyed) return {};
+
+		const timeout = this.options.shutdownTimeout ?? defaults.shutdownTimeout;
+		const inFlight = await this.window.idle(timeout);
+
+		if (inFlight === 0) return {};
+
+		this.log.warn('session - shutting down with requests still in flight', { inFlight, timeout });
+
+		return { err: new Error(`Shut down with ${String(inFlight)} request(s) still in flight`) };
+	}
+
+	private shutdown(): void {
+		this.teardown();
+		this.dlrMerger.clear();
+	}
+
+	/** The link is unusable, so nothing can answer and there is nothing to drain. */
+	private abort(): void {
+		this.reconnectLoop?.stop();
+		this.shutdown();
+	}
+
 	private teardown(): void {
 		if (this.closed) return;
 
@@ -348,7 +395,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		if (framed.err) {
 			this.log.warn('session - unusable stream, closing', { message: framed.err.message });
 			this.emit('sessionError', framed.err);
-			this.close();
+			this.abort();
 
 			return;
 		}
@@ -369,7 +416,7 @@ export class Session extends EventEmitter<SessionEvents> {
 				message: parsed.err.message,
 			});
 			this.emit('sessionError', parsed.err);
-			this.close();
+			this.abort();
 
 			return false;
 		}

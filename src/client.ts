@@ -27,6 +27,7 @@ export type ClientOptions = {
 	port?: number;
 	reconnect?: { maxDelay?: number; minDelay?: number };
 	responseTimeout?: number;
+	shutdownTimeout?: number;
 	signal?: AbortSignal;
 	systemType?: string;
 	tls?: ConnectionOptions | boolean;
@@ -145,6 +146,7 @@ function createSession(options: ClientOptions, log: SmppLog, sock: Socket): Sess
 		log,
 		maxOutstanding: options.maxOutstanding,
 		responseTimeout: options.responseTimeout,
+		shutdownTimeout: options.shutdownTimeout,
 		sock,
 		...(options.reconnect
 			? {
@@ -194,18 +196,18 @@ export async function client(options: ClientOptions = {}): Promise<Result<{ sess
 	const signal = options.signal;
 
 	if (signal?.aborted === true) {
-		session.close();
+		void session.close();
 
 		return { err: new Error('Aborted before binding') };
 	}
 
 	// Registered before the bind: an abort landing while it is in flight has to close the session.
-	signal?.addEventListener('abort', () => { session.close(); }, { once: true });
+	signal?.addEventListener('abort', () => { void session.close(); }, { once: true });
 
 	const bound = await bind(session, options);
 
 	if (bound.err) {
-		session.close();
+		void session.close();
 
 		return { err: bound.err };
 	}
