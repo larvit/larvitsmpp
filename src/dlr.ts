@@ -1,8 +1,10 @@
 import type { MessageState } from './defs/constants.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject } from './pdu.ts';
+import type { SmsIdFormat } from './sms-id.ts';
 import { consts, constsById, messageTypeOf } from './defs/constants.ts';
 import { decodeMessage } from './message.ts';
+import { normaliseSmsId } from './sms-id.ts';
 import { paramNumber, paramText } from './defs/types.ts';
 
 /**
@@ -159,8 +161,14 @@ function receiptBody(pduObj: PduObject): string {
 	).message;
 }
 
-function receiptId(tlvId: ParamValue | undefined, receipt: Receipt | undefined): string | undefined {
-	return nonEmptyText(tlvId) ?? nonEmptyText(receipt?.id);
+function receiptId(
+	tlvId: ParamValue | undefined,
+	receipt: Receipt | undefined,
+	format: SmsIdFormat | undefined,
+): string | undefined {
+	const id = nonEmptyText(tlvId) ?? nonEmptyText(receipt?.id);
+
+	return id === undefined ? undefined : normaliseSmsId(id, format);
 }
 
 function isMessageState(name: string | undefined): name is MessageState {
@@ -184,14 +192,14 @@ function receiptStatus(
 }
 
 /** The delivery report a deliver_sm carries, or nothing when it carries a message instead. */
-export function dlrFromPdu(pduObj: PduObject): Dlr | undefined {
+export function dlrFromPdu(pduObj: PduObject, format?: SmsIdFormat): Dlr | undefined {
 	const type = messageType(pduObj);
 
 	if (type === 'other') return undefined;
 
 	const body = receiptBody(pduObj);
 	const receipt = body === '' ? undefined : parseReceipt(body);
-	const smsId = receiptId(pduObj.tlvs.receipted_message_id?.tagValue, receipt);
+	const smsId = receiptId(pduObj.tlvs.receipted_message_id?.tagValue, receipt, format);
 	const { statusId, statusMsg } = receiptStatus(pduObj.tlvs.message_state?.tagValue, receipt);
 
 	if (type === 'unmarked' && (smsId === undefined || statusMsg === undefined)) return undefined;

@@ -15,11 +15,13 @@ import type { TestContext } from 'node:test';
 import { Reassembler, decodeSegments } from '../src/reassembly.ts';
 import { Session } from '../src/session.ts';
 import { DlrMerger } from '../src/dlr-merger.ts';
+import { checkSessionOptions } from '../src/session-options.ts';
 import { client } from '../src/client.ts';
 import { closeAfter, closeListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
 import { errors } from '../src/defs/errors.ts';
 import { objToPdu } from '../src/pdu.ts';
+import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
 import { submitSms } from '../src/send-sms.ts';
@@ -65,6 +67,34 @@ function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
 
 function delay(ms: number): Promise<void> {
 	return new Promise(resolve => { setTimeout(resolve, ms); });
+}
+
+/** The server's side of the one connection under test. */
+function peerOf(smpp: SmppServer): Session {
+	const [peer] = smpp.sessions;
+
+	assert.equal(smpp.sessions.size, 1);
+	assert.ok(peer);
+
+	return peer;
+}
+
+async function sendReceipt(peer: Session, smsId: string): Promise<void> {
+	const sent = await peer.send({
+		cmdName: 'deliver_sm',
+		params: {
+			destination_addr: '46701113311',
+			esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+			short_message: `id:${smsId} stat:DELIVRD err:000 text:`,
+			source_addr: '46709771337',
+		},
+		tlvs: {
+			message_state: { tagValue: consts.MESSAGE_STATE.DELIVERED },
+			receipted_message_id: { tagValue: smsId },
+		},
+	});
+
+	assert.equal(sent.err, undefined);
 }
 
 type Gate = { open: () => void; passed: Promise<true> };
@@ -296,34 +326,6 @@ describe('sendSms()', () => {
 });
 
 describe('reconnect', () => {
-	/** The server's side of the one connection under test, replaced by every reconnect. */
-	function peerOf(smpp: SmppServer): Session {
-		const [peer] = smpp.sessions;
-
-		assert.equal(smpp.sessions.size, 1);
-		assert.ok(peer);
-
-		return peer;
-	}
-
-	async function sendReceipt(peer: Session, smsId: string): Promise<void> {
-		const sent = await peer.send({
-			cmdName: 'deliver_sm',
-			params: {
-				destination_addr: '46701113311',
-				esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
-				short_message: `id:${smsId} stat:DELIVRD err:000 text:`,
-				source_addr: '46709771337',
-			},
-			tlvs: {
-				message_state: { tagValue: consts.MESSAGE_STATE.DELIVERED },
-				receipted_message_id: { tagValue: smsId },
-			},
-		});
-
-		assert.equal(sent.err, undefined);
-	}
-
 	test('re-binds after the connection drops, keeping the same session object', async t => {
 		const smpp = await startServer(t);
 		const messages: string[] = [];
@@ -808,5 +810,68 @@ describe('graceful shutdown', () => {
 		await delay(50);
 
 		assert.deepEqual(reported, []);
+	});
+});
+
+describe('message id notation', () => {
+	async function sendOne(session: Session, message: string): Promise<SendSmsResult> {
+		return session.sendSms({ dlr: true, from: '46701113311', message, to: '46709771337' });
+	}
+
+	test('correlates a hex submit_sm_resp against a decimal receipt', async t => {
+		const smpp = await startServer(t);
+
+		smpp.on('session', bound => {
+			bound.on('sms', sms => { void sms.sendResp({ smsId: '1a2b' }); });
+		});
+
+		const { session } = await connect(t, smpp, {
+			smsIdFormat: { receipt: 'decimal', submitResp: 'hex' },
+		});
+
+		assert.ok(session);
+
+		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
+		const sent = await sendOne(session, 'one segment');
+
+		assert.deepEqual(sent.smsIds, ['6699']);
+		assert.equal(paramText(sent.pduObjs[0]?.params.message_id), '1a2b', 'the PDU keeps the id it carried');
+
+		await sendReceipt(peerOf(smpp), '6699');
+
+		assert.equal((await reported).smsId, sent.smsIds[0]);
+	});
+
+	test('leaves the segment ids of a multipart send to merge as they are', async t => {
+		const smpp = await startServer(t);
+
+		smpp.on('session', bound => {
+			bound.on('sms', sms => { void sms.sendResp({ smsId: 'beef' }); });
+		});
+
+		const { session } = await connect(t, smpp, {
+			smsIdFormat: { receipt: 'decimal', submitResp: 'hex' },
+		});
+
+		assert.ok(session);
+
+		const merged = once<MessageDlr>(resolve => { session.on('messageDlr', resolve); });
+		const sent = await sendOne(session, 'x'.repeat(200));
+
+		assert.deepEqual(sent.smsIds, ['beef-1', 'beef-2']);
+
+		for (const smsId of sent.smsIds) {
+			await sendReceipt(peerOf(smpp), smsId);
+		}
+
+		assert.equal((await merged).smsId, 'beef');
+	});
+
+	test('refuses a notation it cannot apply', () => {
+		const checked = checkSessionOptions({ smsIdFormat: { receipt: 'octal' } });
+
+		assert.ok(checked.err instanceof Error);
+		assert.match(checked.err.message, /smsIdFormat\.receipt/);
+		assert.equal(checkSessionOptions({ smsIdFormat: { submitResp: 'hex' } }).err, undefined);
 	});
 });

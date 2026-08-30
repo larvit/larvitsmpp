@@ -95,6 +95,26 @@ describe('README: Client', () => {
 		assert.equal((await reported).smsId, smsIds[0]);
 	});
 
+	test('naming the notation the SMSC writes message ids in', async t => {
+		await answeringServer(t);
+
+		const { err, session } = await client({ smsIdFormat: { receipt: 'decimal', submitResp: 'hex' } });
+		if (err) throw err;
+
+		closeAfter(t, session);
+
+		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
+		const { smsIds } = await session.sendSms({
+			dlr: true,
+			from: '46701113311',
+			message: 'Hello world',
+			to: '46709771337',
+		});
+
+		// The generated ids the server answers with read as no notation, so they arrive untouched.
+		assert.equal((await reported).smsId, smsIds[0]);
+	});
+
 	test('the documented sending options', async t => {
 		const smpp = await answeringServer(t);
 		const incoming = once<Sms>(resolve => {

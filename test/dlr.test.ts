@@ -206,6 +206,33 @@ describe('dlrFromPdu()', () => {
 		assert.equal(dlr.receipt.sub, 1);
 		assert.equal(dlr.receipt.text, 'hello');
 	});
+
+	test('reads the id in the notation the peer writes receipts in', () => {
+		const hex = dlrFromPdu(deliverSm('id:1a2B stat:DELIVRD err:000 text:'), 'hex');
+
+		assert.ok(hex);
+		assert.equal(hex.smsId, '6699');
+		assert.equal(hex.receipt?.id, '1a2B', 'the receipt itself keeps the id as it arrived');
+
+		assert.equal(dlrFromPdu(deliverSm('id:0000123 stat:DELIVRD'), 'decimal')?.smsId, '123');
+		assert.equal(dlrFromPdu(deliverSm('nothing scrapable here', {
+			receipted_message_id: { tagValue: 'FF' },
+		}, 0), 'hex')?.smsId, '255');
+	});
+
+	test('leaves an id the notation cannot read as it arrived', () => {
+		assert.equal(dlrFromPdu(deliverSm('id:beef-1 stat:DELIVRD'), 'hex')?.smsId, 'beef-1');
+		assert.equal(dlrFromPdu(deliverSm('id:1a2b stat:DELIVRD'), 'decimal')?.smsId, '1a2b');
+		assert.equal(dlrFromPdu(deliverSm('id:0195f0c7 stat:DELIVRD'))?.smsId, '0195f0c7');
+	});
+
+	// Number() reads 9007199254740993 as ...92, which correlates a receipt to the wrong send.
+	test('reads an id past the safe integer range without losing a digit', () => {
+		assert.equal(
+			dlrFromPdu(deliverSm('id:9007199254740993 stat:DELIVRD'), 'decimal')?.smsId,
+			'9007199254740993',
+		);
+	});
 });
 
 describe('receiptCodes', () => {

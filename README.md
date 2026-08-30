@@ -103,6 +103,7 @@ Every one is optional.
 | `responseTimeout` | `30000` | How long to wait for a response before giving up on it; `0` waits forever. |
 | `shutdownTimeout` | `5000` | How long `close()` and `unbind()` wait for the requests this end already sent; `0` waits forever. |
 | `maxOutstanding` | `10` | Requests allowed on the wire at once; further sends queue. |
+| `smsIdFormat` | — | The notation the SMSC writes message ids in, per place it writes them: `{ receipt: 'decimal', submitResp: 'hex' }`. Only needed where the two disagree. |
 | `reconnect` | off | `{ minDelay, maxDelay }` to re-bind automatically after a drop or an idle timeout, with exponential backoff. |
 | `log` | silent | Any object with `debug`, `error`, `info`, `verbose` and `warn` methods — see [Logging](#logging). |
 | `signal` | — | An `AbortSignal` that cancels connecting and tears the session down. |
@@ -160,6 +161,19 @@ Delivery receipts travel on the same SMPP command but reach you as `dlr`, so not
 to tell the two apart. `esm_class` is what tells them apart; where it names no message type a
 `receipted_message_id` TLV does, and failing both the message body is read for the standard
 `id:` and `stat:` receipt fields.
+
+Matching a receipt to a send means comparing `dlr.smsId` against the `smsIds` that `sendSms()`
+returned. Some SMSCs write the two in different notations — a hex `message_id` on the
+`submit_sm_resp` and a decimal `id:` in the receipt, or one of them zero-padded — and the comparison
+then quietly matches nothing at all. Name each notation and both ids are read into plain decimal
+before you see them:
+
+```javascript
+const { err, session } = await client({ smsIdFormat: { receipt: 'decimal', submitResp: 'hex' } });
+```
+
+An id that is not a number in the notation given is left exactly as it arrived, and `pduObjs` and
+`dlr.receipt` carry the id as the peer wrote it either way.
 
 ## Server
 

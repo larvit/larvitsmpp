@@ -4,8 +4,10 @@ import type { PduObject } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
 import type { SmppLog } from './log.ts';
+import type { SmsIdFormats } from './sms-id.ts';
 import type { Sms } from './sms.ts';
 import type { Socket } from 'node:net';
+import { isSmsIdFormat } from './sms-id.ts';
 
 export type SessionEvents = {
 	close: [];
@@ -83,6 +85,8 @@ export type SessionOptions = {
 	responseTimeout?: number | undefined;
 	/** How long a drain waits for the requests already on the wire. 0 waits forever. */
 	shutdownTimeout?: number | undefined;
+	/** The notation the peer writes message ids in, where it is not the one they are compared in. */
+	smsIdFormat?: SmsIdFormats | undefined;
 	sock: Socket;
 	/** This end's own identity, answered to the peer in place of the one it sent. */
 	systemId?: string | undefined;
@@ -111,7 +115,7 @@ export const defaults = {
  * A count below 1 does not fail loudly anywhere downstream: `maxOutstanding: 0` leaves every send
  * queued behind a slot that is never freed, so the call never settles at all.
  */
-export function checkSessionOptions(options: SessionCounts): VoidResult {
+export function checkSessionOptions(options: CheckableOptions): VoidResult {
 	const limits: [string, number, number][] = [
 		['idleTimeout', options.idleTimeout ?? 0, 0],
 		['maxOutstanding', options.maxOutstanding ?? defaults.maxOutstanding, 1],
@@ -127,14 +131,31 @@ export function checkSessionOptions(options: SessionCounts): VoidResult {
 		}
 	}
 
+	return checkSmsIdFormats(options.smsIdFormat);
+}
+
+function checkSmsIdFormats(smsIdFormat: CheckableOptions['smsIdFormat']): VoidResult {
+	const formats: [string, string | undefined][] = [
+		['receipt', smsIdFormat?.receipt],
+		['submitResp', smsIdFormat?.submitResp],
+	];
+
+	for (const [place, format] of formats) {
+		if (format !== undefined && !isSmsIdFormat(format)) {
+			return { err: new Error(`smsIdFormat.${place} must be decimal or hex, got ${format}`) };
+		}
+	}
+
 	return {};
 }
 
-export type SessionCounts = {
+/** What the checker reads, as it arrives: a caller without types can put anything in it. */
+export type CheckableOptions = {
 	idleTimeout?: number | undefined;
 	maxOutstanding?: number | undefined;
 	maxReassembly?: number | undefined;
 	reassemblyTimeout?: number | undefined;
 	responseTimeout?: number | undefined;
 	shutdownTimeout?: number | undefined;
+	smsIdFormat?: { receipt?: string | undefined; submitResp?: string | undefined } | undefined;
 };

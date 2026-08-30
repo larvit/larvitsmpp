@@ -120,6 +120,7 @@ export class Session extends EventEmitter<SessionEvents> {
 			maxReassembly: options.maxReassembly,
 			onRequest: options.onRequest,
 			reassemblyTimeout: options.reassemblyTimeout,
+			receiptIdFormat: options.smsIdFormat?.receipt,
 			session: this,
 			systemId: options.systemId,
 		});
@@ -209,6 +210,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		const sent = await submitSms({
 			log: this.log,
 			reference: this.nextConcatReference(),
+			respIdFormat: this.options.smsIdFormat?.submitResp,
 			send: input => this.send(input, options),
 		}, sms);
 

@@ -57,6 +57,7 @@ src/
 	send-sms.ts          submitSms composition and the submitSmParams builder
 	send-window.ts       SendWindow: the maxOutstanding semaphore
 	session-options.ts   SessionOptions, ReconnectOptions, bind direction and the session defaults
+	sms-id.ts            The notation a peer writes message ids in, normalised for comparison
 	udh.ts               User data header: the concatenation fields of a long SMS
 	uuid.ts              uuidv7() — the ids the library generates for messages
 	defs/

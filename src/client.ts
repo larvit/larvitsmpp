@@ -2,6 +2,7 @@ import type { ConnectionOptions } from 'node:tls';
 import type { Result, VoidResult } from './result.ts';
 import type { BindType } from './session-options.ts';
 import type { SmppLog } from './log.ts';
+import type { SmsIdFormats } from './sms-id.ts';
 import type { Socket } from 'node:net';
 export type { BindType };
 
@@ -29,6 +30,7 @@ export type ClientOptions = {
 	responseTimeout?: number;
 	shutdownTimeout?: number;
 	signal?: AbortSignal;
+	smsIdFormat?: SmsIdFormats;
 	systemType?: string;
 	tls?: ConnectionOptions | boolean;
 	username?: string;
@@ -147,6 +149,7 @@ function createSession(options: ClientOptions, log: SmppLog, sock: Socket): Sess
 		maxOutstanding: options.maxOutstanding,
 		responseTimeout: options.responseTimeout,
 		shutdownTimeout: options.shutdownTimeout,
+		smsIdFormat: options.smsIdFormat,
 		sock,
 		...(options.reconnect
 			? {

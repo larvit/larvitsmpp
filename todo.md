@@ -5,8 +5,8 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 248 tests, lint and typecheck clean, verified on Node
-18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
+The rewrite is **feature complete and green**: the suite, lint and typecheck are clean on Node 18,
+20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
 docker compose run --rm node npm install
@@ -55,6 +55,7 @@ Rules the API follows:
 | Delivery receipt parsing, TLV and text | `test/dlr.test.ts` |
 | Session, client, server: bind, auth, send, reassembly, DLRs, timeouts, abort, send window | `test/session.test.ts` |
 | Merged multipart DLRs including across a reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
+| `smsIdFormat`: a peer's `submit_sm_resp` and receipt ids read into one notation before they are compared | `test/dlr.test.ts`, `test/session-extras.test.ts` |
 | A draining `close()` and `unbind()`, bounded by `shutdownTimeout` or an abort | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
@@ -154,13 +155,6 @@ session message is a change to every call site.
       below 6.1 for exactly that reason.
 - [ ] **Coverage reporting.** `node --test --experimental-test-coverage` works today; nothing
       publishes the numbers.
-
-- [ ] **Normalise the message id on both sides of a receipt.** An SMSC that answers `submit_sm_resp`
-      with a hex `message_id` and sends the receipt's `id:` in decimal — or pads it, or flips its
-      case — leaves `smsIds` and `dlr.smsId` unequal, so correlation silently yields nothing and the
-      application sees no receipts at all. A `dlrIdFormat` option (`'hex' | 'decimal' | 'raw'`, or a
-      function) applied to both ids before they are compared covers the whole class. The smallest
-      change on this list for the most real-world breakage removed.
 
 - [ ] **An `onReceipt` hook.** Receipt text is only loosely specified and operators disagree on it,
       but `dlrFromPdu()` is wired into `IncomingRequests` with no seam of its own: an application
