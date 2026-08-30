@@ -7,6 +7,7 @@ import type { SmppLog } from '../src/log.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
 import { client } from '../src/client.ts';
+import { closeAfter } from './teardown.ts';
 import { server } from '../src/server.ts';
 
 function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
@@ -28,7 +29,7 @@ async function answeringServer(t: TestContext): Promise<SmppServer> {
 
 	assert.equal(err, undefined);
 	assert.ok(smpp);
-	t.after(() => smpp.close());
+	closeAfter(t, smpp);
 
 	smpp.on('session', session => {
 		session.on('sms', async sms => {
@@ -47,6 +48,8 @@ describe('README: Client', () => {
 
 		const { err, session } = await client();
 		if (err) throw err;
+
+		closeAfter(t, session);
 
 		await session.sendSms({
 			from: '46701113311',
@@ -77,7 +80,7 @@ describe('README: Client', () => {
 		});
 		if (err) throw err;
 
-		t.after(() => session.close());
+		closeAfter(t, session);
 
 		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
 		const { err: sendErr, smsIds } = await session.sendSms({
@@ -100,7 +103,7 @@ describe('README: Client', () => {
 		const { err, session } = await client();
 		if (err) throw err;
 
-		t.after(() => session.close());
+		closeAfter(t, session);
 
 		const { signal } = new AbortController();
 		const [sms, sent] = await Promise.all([
@@ -128,7 +131,7 @@ describe('README: Client', () => {
 		const { err, session } = await client();
 		if (err) throw err;
 
-		t.after(() => session.close());
+		closeAfter(t, session);
 
 		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
 		const peer = await bound;
@@ -155,7 +158,7 @@ describe('README: Server', () => {
 		const { err, server: smpp } = await server();
 		if (err) throw err;
 
-		t.after(() => smpp.close());
+		closeAfter(t, smpp);
 
 		const received: string[] = [];
 
@@ -187,7 +190,7 @@ describe('README: Server', () => {
 		});
 		if (err) throw err;
 
-		t.after(() => smpp.close());
+		closeAfter(t, smpp);
 
 		smpp.on('session', session => {
 			session.on('sms', async sms => {

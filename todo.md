@@ -57,6 +57,7 @@ Rules the API follows:
 | Merged multipart DLRs including across a reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
 | A draining `close()` and `unbind()`, bounded by `shutdownTimeout` or an abort | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
+| Teardown that survives a failing assertion, so a broken test reports rather than hangs | `test/teardown.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
 | Cross-checked against node-smpp both ways and over a live session | `test/interop.test.ts` |
@@ -138,10 +139,10 @@ session message is a change to every call site.
       would take a segment's slot in `DlrMerger` and complete the group early. Raised by review,
       2026-08-27; needs a decision.
 
-- [ ] **A failing session test hangs the run rather than ending it.** Every test that starts a server
-      closes it on its last line, so an assertion that throws leaves the listener open and
-      `node --test` never exits: all four CI legs burn the ten-minute cap instead of reporting the
-      five-second failure. `t.after(() => smpp.close())` fixes it, at every call site.
+- [ ] **`once()` is copied into four test files, and two copies never give up.**
+      `session-extras.test.ts` and `readme.test.ts` reject after 5000 ms; `session.test.ts` and
+      `tls.test.ts` wait forever, so an event that never fires still hangs the run the way an
+      unclosed listener used to. One shared, guarded copy closes the rest of that class.
 
 - [ ] **A peer whose message ids share one base logs a refused merge on every send.** `smsc01-000123`
       and `smsc01-000124` carry the same base, so `DlrMerger` merges the first message and refuses

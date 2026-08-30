@@ -11,10 +11,12 @@ import type { SendSmsResult } from '../src/send-sms.ts';
 import type { SmppLog } from '../src/log.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
+import type { TestContext } from 'node:test';
 import { Reassembler, decodeSegments } from '../src/reassembly.ts';
 import { Session } from '../src/session.ts';
 import { DlrMerger } from '../src/dlr-merger.ts';
 import { client } from '../src/client.ts';
+import { closeAfter, endListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
 import { errors } from '../src/defs/errors.ts';
 import { objToPdu } from '../src/pdu.ts';
@@ -22,13 +24,29 @@ import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
 import { submitSms } from '../src/send-sms.ts';
 
-async function startServer(options: Parameters<typeof server>[0] = {}): Promise<SmppServer> {
+async function startServer(
+	t: TestContext,
+	options: Parameters<typeof server>[0] = {},
+): Promise<SmppServer> {
 	const { err, server: smpp } = await server({ ...options, port: 0 });
 
 	assert.equal(err, undefined);
 	assert.ok(smpp);
+	closeAfter(t, smpp);
 
 	return smpp;
+}
+
+async function connect(
+	t: TestContext,
+	smpp: SmppServer,
+	options: Parameters<typeof client>[0] = {},
+) {
+	const connected = await client({ port: smpp.port, ...options });
+
+	if (connected.session) closeAfter(t, connected.session);
+
+	return connected;
 }
 
 /** An event that never fires would otherwise block until the CI job limit, asserting nothing. */
@@ -61,12 +79,12 @@ function gate(): Gate {
 
 describe('merged delivery reports', () => {
 	// 0.4.0 allocated a longSmsDlrs store to do exactly this and then never used it.
-	test('reports once on a whole multipart message', async () => {
-		const smpp = await startServer();
+	test('reports once on a whole multipart message', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
-		const { session } = await client({ port: smpp.port });
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
@@ -97,17 +115,14 @@ describe('merged delivery reports', () => {
 		assert.equal(report.segments.length, 3);
 		assert.equal(report.statusMsg, 'DELIVERED');
 		assert.deepEqual(perSegment, ['merge-me-1', 'merge-me-2', 'merge-me-3']);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('reports the worst status across the segments', async () => {
-		const smpp = await startServer();
+	test('reports the worst status across the segments', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
-		const { session } = await client({ port: smpp.port });
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
@@ -133,9 +148,6 @@ describe('merged delivery reports', () => {
 
 		assert.equal(report.statusMsg, 'UNDELIVERABLE');
 		assert.equal(report.segments.length, 3);
-
-		await session.close();
-		await smpp.close();
 	});
 });
 
@@ -201,12 +213,12 @@ describe('sendSms()', () => {
 		);
 	}
 
-	test('reports a submit_sm the peer refused instead of an empty message id', async () => {
-		const smpp = await startServer();
+	test('reports a submit_sm the peer refused instead of an empty message id', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
-		const { session } = await client({ port: smpp.port });
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
@@ -217,9 +229,6 @@ describe('sendSms()', () => {
 
 		assert.ok(sent.err instanceof Error);
 		assert.match(sent.err.message, /ESME_RMSGQFUL/);
-
-		await session.close();
-		await smpp.close();
 	});
 
 	// A retry that repeats the segments the SMSC already took bills the recipient twice.
@@ -315,8 +324,8 @@ describe('reconnect', () => {
 		assert.equal(sent.err, undefined);
 	}
 
-	test('re-binds after the connection drops, keeping the same session object', async () => {
-		const smpp = await startServer();
+	test('re-binds after the connection drops, keeping the same session object', async t => {
+		const smpp = await startServer(t);
 		const messages: string[] = [];
 
 		// Registered up front so the session created by the reconnect is covered too.
@@ -327,10 +336,7 @@ describe('reconnect', () => {
 			});
 		});
 
-		const { err, session } = await client({
-			port: smpp.port,
-			reconnect: { maxDelay: 100, minDelay: 20 },
-		});
+		const { err, session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
 
 		assert.equal(err, undefined);
 		assert.ok(session);
@@ -355,22 +361,16 @@ describe('reconnect', () => {
 
 		assert.equal(sent.err, undefined);
 		assert.deepEqual(messages, ['after reconnect']);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('merges the receipts of a multipart message across a drop', async () => {
-		const smpp = await startServer();
+	test('merges the receipts of a multipart message across a drop', async t => {
+		const smpp = await startServer(t);
 
 		smpp.on('session', bound => {
 			bound.on('sms', sms => { void sms.sendResp({ smsId: 'across-the-drop' }); });
 		});
 
-		const { session } = await client({
-			port: smpp.port,
-			reconnect: { maxDelay: 100, minDelay: 20 },
-		});
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
 
 		assert.ok(session);
 
@@ -400,17 +400,11 @@ describe('reconnect', () => {
 
 		assert.equal(report.smsId, 'across-the-drop');
 		assert.equal(report.segments.length, 3);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('does not reconnect after an explicit close', async () => {
-		const smpp = await startServer();
-		const { session } = await client({
-			port: smpp.port,
-			reconnect: { maxDelay: 50, minDelay: 10 },
-		});
+	test('does not reconnect after an explicit close', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 50, minDelay: 10 } });
 
 		assert.ok(session);
 
@@ -422,7 +416,6 @@ describe('reconnect', () => {
 		await delay(150);
 
 		assert.equal(reconnects, 0);
-		await smpp.close();
 	});
 });
 
@@ -572,7 +565,7 @@ describe('reassembly bounds', () => {
 });
 
 describe('AbortSignal on a send', () => {
-	test('gives up on an in-flight request when the signal fires', async () => {
+	test('gives up on an in-flight request when the signal fires', async t => {
 		const accepted: net.Socket[] = [];
 		const silent = net.createServer(sock => {
 			accepted.push(sock);
@@ -582,6 +575,7 @@ describe('AbortSignal on a send', () => {
 		});
 
 		await new Promise<void>(resolve => silent.listen(0, resolve));
+		endListenerAfter(t, silent, accepted);
 
 		const address = silent.address();
 		const port = typeof address === 'object' && address !== null ? address.port : 0;
@@ -589,6 +583,7 @@ describe('AbortSignal on a send', () => {
 
 		assert.equal(err, undefined);
 		assert.ok(session);
+		closeAfter(t, session);
 
 		const controller = new AbortController();
 
@@ -600,22 +595,16 @@ describe('AbortSignal on a send', () => {
 		);
 
 		assert.ok(sent.err instanceof Error);
-
-		await session.close();
-
-		for (const sock of accepted) sock.destroy();
-
-		await new Promise<void>(resolve => silent.close(() => { resolve(); }));
 	});
 });
 
 describe('graceful shutdown', () => {
-	async function submitInFlight(options: Parameters<typeof client>[0] = {}) {
-		const smpp = await startServer();
+	async function submitInFlight(t: TestContext, options: Parameters<typeof client>[0] = {}) {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', bound => bound.on('sms', resolve));
 		});
-		const { session } = await client({ port: smpp.port, ...options });
+		const { session } = await connect(t, smpp, options);
 
 		assert.ok(session);
 
@@ -624,8 +613,8 @@ describe('graceful shutdown', () => {
 		return { sent, session, sms: await incoming, smpp };
 	}
 
-	test('close() waits out a submit already on the wire and refuses new ones', async () => {
-		const { sent, session, sms, smpp } = await submitInFlight();
+	test('close() waits out a submit already on the wire and refuses new ones', async t => {
+		const { sent, session, sms } = await submitInFlight(t);
 		const closed = session.close();
 		const refused = await session.sendSms({
 			from: '46701113311',
@@ -640,24 +629,20 @@ describe('graceful shutdown', () => {
 
 		assert.deepEqual((await sent).smsIds, ['answered-while-draining']);
 		assert.deepEqual(await closed, {});
-
-		await smpp.close();
 	});
 
-	test('unbind() waits out a submit already on the wire before it unbinds', async () => {
-		const { sent, session, sms, smpp } = await submitInFlight();
+	test('unbind() waits out a submit already on the wire before it unbinds', async t => {
+		const { sent, session, sms } = await submitInFlight(t);
 		const unbound = session.unbind();
 
 		await sms.sendResp({ smsId: 'answered-before-unbind' });
 
 		assert.deepEqual((await sent).smsIds, ['answered-before-unbind']);
 		assert.deepEqual(await unbound, {});
-
-		await smpp.close();
 	});
 
-	test('gives up on a request that outlasts shutdownTimeout', async () => {
-		const { sent, session, smpp } = await submitInFlight({ shutdownTimeout: 50 });
+	test('gives up on a request that outlasts shutdownTimeout', async t => {
+		const { sent, session } = await submitInFlight(t, { shutdownTimeout: 50 });
 		const closed = await session.close();
 
 		assert.ok(closed.err instanceof Error);
@@ -667,13 +652,11 @@ describe('graceful shutdown', () => {
 
 		assert.ok(result.err instanceof Error);
 		assert.equal(result.err.message, 'Session closed before a response arrived');
-
-		await smpp.close();
 	});
 
 	// The window empties on a drop as well as on an answer, so it cannot be what the result reads.
-	test('reports a link that dropped mid-drain rather than calling it a clean shutdown', async () => {
-		const { sent, session, smpp } = await submitInFlight();
+	test('reports a link that dropped mid-drain rather than calling it a clean shutdown', async t => {
+		const { sent, session, smpp } = await submitInFlight(t);
 		const closing = session.close();
 
 		for (const bound of smpp.sessions) {
@@ -685,17 +668,15 @@ describe('graceful shutdown', () => {
 		assert.ok(closed.err instanceof Error);
 		assert.match(closed.err.message, /closed before the drain finished/);
 		assert.ok((await sent).err instanceof Error);
-
-		await smpp.close();
 	});
 
 	// The queued segments are the whole reason the drain waits on the window and not on the pending map.
-	test('counts the segments still queued behind a full window', async () => {
-		const smpp = await startServer();
+	test('counts the segments still queued behind a full window', async t => {
+		const smpp = await startServer(t);
 		const onWire = once<PduObject>(resolve => {
 			smpp.on('session', bound => bound.on('incomingPduObj', resolve));
 		});
-		const { session } = await client({ maxOutstanding: 1, port: smpp.port, shutdownTimeout: 50 });
+		const { session } = await connect(t, smpp, { maxOutstanding: 1, shutdownTimeout: 50 });
 
 		assert.ok(session);
 
@@ -712,12 +693,10 @@ describe('graceful shutdown', () => {
 		assert.ok(closed.err instanceof Error);
 		assert.match(closed.err.message, /3 request\(s\)/);
 		assert.ok((await sent).err instanceof Error);
-
-		await smpp.close();
 	});
 
-	test('an aborted close tears down at once instead of waiting out the drain', async () => {
-		const { sent, session, smpp } = await submitInFlight({ shutdownTimeout: 30_000 });
+	test('an aborted close tears down at once instead of waiting out the drain', async t => {
+		const { sent, session } = await submitInFlight(t, { shutdownTimeout: 30_000 });
 		const controller = new AbortController();
 		const started = Date.now();
 
@@ -729,15 +708,14 @@ describe('graceful shutdown', () => {
 		assert.ok(closed.err instanceof Error);
 		assert.ok(session.sock.destroyed);
 		assert.ok((await sent).err instanceof Error);
-
-		await smpp.close();
 	});
 
-	test('stops accepting the moment close() is called, not when the drain ends', async () => {
-		const smpp = await startServer({ shutdownTimeout: 30_000 });
+	test('stops accepting the moment close() is called, not when the drain ends', async t => {
+		const smpp = await startServer(t, { shutdownTimeout: 30_000 });
 		const arrived = once<Session>(resolve => { smpp.on('session', resolve); });
 		const silent = net.connect({ port: smpp.port });
 
+		t.after(() => { silent.destroy(); });
 		silent.resume();
 
 		const bound = await arrived;
@@ -759,11 +737,12 @@ describe('graceful shutdown', () => {
 	});
 
 	// Waiting on a peer that has just declared itself finished is dead time, unbounded at 0.
-	test('tears down at once when the peer unbinds rather than draining for it', async () => {
-		const smpp = await startServer({ shutdownTimeout: 0 });
+	test('tears down at once when the peer unbinds rather than draining for it', async t => {
+		const smpp = await startServer(t, { shutdownTimeout: 0 });
 		const arrived = once<Session>(resolve => { smpp.on('session', resolve); });
 		const peer = net.connect({ port: smpp.port });
 
+		t.after(() => { peer.destroy(); });
 		peer.resume();
 
 		const bound = await arrived;
@@ -776,12 +755,9 @@ describe('graceful shutdown', () => {
 
 		assert.ok(await ended);
 		assert.ok((await unanswered).err instanceof Error);
-
-		peer.destroy();
-		await smpp.close();
 	});
 
-	test('does not report a reconnect on a session closed while it was coming back up', async () => {
+	test('does not report a reconnect on a session closed while it was coming back up', async t => {
 		const listener = net.createServer(sock => { sock.resume(); });
 
 		await new Promise<void>(resolve => { listener.listen(0, resolve); });
@@ -816,6 +792,8 @@ describe('graceful shutdown', () => {
 		});
 		const reported: string[] = [];
 
+		closeAfter(t, session);
+		endListenerAfter(t, listener, opened);
 		session.on('reconnected', () => reported.push('reconnected'));
 		first.sock.destroy();
 
@@ -828,11 +806,5 @@ describe('graceful shutdown', () => {
 		await delay(50);
 
 		assert.deepEqual(reported, []);
-
-		for (const sock of opened) {
-			sock.destroy();
-		}
-
-		await new Promise<void>(resolve => { listener.close(() => { resolve(); }); });
 	});
 });

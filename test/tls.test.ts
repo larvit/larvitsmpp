@@ -3,9 +3,11 @@ import net from 'node:net';
 import test, { describe } from 'node:test';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
+import type { TestContext } from 'node:test';
 import { Log } from '@larvit/log';
 import { TLSSocket } from 'node:tls';
 import { client } from '../src/client.ts';
+import { closeAfter } from './teardown.ts';
 import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { server } from '../src/server.ts';
 
@@ -102,7 +104,7 @@ function createCertificate(): { cert: string; key: string } {
 
 const certificate = createCertificate();
 
-async function startServer(): Promise<SmppServer> {
+async function startServer(t: TestContext): Promise<SmppServer> {
 	const { err, server: smpp } = await server({
 		port: 0,
 		tls: { cert: certificate.cert, key: certificate.key },
@@ -110,6 +112,7 @@ async function startServer(): Promise<SmppServer> {
 
 	assert.equal(err, undefined);
 	assert.ok(smpp);
+	closeAfter(t, smpp);
 
 	return smpp;
 }
@@ -119,8 +122,8 @@ function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
 }
 
 describe('tls', () => {
-	test('binds over a verified handshake and delivers an SMS', async () => {
-		const smpp = await startServer();
+	test('binds over a verified handshake and delivers an SMS', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
@@ -133,6 +136,7 @@ describe('tls', () => {
 		assert.equal(err, undefined);
 		assert.ok(session);
 		assert.ok(session.loggedIn);
+		closeAfter(t, session);
 
 		const sock = session.sock;
 
@@ -155,22 +159,19 @@ describe('tls', () => {
 		assert.deepEqual(sent.smsIds, ['tls-id']);
 
 		assert.deepEqual(await session.unbind(), {});
-		await smpp.close();
 	});
 
-	test('returns an error rather than throwing when the certificate is not trusted', async () => {
-		const smpp = await startServer();
+	test('returns an error rather than throwing when the certificate is not trusted', async t => {
+		const smpp = await startServer(t);
 		const { err, session } = await client({ host, port: smpp.port, tls: {} });
 
 		assert.ok(err instanceof Error);
 		assert.match(err.message, /self.signed certificate/);
 		assert.equal(session, undefined);
-
-		await smpp.close();
 	});
 
-	test('returns an error when the certificate does not cover the host', async () => {
-		const smpp = await startServer();
+	test('returns an error when the certificate does not cover the host', async t => {
+		const smpp = await startServer(t);
 		const { err, session } = await client({
 			host: '127.0.0.1',
 			port: smpp.port,
@@ -180,8 +181,6 @@ describe('tls', () => {
 		assert.ok(err instanceof Error);
 		assert.match(err.message, /altnames/);
 		assert.equal(session, undefined);
-
-		await smpp.close();
 	});
 
 	test('refuses to listen over tls without a certificate', async () => {
@@ -191,7 +190,7 @@ describe('tls', () => {
 		assert.equal(smpp, undefined);
 	});
 
-	test('logs a handshake the server turned away', async () => {
+	test('logs a handshake the server turned away', async t => {
 		let onWarning: ((message: string) => void) | undefined;
 		const warned = once<string>(resolve => { onWarning = resolve; });
 		const log = new Log({
@@ -207,14 +206,13 @@ describe('tls', () => {
 
 		assert.equal(err, undefined);
 		assert.ok(smpp);
+		closeAfter(t, smpp);
 
 		const sock = net.connect({ port: smpp.port }, () => { sock.end('not a client hello'); });
 
+		t.after(() => { sock.destroy(); });
 		sock.resume();
 
 		assert.match(await warned, /client handshake failed/);
-
-		sock.destroy();
-		await smpp.close();
 	});
 });

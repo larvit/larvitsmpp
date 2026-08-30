@@ -12,6 +12,7 @@ import { PduFramer } from '../src/pdu-framer.ts';
 import { ReconnectLoop } from '../src/reconnect-loop.ts';
 import { Session, bindCommands } from '../src/session.ts';
 import { client } from '../src/client.ts';
+import { closeAfter, endListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
 import { isCommand, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
 import { paramText } from '../src/defs/types.ts';
@@ -19,17 +20,29 @@ import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
 import { splitMessage } from '../src/message.ts';
 
-async function startServer(options: Parameters<typeof server>[0] = {}): Promise<SmppServer> {
+async function startServer(
+	t: TestContext,
+	options: Parameters<typeof server>[0] = {},
+): Promise<SmppServer> {
 	const { err, server: smpp } = await server({ ...options, port: 0 });
 
 	assert.equal(err, undefined);
 	assert.ok(smpp);
+	closeAfter(t, smpp);
 
 	return smpp;
 }
 
-async function connect(smpp: SmppServer, options: Parameters<typeof client>[0] = {}) {
-	return client({ port: smpp.port, ...options });
+async function connect(
+	t: TestContext,
+	smpp: SmppServer,
+	options: Parameters<typeof client>[0] = {},
+) {
+	const connected = await client({ port: smpp.port, ...options });
+
+	if (connected.session) closeAfter(t, connected.session);
+
+	return connected;
 }
 
 function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
@@ -60,7 +73,7 @@ function raceWithin<T>(ms: number, promise: Promise<T>): Promise<T | false> {
 type Peer = { close: () => Promise<void>; port: number };
 
 /** Answers binds and nothing else, which is what a link the peer has stopped serving looks like. */
-async function bindOnlyPeer(options: { dropOn?: string } = {}): Promise<Peer> {
+async function bindOnlyPeer(t: TestContext, options: { dropOn?: string } = {}): Promise<Peer> {
 	const sockets: net.Socket[] = [];
 	const listener = net.createServer(sock => {
 		const framer = new PduFramer();
@@ -90,8 +103,7 @@ async function bindOnlyPeer(options: { dropOn?: string } = {}): Promise<Peer> {
 	await new Promise<void>(resolve => { listener.listen(0, resolve); });
 
 	const address = listener.address();
-
-	return {
+	const peer = {
 		close: async () => {
 			for (const sock of sockets) {
 				sock.destroy();
@@ -101,6 +113,10 @@ async function bindOnlyPeer(options: { dropOn?: string } = {}): Promise<Peer> {
 		},
 		port: typeof address === 'object' && address !== null ? address.port : 0,
 	};
+
+	t.after(() => peer.close());
+
+	return peer;
 }
 
 function enquireLink(seqNr: number): PduObject {
@@ -124,7 +140,7 @@ type RawPeer = {
 };
 
 /** A peer driven PDU by PDU, which is the only way to say things the client never says. */
-function rawPeer(port: number): RawPeer {
+function rawPeer(t: TestContext, port: number): RawPeer {
 	const framer = new PduFramer();
 	const queue: PduObject[] = [];
 	const waiting: ((pduObj: PduObject) => void)[] = [];
@@ -146,6 +162,8 @@ function rawPeer(port: number): RawPeer {
 			else queue.push(pduObj);
 		}
 	});
+
+	t.after(() => { sock.destroy(); });
 
 	return {
 		close: () => { sock.destroy(); },
@@ -173,8 +191,8 @@ function bindOf(interfaceVersion: number, seqNr = 1): PduObjectInput {
 	};
 }
 
-async function bindRaw(smpp: SmppServer, interfaceVersion: number): Promise<PduObject> {
-	const peer = rawPeer(smpp.port);
+async function bindRaw(t: TestContext, smpp: SmppServer, interfaceVersion: number): Promise<PduObject> {
+	const peer = rawPeer(t, smpp.port);
 
 	peer.write(bindOf(interfaceVersion));
 
@@ -186,80 +204,73 @@ async function bindRaw(smpp: SmppServer, interfaceVersion: number): Promise<PduO
 }
 
 describe('bind', () => {
-	test('binds and unbinds against a server with no auth', async () => {
-		const smpp = await startServer();
-		const { err, session } = await connect(smpp);
+	test('binds and unbinds against a server with no auth', async t => {
+		const smpp = await startServer(t);
+		const { err, session } = await connect(t, smpp);
 
 		assert.equal(err, undefined);
 		assert.ok(session);
 		assert.ok(session.loggedIn);
 
 		assert.deepEqual(await session.unbind(), {});
-		await smpp.close();
 	});
 
 	// Plenty of SMSCs drop the connection on unbind instead of answering it.
-	test('takes a close that follows our unbind as a clean unbind', async () => {
-		const peer = await bindOnlyPeer({ dropOn: 'unbind' });
+	test('takes a close that follows our unbind as a clean unbind', async t => {
+		const peer = await bindOnlyPeer(t, { dropOn: 'unbind' });
 		const { session } = await client({ port: peer.port, responseTimeout: 2000 });
 
 		assert.ok(session);
+		closeAfter(t, session);
 		assert.deepEqual(await session.unbind(), {});
-
-		await peer.close();
 	});
 
-	test('still reports a close that lands on another in-flight request', async () => {
-		const peer = await bindOnlyPeer({ dropOn: 'enquire_link' });
+	test('still reports a close that lands on another in-flight request', async t => {
+		const peer = await bindOnlyPeer(t, { dropOn: 'enquire_link' });
 		const { session } = await client({ port: peer.port, responseTimeout: 2000 });
 
 		assert.ok(session);
+		closeAfter(t, session);
 
 		const sent = await session.send({ cmdName: 'enquire_link' });
 
 		assert.ok(sent.err instanceof Error);
 		assert.equal(sent.err.message, 'Session closed before a response arrived');
-
-		await session.close();
-		await peer.close();
 	});
 
-	test('reports an unbind the peer left unanswered on a link that stays up', async () => {
-		const peer = await bindOnlyPeer();
+	test('reports an unbind the peer left unanswered on a link that stays up', async t => {
+		const peer = await bindOnlyPeer(t);
 		const { session } = await client({ port: peer.port, responseTimeout: 150 });
 
 		assert.ok(session);
+		closeAfter(t, session);
 		assert.ok((await session.unbind()).err instanceof Error);
-
-		await peer.close();
 	});
 
-	test('reports the resolved port when 0 was requested', async () => {
-		const smpp = await startServer();
+	test('reports the resolved port when 0 was requested', async t => {
+		const smpp = await startServer(t);
 
 		assert.ok(smpp.port > 0);
-		await smpp.close();
 	});
 
-	test('refuses the wrong credentials', async () => {
-		const smpp = await startServer({
+	test('refuses the wrong credentials', async t => {
+		const smpp = await startServer(t, {
 			authenticate: ({ password, systemId }) => systemId === 'foo' && password === 'bar',
 		});
-		const { err, session } = await connect(smpp);
+		const { err, session } = await connect(t, smpp);
 
 		assert.ok(err instanceof Error);
 		assert.equal(session, undefined);
-		await smpp.close();
 	});
 
-	test('accepts the right credentials and attaches userData', async () => {
-		const smpp = await startServer({
+	test('accepts the right credentials and attaches userData', async t => {
+		const smpp = await startServer(t, {
 			authenticate: ({ password, systemId }) => systemId === 'foo' && password === 'bar'
 				? { userData: { userId: 123 } }
 				: false,
 		});
 		const serverSession = once<Session>(resolve => smpp.on('session', resolve));
-		const { err, session } = await connect(smpp, { password: 'bar', username: 'foo' });
+		const { err, session } = await connect(t, smpp, { password: 'bar', username: 'foo' });
 
 		assert.equal(err, undefined);
 		assert.ok(session);
@@ -267,13 +278,10 @@ describe('bind', () => {
 		const bound = await serverSession;
 
 		assert.deepEqual(bound.userData, { userId: 123 });
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('answers a non-bind command from an unbound peer with ESME_RINVBNDSTS', async () => {
-		const smpp = await startServer();
+	test('answers a non-bind command from an unbound peer with ESME_RINVBNDSTS', async t => {
+		const smpp = await startServer(t);
 		const responded = once<string>(resolve => {
 			const sock = net.connect({ port: smpp.port }, () => {
 				// enquire_link before binding
@@ -288,11 +296,10 @@ describe('bind', () => {
 
 		// 0x00000004 is ESME_RINVBNDSTS
 		assert.equal(await responded, '00000010800000150000000400000001');
-		await smpp.close();
 	});
 
-	test('declares SMPP 3.4 by default and the version the caller asks for', async () => {
-		const smpp = await startServer();
+	test('declares SMPP 3.4 by default and the version the caller asks for', async t => {
+		const smpp = await startServer(t);
 		const declared: (number | undefined)[] = [];
 
 		smpp.on('session', session => {
@@ -303,8 +310,8 @@ describe('bind', () => {
 			});
 		});
 
-		const { session: byDefault } = await connect(smpp);
-		const { session: asFive } = await connect(smpp, { interfaceVersion: 0x50 });
+		const { session: byDefault } = await connect(t, smpp);
+		const { session: asFive } = await connect(t, smpp, { interfaceVersion: 0x50 });
 
 		assert.ok(byDefault);
 		assert.ok(asFive);
@@ -312,13 +319,12 @@ describe('bind', () => {
 
 		await byDefault.unbind();
 		await asFive.unbind();
-		await smpp.close();
 	});
 
-	test('tells a 3.4 peer the version it supports in the bind response', async () => {
-		const smpp = await startServer();
-		const asThreeFour = await bindRaw(smpp, 0x34);
-		const asFive = await bindRaw(smpp, 0x50);
+	test('tells a 3.4 peer the version it supports in the bind response', async t => {
+		const smpp = await startServer(t);
+		const asThreeFour = await bindRaw(t, smpp, 0x34);
+		const asFive = await bindRaw(t, smpp, 0x50);
 
 		assert.equal(asThreeFour.cmdName, 'bind_transceiver_resp');
 		assert.equal(asThreeFour.cmdStatus, 'ESME_ROK');
@@ -328,60 +334,49 @@ describe('bind', () => {
 			tagValue: 0x34,
 		});
 		assert.equal(asFive.tlvs.sc_interface_version?.tagValue, 0x34);
-
-		await smpp.close();
 	});
 
-	test('advertises the version the server is configured with', async () => {
-		const smpp = await startServer({ interfaceVersion: 0x50 });
-		const asThreeFour = await bindRaw(smpp, 0x34);
+	test('advertises the version the server is configured with', async t => {
+		const smpp = await startServer(t, { interfaceVersion: 0x50 });
+		const asThreeFour = await bindRaw(t, smpp, 0x34);
 
 		assert.equal(asThreeFour.tlvs.sc_interface_version?.tagValue, 0x50);
 
 		// The threshold for sending optional parameters is 3.4 whatever the server advertises.
-		const asThreeThree = await bindRaw(smpp, 0x33);
+		const asThreeThree = await bindRaw(t, smpp, 0x33);
 
 		assert.deepEqual(asThreeThree.tlvs, {});
-
-		await smpp.close();
 	});
 
-	test('answers a bind with its own system_id, not the one the ESME sent', async () => {
-		const anonymous = await startServer();
-		const named = await startServer({ systemId: 'the-smsc' });
+	test('answers a bind with its own system_id, not the one the ESME sent', async t => {
+		const anonymous = await startServer(t);
+		const named = await startServer(t, { systemId: 'the-smsc' });
 
-		assert.equal((await bindRaw(anonymous, 0x34)).params.system_id, '');
-		assert.equal((await bindRaw(named, 0x34)).params.system_id, 'the-smsc');
-
-		await anonymous.close();
-		await named.close();
+		assert.equal((await bindRaw(t, anonymous, 0x34)).params.system_id, '');
+		assert.equal((await bindRaw(t, named, 0x34)).params.system_id, 'the-smsc');
 	});
 
 	// The echo leak cannot reach a refusal at all: the spec gives a failure response no body.
-	test('answers a refused bind with no body to leak', async () => {
-		const smpp = await startServer({ authenticate: () => false, systemId: 'the-smsc' });
-		const refused = await bindRaw(smpp, 0x34);
+	test('answers a refused bind with no body to leak', async t => {
+		const smpp = await startServer(t, { authenticate: () => false, systemId: 'the-smsc' });
+		const refused = await bindRaw(t, smpp, 0x34);
 
 		assert.equal(refused.cmdStatus, 'ESME_RBINDFAIL');
 		assert.equal(refused.cmdLength, 16);
 		assert.deepEqual(refused.params, {});
-
-		await smpp.close();
 	});
 
-	test('sends no optional parameters to a peer declaring less than 3.4', async () => {
-		const smpp = await startServer();
-		const bound = await bindRaw(smpp, 0x00);
+	test('sends no optional parameters to a peer declaring less than 3.4', async t => {
+		const smpp = await startServer(t);
+		const bound = await bindRaw(t, smpp, 0x00);
 
 		assert.equal(bound.cmdStatus, 'ESME_ROK');
 		assert.deepEqual(bound.tlvs, {});
-
-		await smpp.close();
 	});
 
-	test('answers a second bind with ESME_RALYBND and no body', async () => {
-		const smpp = await startServer({ systemId: 'the-smsc' });
-		const peer = rawPeer(smpp.port);
+	test('answers a second bind with ESME_RALYBND and no body', async t => {
+		const smpp = await startServer(t, { systemId: 'the-smsc' });
+		const peer = rawPeer(t, smpp.port);
 
 		peer.write(bindOf(0x34));
 		await peer.next();
@@ -391,34 +386,25 @@ describe('bind', () => {
 
 		assert.equal(again.cmdStatus, 'ESME_RALYBND');
 		assert.deepEqual(again.params, {});
-
-		peer.close();
-		await smpp.close();
 	});
 
 	test('records the version the SMSC declared in its bind response', async t => {
-		const smpp = await startServer({ interfaceVersion: 0x50 });
+		const smpp = await startServer(t, { interfaceVersion: 0x50 });
 
-		t.after(() => smpp.close());
-
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
-		t.after(() => session.close());
 		assert.equal(session.peerInterfaceVersion, 0x50);
 		assert.ok(session.acceptsOptionalParams());
 	});
 
 	// The spec: an absent sc_interface_version means the SMSC supports no optional parameters.
 	test('takes an SMSC that declares no version as older than 3.4', async t => {
-		const peer = await bindOnlyPeer();
-
-		t.after(() => peer.close());
-
+		const peer = await bindOnlyPeer(t);
 		const { session } = await client({ port: peer.port });
 
 		assert.ok(session);
-		t.after(() => session.close());
+		closeAfter(t, session);
 		assert.equal(session.peerInterfaceVersion, 0x00);
 		assert.equal(session.acceptsOptionalParams(), false);
 	});
@@ -426,9 +412,9 @@ describe('bind', () => {
 
 describe('bind direction', () => {
 	// A receiver-bound ESME sends no submit_sm and a transmitter-bound one is sent no deliver_sm.
-	test('refuses a submit_sm from a peer that bound as a receiver', async () => {
-		const smpp = await startServer();
-		const { session } = await connect(smpp, { bindType: 'receiver' });
+	test('refuses a submit_sm from a peer that bound as a receiver', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp, { bindType: 'receiver' });
 
 		assert.ok(session);
 
@@ -439,18 +425,15 @@ describe('bind direction', () => {
 
 		assert.ok(sent.pduObj);
 		assert.equal(sent.pduObj.cmdStatus, 'ESME_RINVBNDSTS');
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('refuses sendSms() on a receiver-bound session before it reaches the wire', async () => {
-		const smpp = await startServer();
+	test('refuses sendSms() on a receiver-bound session before it reaches the wire', async t => {
+		const smpp = await startServer(t);
 		const arrived: Sms[] = [];
 
 		smpp.on('session', peer => peer.on('sms', sms => arrived.push(sms)));
 
-		const { session } = await connect(smpp, { bindType: 'receiver' });
+		const { session } = await connect(t, smpp, { bindType: 'receiver' });
 
 		assert.ok(session);
 
@@ -460,15 +443,12 @@ describe('bind direction', () => {
 		assert.match(sent.err.message, /receiver-bound/);
 		assert.deepEqual(sent.smsIds, []);
 		assert.equal(arrived.length, 0);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('refuses a deliver_sm sent to a peer that bound as a transmitter', async () => {
-		const smpp = await startServer();
+	test('refuses a deliver_sm sent to a peer that bound as a transmitter', async t => {
+		const smpp = await startServer(t);
 		const bound = once<Session>(resolve => { smpp.on('session', resolve); });
-		const { session } = await connect(smpp, { bindType: 'transmitter' });
+		const { session } = await connect(t, smpp, { bindType: 'transmitter' });
 
 		assert.ok(session);
 
@@ -480,17 +460,14 @@ describe('bind direction', () => {
 
 		assert.ok(sent.pduObj);
 		assert.equal(sent.pduObj.cmdStatus, 'ESME_RINVBNDSTS');
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('refuses sendDlr() to a transmitter-bound peer before it reaches the wire', async () => {
-		const smpp = await startServer();
+	test('refuses sendDlr() to a transmitter-bound peer before it reaches the wire', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', peer => peer.on('sms', resolve));
 		});
-		const { session } = await connect(smpp, { bindType: 'transmitter' });
+		const { session } = await connect(t, smpp, { bindType: 'transmitter' });
 
 		assert.ok(session);
 
@@ -505,19 +482,16 @@ describe('bind direction', () => {
 
 		assert.ok(report.err instanceof Error);
 		assert.match(report.err.message, /transmitter-bound/);
-
-		await session.close();
-		await smpp.close();
 	});
 });
 
 describe('sending', () => {
-	test('delivers a simple SMS with the sender TON derived from the address', async () => {
-		const smpp = await startServer();
+	test('delivers a simple SMS with the sender TON derived from the address', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
@@ -547,18 +521,15 @@ describe('sending', () => {
 		assert.ok(submitted);
 		assert.equal(submitted.params.source_addr_ton, 5);
 		assert.equal(submitted.params.dest_addr_ton, 1);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('reassembles a long SMS and answers every segment', async () => {
-		const smpp = await startServer();
+	test('reassembles a long SMS and answers every segment', async t => {
+		const smpp = await startServer(t);
 		const message = 'Lorem ipsum dolor sit amet, '.repeat(20);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
@@ -576,18 +547,15 @@ describe('sending', () => {
 		assert.equal(sent.err, undefined);
 		assert.equal(sent.pduObjs.length, 4);
 		assert.deepEqual(sent.smsIds, ['long-id-1', 'long-id-2', 'long-id-3', 'long-id-4']);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('carries a UCS2 message through unchanged', async () => {
-		const smpp = await startServer();
+	test('carries a UCS2 message through unchanged', async t => {
+		const smpp = await startServer(t);
 		const message = 'räksmörgås تست 一';
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
@@ -602,17 +570,14 @@ describe('sending', () => {
 
 		assert.equal(sms.message, message);
 		assert.match(sms.smsId, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('marks a flash message without losing the UCS2 alphabet', async () => {
-		const smpp = await startServer();
+	test('marks a flash message without losing the UCS2 alphabet', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
@@ -629,17 +594,14 @@ describe('sending', () => {
 		assert.equal(sms.pduObjs[0]?.params.data_coding, 0x18);
 		assert.equal(sms.message, 'تست');
 		assert.ok(sms.flash);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('puts the address TON and NPI the caller chose on the wire', async () => {
-		const smpp = await startServer();
+	test('puts the address TON and NPI the caller chose on the wire', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', peer => peer.on('sms', resolve));
 		});
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
@@ -663,23 +625,17 @@ describe('sending', () => {
 		assert.equal(params.dest_addr_ton, consts.TON.NATIONAL);
 		assert.equal(params.source_addr_npi, consts.NPI.PRIVATE);
 		assert.equal(params.source_addr_ton, consts.TON.ABBREVIATED);
-
-		await session.close();
-		await smpp.close();
 	});
 });
 
 describe('receiving', () => {
 	async function inbound(t: TestContext): Promise<{ peer: Session; session: Session }> {
-		const smpp = await startServer();
-
-		t.after(() => smpp.close());
+		const smpp = await startServer(t);
 
 		const bound = once<Session>(resolve => { smpp.on('session', resolve); });
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
-		t.after(() => session.close());
 
 		return { peer: await bound, session };
 	}
@@ -776,12 +732,12 @@ describe('receiving', () => {
 });
 
 describe('delivery reports', () => {
-	test('reaches the sender as a dlr event', async () => {
-		const smpp = await startServer();
+	test('reaches the sender as a dlr event', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
@@ -807,17 +763,14 @@ describe('delivery reports', () => {
 		assert.equal(report.statusMsg, 'DELIVERED');
 		assert.equal(receipt.tlvs.receipted_message_id?.tagValue, 'dlr-id');
 		assert.equal(receipt.tlvs.message_state?.tagValue, 2);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('reports a failure with the spec status code', async () => {
-		const smpp = await startServer();
+	test('reports a failure with the spec status code', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
@@ -844,17 +797,14 @@ describe('delivery reports', () => {
 		assert.equal((await dlr).statusMsg, 'UNDELIVERABLE');
 		// 0.4.0 wrote stat:UNDELIVERABLE, which is not the spec's seven-character field.
 		assert.match(await raw, /stat:UNDELIV /);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('sends a text-only receipt to a peer that declared less than 3.4', async () => {
-		const smpp = await startServer();
+	test('sends a text-only receipt to a peer that declared less than 3.4', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
-		const peer = rawPeer(smpp.port);
+		const peer = rawPeer(t, smpp.port);
 
 		peer.write(bindOf(0x33));
 		await peer.next();
@@ -884,17 +834,14 @@ describe('delivery reports', () => {
 		assert.equal(receipt.cmdName, 'deliver_sm');
 		assert.deepEqual(receipt.tlvs, {});
 		assert.match(paramText(receipt.params.short_message), /stat:DELIVRD/);
-
-		peer.close();
-		await smpp.close();
 	});
 
-	test('merges nothing for a message that asked for no receipt', async () => {
-		const smpp = await startServer();
+	test('merges nothing for a message that asked for no receipt', async t => {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
@@ -917,9 +864,6 @@ describe('delivery reports', () => {
 
 		assert.deepEqual(perSegment, ['unrequested-1', 'unrequested-2', 'unrequested-3']);
 		assert.equal(merged, 0);
-
-		await session.close();
-		await smpp.close();
 	});
 });
 
@@ -935,8 +879,8 @@ describe('a session captured from Kannel', () => {
 
 	const expected = 'Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry\'s standard dummy text ever since the 1500s, when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five centuries, but also the leap into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of Letraset sheets containing Lorem Ipsum passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum';
 
-	async function replay(order: number[]): Promise<Sms> {
-		const smpp = await startServer();
+	async function replay(t: TestContext, order: number[]): Promise<Sms> {
+		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
 		});
@@ -944,6 +888,8 @@ describe('a session captured from Kannel', () => {
 		const sock = net.connect({ port: smpp.port }, () => {
 			sock.write(Buffer.from('0000002100000009000000000000002f666f6f0062617200736d70700034000000', 'hex'));
 		});
+
+		t.after(() => { sock.destroy(); });
 
 		let bound = false;
 
@@ -962,29 +908,28 @@ describe('a session captured from Kannel', () => {
 		const sms = await incoming;
 
 		await sms.sendResp();
-		sock.destroy();
-		await smpp.close();
 
 		return sms;
 	}
 
-	test('reassembles four segments arriving in order', async () => {
-		assert.equal((await replay([0, 1, 2, 3])).message, expected);
+	test('reassembles four segments arriving in order', async t => {
+		assert.equal((await replay(t, [0, 1, 2, 3])).message, expected);
 	});
 
-	test('reassembles the same four segments arriving out of order', async () => {
-		assert.equal((await replay([1, 0, 3, 2])).message, expected);
+	test('reassembles the same four segments arriving out of order', async t => {
+		assert.equal((await replay(t, [1, 0, 3, 2])).message, expected);
 	});
 });
 
 describe('robustness', () => {
 	// 0.4.0 registered a listener per sequence number and waited forever, leaking one per call.
-	test('gives up on a peer that never answers', async () => {
+	test('gives up on a peer that never answers', async t => {
 		const accepted: net.Socket[] = [];
 		// resume() so the socket drains; an unread socket never notices the peer hanging up.
 		const silent = net.createServer(sock => { accepted.push(sock); sock.resume(); });
 
 		await new Promise<void>(resolve => silent.listen(0, resolve));
+		endListenerAfter(t, silent, accepted);
 
 		const address = silent.address();
 		const port = typeof address === 'object' && address !== null ? address.port : 0;
@@ -993,10 +938,6 @@ describe('robustness', () => {
 
 		assert.ok(err instanceof Error);
 		assert.ok(Date.now() - started < 5000, 'should have given up quickly');
-
-		for (const sock of accepted) sock.destroy();
-
-		await new Promise<void>(resolve => silent.close(() => { resolve(); }));
 	});
 
 	test('stops a connection attempt on an aborted signal', async () => {
@@ -1016,8 +957,8 @@ describe('robustness', () => {
 		assert.equal(session, undefined);
 	});
 
-	test('keeps at most maxOutstanding requests on the wire', async () => {
-		const smpp = await startServer();
+	test('keeps at most maxOutstanding requests on the wire', async t => {
+		const smpp = await startServer(t);
 		let concurrent = 0;
 		let peak = 0;
 
@@ -1032,7 +973,7 @@ describe('robustness', () => {
 			});
 		});
 
-		const { session } = await connect(smpp, { maxOutstanding: 2 });
+		const { session } = await connect(t, smpp, { maxOutstanding: 2 });
 
 		assert.ok(session);
 
@@ -1043,17 +984,17 @@ describe('robustness', () => {
 		})));
 
 		assert.ok(peak <= 2, `peak was ${String(peak)}`);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('reports a response it could not send', async () => {
+	test('reports a response it could not send', async t => {
 		const sock = new net.Socket();
 
 		sock.destroy();
 
 		const session = new Session({ sock });
+
+		closeAfter(t, session);
+
 		const failed = once<Error>(resolve => { session.on('sessionError', resolve); });
 		const sent = await session.sendReturn(enquireLink(7));
 		const reported = await raceWithin(500, failed);
@@ -1061,18 +1002,16 @@ describe('robustness', () => {
 		assert.ok(sent.err instanceof Error);
 		assert.ok(reported instanceof Error, 'a response that never reached the wire should be reported');
 		assert.equal(reported.message, sent.err.message);
-
-		await session.close();
 	});
 
-	test('ignores events from the socket it left behind on a reconnect', async () => {
-		const smpp = await startServer();
+	test('ignores events from the socket it left behind on a reconnect', async t => {
+		const smpp = await startServer(t);
 
 		smpp.on('session', bound => {
 			bound.on('sms', sms => { void sms.sendResp(); });
 		});
 
-		const { session } = await connect(smpp, { reconnect: { maxDelay: 50, minDelay: 10 } });
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 50, minDelay: 10 } });
 
 		assert.ok(session);
 
@@ -1098,15 +1037,12 @@ describe('robustness', () => {
 
 		assert.equal(closes, 0);
 		assert.equal(sent.err, undefined);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('closes the session when the signal aborts after the bind', async () => {
-		const smpp = await startServer();
+	test('closes the session when the signal aborts after the bind', async t => {
+		const smpp = await startServer(t);
 		const controller = new AbortController();
-		const { err, session } = await connect(smpp, { signal: controller.signal });
+		const { err, session } = await connect(t, smpp, { signal: controller.signal });
 
 		assert.equal(err, undefined);
 		assert.ok(session);
@@ -1116,20 +1052,16 @@ describe('robustness', () => {
 		controller.abort();
 
 		assert.ok(await closed);
-		await smpp.close();
 	});
 
 	// An aborted send that still reaches the SMSC bills a message the caller believes never went out.
 	test('puts nothing on the wire for a signal that is already aborted', async t => {
-		const smpp = await startServer();
-
-		t.after(() => smpp.close());
+		const smpp = await startServer(t);
 
 		const bound = once<Session>(resolve => { smpp.on('session', resolve); });
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
-		t.after(() => session.close());
 
 		const peer = await bound;
 		const controller = new AbortController();
@@ -1151,17 +1083,14 @@ describe('robustness', () => {
 
 	// The guard sits before the send window, or a full window makes the aborted call queue first.
 	test('does not wait for a send window slot it will never use', async t => {
-		const smpp = await startServer();
-
-		t.after(() => smpp.close());
+		const smpp = await startServer(t);
 
 		// The peer answers nothing, so the one slot stays held for the whole test.
 		smpp.on('session', session => session.on('sms', () => undefined));
 
-		const { session } = await connect(smpp, { maxOutstanding: 1, responseTimeout: 5000 });
+		const { session } = await connect(t, smpp, { maxOutstanding: 1, responseTimeout: 5000 });
 
 		assert.ok(session);
-		t.after(() => session.close());
 
 		const held = session.sendSms({ from: '46701113311', message: 'holds the slot', to: '46709771337' });
 		const controller = new AbortController();
@@ -1182,7 +1111,7 @@ describe('robustness', () => {
 	});
 
 	// A socket the loop opened and never handed over is one leaked per retry, forever.
-	test('leaves no socket open when coming back up fails', async () => {
+	test('leaves no socket open when coming back up fails', async t => {
 		const opened: net.Socket[] = [];
 
 		function onConnected(): Promise<VoidResult> {
@@ -1205,49 +1134,48 @@ describe('robustness', () => {
 			onConnected,
 		});
 
+		t.after(() => {
+			loop.stop();
+
+			for (const sock of opened) {
+				sock.destroy();
+			}
+		});
 		loop.schedule();
 
 		const destroyed = await waitFor(() => opened.length >= 2
 			&& opened[0]?.destroyed === true
 			&& opened[1]?.destroyed === true);
 
-		loop.stop();
-
-		for (const sock of opened) {
-			sock.destroy();
-		}
-
 		assert.ok(destroyed, 'a failed setup should leave no socket open');
 	});
 });
 
 describe('application hooks that throw or reject', () => {
-	test('turns a throwing authenticate into a session error', async () => {
-		const smpp = await startServer({
+	test('turns a throwing authenticate into a session error', async t => {
+		const smpp = await startServer(t, {
 			authenticate: () => { throw new Error('authenticate exploded'); },
 		});
 		const failed = once<Error>(resolve => {
 			smpp.on('session', session => { session.on('sessionError', resolve); });
 		});
-		const { err } = await connect(smpp, { responseTimeout: 200 });
+		const { err } = await connect(t, smpp, { responseTimeout: 200 });
 		const reported = await raceWithin(500, failed);
 
 		assert.ok(err instanceof Error);
 		assert.ok(reported instanceof Error, 'a throwing authenticate should reach the session');
 		assert.equal(reported.message, 'authenticate exploded');
-
-		await smpp.close();
 	});
 
-	test('turns a throwing sms listener into a session error', async () => {
-		const smpp = await startServer();
+	test('turns a throwing sms listener into a session error', async t => {
+		const smpp = await startServer(t);
 		const failed = once<Error>(resolve => {
 			smpp.on('session', session => {
 				session.on('sessionError', resolve);
 				session.on('sms', () => { throw new Error('listener exploded'); });
 			});
 		});
-		const { session } = await connect(smpp, { responseTimeout: 200 });
+		const { session } = await connect(t, smpp, { responseTimeout: 200 });
 
 		assert.ok(session);
 
@@ -1261,21 +1189,18 @@ describe('application hooks that throw or reject', () => {
 		assert.ok(sent.err instanceof Error);
 		assert.ok(reported instanceof Error, 'a throwing sms listener should reach the session');
 		assert.equal(reported.message, 'listener exploded');
-
-		await session.close();
-		await smpp.close();
 	});
 
 	// The guard for a throwing sms listener used to emit sessionError from inside its own catch.
-	test('survives a sessionError listener that throws as well', async () => {
-		const smpp = await startServer();
+	test('survives a sessionError listener that throws as well', async t => {
+		const smpp = await startServer(t);
 
 		smpp.on('session', session => {
 			session.on('sessionError', () => { throw new Error('the reporter exploded too'); });
 			session.on('sms', () => { throw new Error('listener exploded'); });
 		});
 
-		const { session } = await connect(smpp, { responseTimeout: 200 });
+		const { session } = await connect(t, smpp, { responseTimeout: 200 });
 
 		assert.ok(session);
 
@@ -1286,13 +1211,10 @@ describe('application hooks that throw or reject', () => {
 		});
 
 		assert.ok(sent.err instanceof Error);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('normalises whatever a rejecting async sms listener threw into a session error', async () => {
-		const smpp = await startServer();
+	test('normalises whatever a rejecting async sms listener threw into a session error', async t => {
+		const smpp = await startServer(t);
 		const reason: unknown = null;
 		const failed = once<Error>(resolve => {
 			smpp.on('session', session => {
@@ -1304,7 +1226,7 @@ describe('application hooks that throw or reject', () => {
 				});
 			});
 		});
-		const { session } = await connect(smpp, { responseTimeout: 200 });
+		const { session } = await connect(t, smpp, { responseTimeout: 200 });
 
 		assert.ok(session);
 
@@ -1318,20 +1240,17 @@ describe('application hooks that throw or reject', () => {
 		assert.equal(sent.err, undefined);
 		assert.ok(reported instanceof Error, 'a rejecting sms listener should reach the session');
 		assert.equal(reported.message, 'null');
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('survives a sessionError listener that rejects as well', async () => {
-		const smpp = await startServer();
+	test('survives a sessionError listener that rejects as well', async t => {
+		const smpp = await startServer(t);
 
 		smpp.on('session', session => {
 			session.on('sessionError', () => Promise.reject(new Error('the reporter rejected too')));
 			session.on('sms', () => Promise.reject(new Error('listener rejected')));
 		});
 
-		const { session } = await connect(smpp, { responseTimeout: 200 });
+		const { session } = await connect(t, smpp, { responseTimeout: 200 });
 
 		assert.ok(session);
 
@@ -1342,68 +1261,60 @@ describe('application hooks that throw or reject', () => {
 		});
 
 		assert.ok(sent.err instanceof Error);
-
-		await session.close();
-		await smpp.close();
 	});
 
-	test('turns a rejecting session listener into a server error', async () => {
-		const smpp = await startServer();
+	test('turns a rejecting session listener into a server error', async t => {
+		const smpp = await startServer(t);
 		const failed = once<Error>(resolve => { smpp.on('serverError', resolve); });
 
 		smpp.on('session', () => Promise.reject(new Error('session listener rejected')));
 
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 		const reported = await raceWithin(500, failed);
 
 		assert.ok(reported instanceof Error, 'a rejecting session listener should reach the server');
 		assert.equal(reported.message, 'session listener rejected');
 
 		await session?.close();
-		await smpp.close();
 	});
 
-	test('closes even when an application close listener throws', async () => {
-		const smpp = await startServer();
+	test('closes even when an application close listener throws', async t => {
+		const smpp = await startServer(t);
 
 		smpp.on('session', session => {
 			session.on('close', () => { throw new Error('close listener exploded'); });
 		});
 
-		const { session } = await connect(smpp);
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 		await smpp.close();
 		assert.equal(smpp.sessions.size, 0);
-
-		await session.close();
 	});
 
-	test('refuses a send window that can never free a slot', async () => {
-		const smpp = await startServer();
-		const { err, session } = await connect(smpp, { maxOutstanding: 0 });
+	test('refuses a send window that can never free a slot', async t => {
+		const smpp = await startServer(t);
+		const { err, session } = await connect(t, smpp, { maxOutstanding: 0 });
 
 		assert.ok(err instanceof Error);
 		assert.match(err.message, /maxOutstanding/);
 		assert.equal(session, undefined);
 
-		const negative = await connect(smpp, { shutdownTimeout: -1 });
+		const negative = await connect(t, smpp, { shutdownTimeout: -1 });
 
 		assert.ok(negative.err instanceof Error);
 		assert.match(negative.err.message, /shutdownTimeout/);
 		assert.equal(negative.session, undefined);
-
-		await smpp.close();
 	});
 
-	test('keeps the message id off a submit_sm_resp that refuses the message', async () => {
-		const smpp = await startServer();
+	test('keeps the message id off a submit_sm_resp that refuses the message', async t => {
+		const smpp = await startServer(t);
 
 		smpp.on('session', bound => {
 			bound.on('sms', sms => { void sms.sendResp({ status: 'ESME_RMSGQFUL' }); });
 		});
 
-		const peer = rawPeer(smpp.port);
+		const peer = rawPeer(t, smpp.port);
 
 		peer.write(bindOf(0x34));
 		await peer.next();
@@ -1423,12 +1334,9 @@ describe('application hooks that throw or reject', () => {
 		assert.equal(refused.cmdStatus, 'ESME_RMSGQFUL');
 		assert.equal(refused.cmdLength, 16);
 		assert.deepEqual(refused.params, {});
-
-		peer.close();
-		await smpp.close();
 	});
 
-	test('keeps the reconnect loop alive when connect throws', async () => {
+	test('keeps the reconnect loop alive when connect throws', async t => {
 		let attempts = 0;
 		const loop = new ReconnectLoop({
 			connect: () => {
@@ -1442,16 +1350,15 @@ describe('application hooks that throw or reject', () => {
 			onConnected: () => Promise.resolve({}),
 		});
 
+		t.after(() => { loop.stop(); });
 		loop.schedule();
 
 		const retried = await waitFor(() => attempts >= 2);
 
-		loop.stop();
-
 		assert.ok(retried, 'a throwing connect should be retried, not left for the process to die on');
 	});
 
-	test('starts only one reconnect attempt at a time', async () => {
+	test('starts only one reconnect attempt at a time', async t => {
 		let attempts = 0;
 		let finish: (() => void) | undefined;
 		const loop = new ReconnectLoop({
@@ -1468,6 +1375,10 @@ describe('application hooks that throw or reject', () => {
 			onConnected: () => Promise.resolve({}),
 		});
 
+		t.after(() => {
+			loop.stop();
+			finish?.();
+		});
 		loop.schedule();
 
 		assert.ok(await waitFor(() => attempts === 1));
@@ -1477,19 +1388,17 @@ describe('application hooks that throw or reject', () => {
 		await delay(30);
 
 		assert.equal(attempts, 1);
-
-		loop.stop();
-		finish?.();
 	});
 });
 
 describe('link timers', () => {
-	test('closes a client link the peer has stopped answering', async () => {
-		const peer = await bindOnlyPeer();
+	test('closes a client link the peer has stopped answering', async t => {
+		const peer = await bindOnlyPeer(t);
 		const { err, session } = await client({ enquireLinkInterval: 50, port: peer.port });
 
 		assert.equal(err, undefined);
 		assert.ok(session);
+		closeAfter(t, session);
 
 		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
 
@@ -1497,13 +1406,10 @@ describe('link timers', () => {
 			await raceWithin(1000, closed),
 			'a peer that answers nothing should time the link out',
 		);
-
-		await session.close();
-		await peer.close();
 	});
 
-	test('reconnects a link that timed out', async () => {
-		const peer = await bindOnlyPeer();
+	test('reconnects a link that timed out', async t => {
+		const peer = await bindOnlyPeer(t);
 		const { session } = await client({
 			enquireLinkInterval: 40,
 			port: peer.port,
@@ -1511,13 +1417,11 @@ describe('link timers', () => {
 		});
 
 		assert.ok(session);
+		closeAfter(t, session);
 
 		const back = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
 
 		assert.ok(await raceWithin(2000, back), 'a link that timed out should be reconnected');
-
-		await session.close();
-		await peer.close();
 	});
 });
 

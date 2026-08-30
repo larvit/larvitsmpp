@@ -4,6 +4,7 @@ import reference from 'smpp';
 import type { ReferenceSession } from 'smpp';
 import type { Sms } from '../src/sms.ts';
 import { client } from '../src/client.ts';
+import { closeAfter } from './teardown.ts';
 import { concatInfo } from '../src/udh.ts';
 import { objToPdu, pduToObj } from '../src/pdu.ts';
 import { server } from '../src/server.ts';
@@ -232,10 +233,9 @@ describe('a live session against the reference implementation', () => {
 		const port = refServer.address()?.port ?? 0;
 		const { err, session } = await client({ port });
 
-		t.after(() => session?.close());
-
 		assert.equal(err, undefined);
 		assert.ok(session);
+		closeAfter(t, session);
 
 		const sent = await session.sendSms({
 			from: 'MyBrand',
@@ -251,10 +251,9 @@ describe('a live session against the reference implementation', () => {
 	test('a reference client binds to our server and delivers an SMS', async t => {
 		const { err: serverErr, server: smpp } = await server({ port: 0 });
 
-		t.after(async () => { await smpp?.close(); });
-
 		assert.equal(serverErr, undefined);
 		assert.ok(smpp);
+		closeAfter(t, smpp);
 
 		const incoming = new Promise<Sms>(resolve => {
 			smpp.on('session', session => session.on('sms', resolve));
