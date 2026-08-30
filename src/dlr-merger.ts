@@ -41,8 +41,7 @@ const severity: Record<MessageState, number> = {
  * Merges the per-segment receipts of a multipart message into one report, but only when the peer
  * numbered its ids `<base>-<n>` off one base — the convention this library's own server follows. An
  * SMSC that hands out unrelated ids per segment cannot be merged, so nothing is reported for it.
- * A base is merged at most once: a receipt under an id the peer has handed out before cannot be
- * told from a straggler for the message that held it first.
+ * A base is merged at most once: a reused id cannot be told apart from a straggler.
  */
 export class DlrMerger {
 	private readonly groups: ExpiringGroups<Group>;
@@ -62,7 +61,7 @@ export class DlrMerger {
 		this.spent = new ExpiringGroups<true>({
 			max: options.max,
 			now: options.now,
-			onSweep: () => { this.sweep(); },
+			onSweep: () => { this.spent.takeExpired(); },
 			timeout: options.timeout,
 		});
 	}
@@ -131,14 +130,14 @@ export class DlrMerger {
 			this.close(base);
 			this.log.info('dlrMerger - incomplete receipts expired', { base, expected: group.expected });
 		}
-
-		this.spent.takeExpired();
 	}
 
 	private open(base: string, expected: number): void {
+		this.spent.takeExpired();
+
 		if (this.groups.get(base) !== undefined || this.spent.get(base) === true) {
 			this.close(base);
-			this.log.warn('dlrMerger - message id handed out again, leaving its receipts unmerged', { base });
+			this.log.info('dlrMerger - message id handed out again, leaving its receipts unmerged', { base });
 
 			return;
 		}
@@ -148,11 +147,11 @@ export class DlrMerger {
 		this.groups.set(base, { expected, parts: new Map() });
 	}
 
-	/** Ends the base: whatever it still held goes, and it is remembered so nothing merges under it again. */
 	private close(base: string): void {
 		this.groups.delete(base);
+		this.spent.delete(base);
 
-		if (this.spent.full && this.spent.get(base) === undefined) this.spent.takeOldest();
+		if (this.spent.full) this.spent.takeOldest();
 
 		this.spent.set(base, true);
 	}
@@ -165,6 +164,6 @@ export class DlrMerger {
 		const [base] = oldest;
 
 		this.close(base);
-		this.log.warn('dlrMerger - buffer full, dropping the oldest message', { max: this.max });
+		this.log.warn('dlrMerger - buffer full, dropping the oldest message', { base, max: this.max });
 	}
 }

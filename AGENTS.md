@@ -247,9 +247,9 @@ exactly 140.
   straggler for a message whose group is gone cannot be told from a receipt for a later message the
   peer handed the same ids — an SMSC whose id counter restarts with its process is the realistic
   case. `DlrMerger` remembers the bases it has finished with, capped and expiring exactly like the
-  groups, and refuses to open one a second time: the later message gets no `messageDlr` rather than
-  the earlier one's receipts folded into its report. Every segment still reaches the application as
-  a `dlr`.
+  groups, and refuses to open one a second time. Neither message merges: the later one gets no
+  `messageDlr`, and an earlier one whose receipts are still arriving is dropped rather than left to
+  collect the later one's. Every segment still reaches the application as a `dlr`.
 
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image

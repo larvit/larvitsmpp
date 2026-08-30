@@ -144,6 +144,11 @@ session message is a change to every call site.
       `node --test` never exits: all four CI legs burn the ten-minute cap instead of reporting the
       five-second failure. `t.after(() => smpp.close())` fixes it, at every call site.
 
+- [ ] **A peer whose message ids share one base logs a refused merge on every send.** `smsc01-000123`
+      and `smsc01-000124` carry the same base, so `DlrMerger` merges the first message and refuses
+      every one after it, one log line per send. Left at `info` — nothing the operator can fix is
+      wrong — but a rate guard or silence may suit it better. Raised by review, 2026-08-30.
+
 - [ ] **`submit_multi` and the broadcast commands** encode and decode, but nothing exercises them
       end to end. The interop suite is the natural place.
 - [ ] **Move to TypeScript 7** once `typescript-eslint` supports it; `renovate.json` pins TypeScript

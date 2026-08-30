@@ -1563,6 +1563,11 @@ describe('merged delivery report bounds', () => {
 		assert.equal(dlrMerger.collect(receipt('first-1')), undefined);
 		assert.equal(dlrMerger.collect(receipt('first-2')), undefined);
 
+		dlrMerger.expect(['first-1', 'first-2']);
+
+		assert.equal(dlrMerger.collect(receipt('first-1')), undefined);
+		assert.equal(dlrMerger.collect(receipt('first-2')), undefined);
+
 		dlrMerger.clear();
 		assert.equal(dlrMerger.size, 0);
 	});
@@ -1596,6 +1601,26 @@ describe('merged delivery report bounds', () => {
 		assert.equal(dlrMerger.size, 0);
 		assert.equal(dlrMerger.collect(receipt('reused-1')), undefined);
 		assert.equal(dlrMerger.collect(receipt('reused-2')), undefined);
+	});
+
+	test('forgets the base closed longest ago, not the one handed out again', () => {
+		const dlrMerger = merger({ max: 2 });
+
+		for (const base of ['reused', 'other']) {
+			dlrMerger.expect([`${base}-1`, `${base}-2`]);
+			assert.equal(dlrMerger.collect(receipt(`${base}-1`)), undefined);
+			assert.ok(dlrMerger.collect(receipt(`${base}-2`)));
+		}
+
+		dlrMerger.expect(['reused-1', 'reused-2']);
+		dlrMerger.expect(['third-1', 'third-2']);
+
+		assert.equal(dlrMerger.collect(receipt('third-1')), undefined);
+		assert.ok(dlrMerger.collect(receipt('third-2')));
+
+		dlrMerger.expect(['reused-1', 'reused-2']);
+
+		assert.equal(dlrMerger.size, 0);
 	});
 
 	test('keeps another message when a held base is opened again', () => {
