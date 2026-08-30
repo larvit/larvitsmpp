@@ -264,9 +264,12 @@ exactly 140.
   `unbind()` then waits `responseTimeout` for its own response, and sends that PDU through
   `request()` past both the window and the drain gate because it must go out either way. A stream
   the framer or the codec cannot read takes `end()` instead, and so does `close({ signal })` on an
-  aborted signal — nothing on a dead link can answer, and an abort means stop now, so draining
-  either would only hold a socket open for the timeout. `shutdownTimeout` stays a session option
-  rather than a `close()` argument: `server()` builds sessions on the caller's behalf, so the option
+  aborted signal and a peer's own `unbind` — nothing on a dead link can answer, an abort means stop
+  now, and a peer that has declared itself finished will not answer what it still owes us, so
+  draining any of the three would only hold a socket open for the timeout. `SmppServer.close()`
+  reports each session's unfinished drain through `serverError`, because its own result says
+  nothing but that the listener stopped. `shutdownTimeout` stays a session option rather than a
+  `close()` argument: `server()` builds sessions on the caller's behalf, so the option
   is the only composition point, and `close({ signal })` already covers a hard deadline.
 
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of

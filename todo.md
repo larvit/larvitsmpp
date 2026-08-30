@@ -5,7 +5,7 @@ rules there constrain every item below.
 
 ## Status
 
-The rewrite is **feature complete and green**: 246 tests, lint and typecheck clean, verified on Node
+The rewrite is **feature complete and green**: 248 tests, lint and typecheck clean, verified on Node
 18, 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ```bash
@@ -124,7 +124,7 @@ session message is a change to every call site.
       loses every incomplete group, and a peer has no reason to resend a receipt it already had
       answered. Surviving one means exposing the merge state for the application to persist and hand
       back, which is a public-surface decision.
-- [ ] **`session.ts` is 465 lines.** The one seam left in it is a socket-to-PDU transport, which
+- [ ] **`session.ts` is 468 lines.** The one seam left in it is a socket-to-PDU transport, which
       would move the deliberately public `sock` field out of `Session` or turn it into a getter —
       a public-surface change, so it waits for a decision.
 - [ ] **Group the session's collaborators under `src/session/`.** Only `session.ts` imports

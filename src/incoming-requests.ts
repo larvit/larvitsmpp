@@ -70,7 +70,8 @@ export class IncomingRequests {
 				break;
 			case 'unbind':
 				await this.session.sendReturn(pduObj);
-				await this.session.close();
+				// A peer that has said it is finished will not answer what we still have outstanding.
+				await this.session.close({ signal: AbortSignal.abort() });
 				break;
 			default:
 				await this.unhandled(pduObj);

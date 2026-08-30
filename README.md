@@ -309,13 +309,13 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 
 ### Methods
 
-`sendSms()`, `send()`, `sendReturn()`, `unbind()` and `close()`. `close()` and `unbind()` both
-refuse further sends, wait out the requests this end already sent — up to `shutdownTimeout`, or
-until an `AbortSignal` given as `close({ signal })` says to stop now — and then tear down whatever
-is left, resolving to an `err` that says what was lost. A request the peer sent *us* is answered
-through `sendReturn()` and is not waited for, and `unbind()` waits a further `responseTimeout` for
-its own response. `send()` reaches any of the 33 SMPP commands the codec knows, not just the four
-the session handles natively:
+`sendSms()`, `send()`, `sendReturn()`, `unbind()` and `close()`. Both `close()` and `unbind()`
+refuse further sends, wait out the requests this end already sent for up to `shutdownTimeout`, and
+then tear down whatever is left, resolving to an `err` that says what was lost. A request the peer
+sent *us* is answered through `sendReturn()` and is not waited for. `close({ signal })` takes an
+`AbortSignal` that cuts the wait short; `unbind()` takes none, and waits a further
+`responseTimeout` for its own response. `send()` reaches any of the 33 SMPP commands the codec
+knows, not just the four the session handles natively:
 
 ```javascript
 const { err, pduObj } = await session.send({
@@ -353,8 +353,9 @@ The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `
 ## Migrating from larvitsmpp 0.4.0
 
 - **The package is now `@larvit/smpp`** and is ESM only. `require()` no longer works.
-- **Callbacks are gone.** `client`, `server`, `sendSms`, `sendResp` and `sendDlr` are all promises
-  resolving to a result object with an optional `err`. Nothing rejects.
+- **Callbacks are gone.** `client`, `server`, `sendSms`, `sendResp`, `sendDlr`, `unbind` and
+  `session.close` are all promises resolving to a result object with an optional `err`. Nothing
+  rejects. Await `close()` or the socket outlives the call.
 - **`server()` resolves once, when it is listening**, and gives you a handle with `close()`, `port`
   and a `session` event. It no longer calls your callback once per incoming connection.
 - **The id a message is answered with goes to `sendResp({ smsId })`**, and `sms.smsId` is read-only:

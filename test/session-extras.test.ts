@@ -8,15 +8,16 @@ import type { MessageDlr } from '../src/session.ts';
 import type { PduObject, PduObjectInput } from '../src/pdu.ts';
 import type { Result } from '../src/result.ts';
 import type { SendSmsResult } from '../src/send-sms.ts';
-import type { Session } from '../src/session.ts';
 import type { SmppLog } from '../src/log.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import { Reassembler, decodeSegments } from '../src/reassembly.ts';
+import { Session } from '../src/session.ts';
 import { DlrMerger } from '../src/dlr-merger.ts';
 import { client } from '../src/client.ts';
 import { consts } from '../src/defs/constants.ts';
 import { errors } from '../src/defs/errors.ts';
+import { objToPdu } from '../src/pdu.ts';
 import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
 import { submitSms } from '../src/send-sms.ts';
@@ -42,6 +43,20 @@ function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
 			resolve(value);
 		});
 	});
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise(resolve => { setTimeout(resolve, ms); });
+}
+
+type Gate = { open: () => void; passed: Promise<true> };
+
+/** A promise the test opens by hand, guarded by once() against waiting on one it never does. */
+function gate(): Gate {
+	const opener: { open?: () => void } = {};
+	const passed = once<true>(resolve => { opener.open = () => { resolve(true); }; });
+
+	return { open: () => opener.open?.(), passed };
 }
 
 describe('merged delivery reports', () => {
@@ -668,7 +683,7 @@ describe('graceful shutdown', () => {
 		const closed = await closing;
 
 		assert.ok(closed.err instanceof Error);
-		assert.match(closed.err.message, /dropped/);
+		assert.match(closed.err.message, /closed before the drain finished/);
 		assert.ok((await sent).err instanceof Error);
 
 		await smpp.close();
@@ -741,5 +756,83 @@ describe('graceful shutdown', () => {
 		await closing;
 
 		assert.ok((await unanswered).err instanceof Error);
+	});
+
+	// Waiting on a peer that has just declared itself finished is dead time, unbounded at 0.
+	test('tears down at once when the peer unbinds rather than draining for it', async () => {
+		const smpp = await startServer({ shutdownTimeout: 0 });
+		const arrived = once<Session>(resolve => { smpp.on('session', resolve); });
+		const peer = net.connect({ port: smpp.port });
+
+		peer.resume();
+
+		const bound = await arrived;
+		const ended = once<true>(resolve => { bound.on('close', () => { resolve(true); }); });
+		const unanswered = bound.send({ cmdName: 'enquire_link' });
+		const { buffer } = objToPdu({ cmdName: 'unbind', seqNr: 1 });
+
+		assert.ok(buffer);
+		peer.write(buffer);
+
+		assert.ok(await ended);
+		assert.ok((await unanswered).err instanceof Error);
+
+		peer.destroy();
+		await smpp.close();
+	});
+
+	test('does not report a reconnect on a session closed while it was coming back up', async () => {
+		const listener = net.createServer(sock => { sock.resume(); });
+
+		await new Promise<void>(resolve => { listener.listen(0, resolve); });
+
+		const address = listener.address();
+		const port = typeof address === 'object' && address !== null ? address.port : 0;
+		const opened: net.Socket[] = [];
+		const open = (): Promise<Result<{ sock: net.Socket }>> => new Promise(resolve => {
+			const sock = net.connect({ port }, () => { resolve({ sock }); });
+
+			opened.push(sock);
+		});
+		const first = await open();
+
+		assert.ok(first.sock);
+
+		const rebinding = gate();
+		const release = gate();
+		const session = new Session({
+			reconnect: {
+				connect: open,
+				maxDelay: 20,
+				minDelay: 10,
+				onConnected: async () => {
+					rebinding.open();
+					await release.passed;
+
+					return {};
+				},
+			},
+			sock: first.sock,
+		});
+		const reported: string[] = [];
+
+		session.on('reconnected', () => reported.push('reconnected'));
+		first.sock.destroy();
+
+		assert.ok(await rebinding.passed);
+
+		const closing = session.close();
+
+		release.open();
+		await closing;
+		await delay(50);
+
+		assert.deepEqual(reported, []);
+
+		for (const sock of opened) {
+			sock.destroy();
+		}
+
+		await new Promise<void>(resolve => { listener.close(() => { resolve(); }); });
 	});
 });

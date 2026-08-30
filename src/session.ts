@@ -273,6 +273,13 @@ export class Session extends EventEmitter<SessionEvents> {
 			return { err: bound.err };
 		}
 
+		// close() can land while the rebind is in flight, and it has nothing left to tear down.
+		if (this.reconnectLoop?.isStopped() === true) {
+			this.teardown();
+
+			return { err: new Error('Session closed while it was coming back up') };
+		}
+
 		this.resetTimers();
 		this.log.info('session - reconnected');
 		this.emit('reconnected');
@@ -327,10 +334,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		return response;
 	}
 
-	/**
-	 * Stops new sends and waits out the ones already issued, which only covers what this end sent:
-	 * a request the peer sent us is answered through sendReturn(), which never enters the window.
-	 */
+	/** Stops new sends and waits out the ones already issued. */
 	private async drain(signal: AbortSignal | undefined): Promise<VoidResult> {
 		this.reconnectLoop?.stop();
 		this.draining = true;
@@ -340,8 +344,8 @@ export class Session extends EventEmitter<SessionEvents> {
 		const timeout = this.options.shutdownTimeout ?? defaults.shutdownTimeout;
 		const unfinished = await this.window.idle(timeout, signal);
 
-		// The window empties on a drop too: teardown() settles everything the link was carrying.
-		if (this.isClosed()) return { err: new Error('The link dropped before the drain finished') };
+		// The window empties on a teardown too, which settles everything the link was carrying.
+		if (this.isClosed()) return { err: new Error('The session closed before the drain finished') };
 
 		if (unfinished === 0) return {};
 

@@ -118,7 +118,6 @@ export class SmppServer extends EventEmitter<ServerEvents> {
 
 	/** Stops listening, then drains and closes every session that was live when it stopped. */
 	async close(options: CloseOptions = {}): Promise<void> {
-		// Before the drain, or the listener keeps accepting connections nothing will ever close.
 		const stopped = new Promise<void>(resolve => { this.server.close(() => { resolve(); }); });
 		const live = [...this.sessions];
 
