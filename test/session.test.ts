@@ -298,6 +298,21 @@ describe('bind', () => {
 		assert.equal(await responded, '00000010800000150000000400000001');
 	});
 
+	test('answers the enquire_link a bound peer sends', async t => {
+		const smpp = await startServer(t);
+		const peer = rawPeer(t, smpp.port);
+
+		peer.write(bindOf(0x34));
+		await peer.next();
+		peer.write({ cmdName: 'enquire_link', seqNr: 2 });
+
+		const answered = await peer.next();
+
+		assert.equal(answered.cmdName, 'enquire_link_resp');
+		assert.equal(answered.cmdStatus, 'ESME_ROK');
+		assert.equal(answered.seqNr, 2);
+	});
+
 	test('declares SMPP 3.4 by default and the version the caller asks for', async t => {
 		const smpp = await startServer(t);
 		const declared: (number | undefined)[] = [];
@@ -1094,7 +1109,8 @@ describe('robustness', () => {
 
 		assert.ok(session);
 
-		const held = session.sendSms({ from: '46701113311', message: 'holds the slot', to: '46709771337' });
+		void session.sendSms({ from: '46701113311', message: 'holds the slot', to: '46709771337' });
+
 		const controller = new AbortController();
 
 		controller.abort();
@@ -1107,9 +1123,6 @@ describe('robustness', () => {
 
 		assert.notEqual(aborted, false, 'an aborted send should not wait for the window');
 		assert.ok(aborted !== false && aborted.err instanceof Error);
-
-		await session.close();
-		await held;
 	});
 
 	// A socket the loop opened and never handed over is one leaked per retry, forever.

@@ -161,8 +161,9 @@ exactly 140.
   listener; anything else takes a bare `t.after`. Its close aborts rather than drains, so a test that
   fails holding the send window still ends.
 - `t.after` hooks run in registration order, so registering at creation tears the outermost resource
-  down first — the wrong way round for a listener, which blocks until every connection on it is gone.
-  A listener's own hook goes last, after the hooks that close what is connected to it.
+  down first. A teardown that waits on a listener must destroy that listener's own connections before
+  it waits, or be registered after the hook that does — `net.Server.close()` does not call back until
+  every connection on it is gone.
 - `assert.equal` from `node:assert/strict` narrows its first argument, so a following `?.` on the
   same value is flagged as unnecessary. Assert once with `assert.ok(x)` and use plain access after.
 
