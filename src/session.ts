@@ -11,14 +11,14 @@ import { DlrMerger } from './dlr-merger.ts';
 import { EventEmitter } from 'node:events';
 import { IncomingRequests } from './incoming-requests.ts';
 import { LinkTimers } from './link-timers.ts';
-import { PduFramer } from './pdu-framer.ts';
+import { PduTransport } from './pdu-transport.ts';
 import { PendingRequests } from './pending-requests.ts';
 import { ReconnectLoop } from './reconnect-loop.ts';
 import { SendWindow } from './send-window.ts';
 import { errorFrom } from './error-from.ts';
 import { optionalParamsMinVersion } from './defs/constants.ts';
 import { bindCarries, bindCommands, defaultSystemId, defaults } from './session-options.ts';
-import { isResp, objToPdu, pduReturn, pduToObj } from './pdu.ts';
+import { isResp, objToPdu, pduReturn } from './pdu.ts';
 import { silentLog } from './log.ts';
 import { submitSms } from './send-sms.ts';
 
@@ -47,8 +47,6 @@ export class Session extends EventEmitter<SessionEvents> {
 	declare prependOnceListener: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
 	declare removeListener: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
 
-	/** Replaced on reconnect, so hold the session rather than this. */
-	sock: Socket;
 	readonly log: SmppLog;
 
 	/** The role the ESME bound with, whichever end of the link this is. Undefined before any bind. */
@@ -64,12 +62,13 @@ export class Session extends EventEmitter<SessionEvents> {
 	private readonly pending: PendingRequests;
 	private readonly reconnectLoop: ReconnectLoop | undefined;
 	private readonly timers: LinkTimers;
+	private readonly transport: PduTransport;
 	private readonly window: SendWindow;
 
 	private closed = false;
 	private concatReference = 0;
 	private draining = false;
-	private framer = new PduFramer();
+	private ended = false;
 
 	/** A listener that throws is the application's bug; it must not become ours. Hard rule 1. */
 	override emit<K extends keyof SessionEvents>(
@@ -126,7 +125,6 @@ export class Session extends EventEmitter<SessionEvents> {
 		});
 		this.pending = new PendingRequests(this.log);
 		this.reconnectLoop = this.loopFor(options.reconnect);
-		this.sock = options.sock;
 		this.timers = new LinkTimers({
 			enquireLinkInterval: options.enquireLinkInterval,
 			idleTimeout: options.idleTimeout,
@@ -135,10 +133,16 @@ export class Session extends EventEmitter<SessionEvents> {
 			// Not close(): a link that went quiet is a drop, and a drop is what reconnect is for.
 			onIdle: () => { this.teardown(); },
 		});
+		this.transport = this.transportFor(options.sock);
 		this.window = new SendWindow(options.maxOutstanding ?? defaults.maxOutstanding);
 
 		this.attach(options.sock);
 		this.resetTimers();
+	}
+
+	/** Replaced on reconnect, so hold the session rather than this. */
+	get sock(): Socket {
+		return this.transport.sock;
 	}
 
 	/** Whether this session's bind direction carries a command. Consulted by the library's senders. */
@@ -187,7 +191,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		tlvs?: Record<string, TlvInput>,
 	): Promise<VoidResult> {
 		const built = pduReturn(pdu, status, params, tlvs);
-		const sent = built.err ? { err: built.err } : this.write(built.buffer);
+		const sent = built.err ? { err: built.err } : this.transport.write(built.buffer);
 
 		// A peer that unbinds and drops the link takes our response with it; that is not a failure.
 		if (sent.err && !this.closed) {
@@ -249,6 +253,21 @@ export class Session extends EventEmitter<SessionEvents> {
 		return drained;
 	}
 
+	private transportFor(sock: Socket): PduTransport {
+		return new PduTransport({
+			log: this.log,
+			onClose: () => { this.onClose(); },
+			onData: chunk => { this.onData(chunk); },
+			onError: err => { this.emit('sessionError', err); },
+			onFramed: pdu => { this.emit('incomingPdu', pdu); },
+			onPdu: pduObj => { this.dispatch(pduObj); },
+			onUnreadable: err => {
+				this.emit('sessionError', err);
+				this.end();
+			},
+		}, sock);
+	}
+
 	private loopFor(reconnect: ReconnectOptions | undefined): ReconnectLoop | undefined {
 		if (!reconnect) return undefined;
 
@@ -289,22 +308,9 @@ export class Session extends EventEmitter<SessionEvents> {
 		return {};
 	}
 
-	/** Wires a freshly opened socket into this session, replacing any previous one. */
 	private attach(sock: Socket): void {
-		// The socket being replaced is already dead, and its three handlers still point here.
-		if (this.sock !== sock) this.sock.removeAllListeners();
-
-		this.sock = sock;
-		this.framer = new PduFramer();
+		this.transport.attach(sock);
 		this.closed = false;
-
-		sock.on('data', chunk => { this.onData(chunk); });
-		sock.on('close', () => { this.onClose(); });
-		sock.on('error', err => {
-			this.log.warn('session - socket error', { message: err.message });
-			this.emit('sessionError', err);
-			this.onClose();
-		});
 	}
 
 	private async request(
@@ -325,7 +331,7 @@ export class Session extends EventEmitter<SessionEvents> {
 			signal: options.signal,
 			timeout: this.options.responseTimeout ?? defaults.responseTimeout,
 		});
-		const written = this.write(built.buffer);
+		const written = this.transport.write(built.buffer);
 
 		if (written.err) {
 			this.pending.settle(seqNr, { err: written.err });
@@ -366,6 +372,15 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.reconnectLoop?.stop();
 		this.teardown();
 		this.dlrMerger.clear();
+		this.emitClose();
+	}
+
+	/** A session torn down by a drop the loop was retrying reaches here with nothing left to tear down. */
+	private emitClose(): void {
+		if (this.ended) return;
+
+		this.ended = true;
+		this.emit('close');
 	}
 
 	private teardown(): void {
@@ -376,10 +391,11 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.pending.settleAll(new Error('Session closed before a response arrived'));
 		this.incoming.clear();
 		this.sock.destroy();
-		this.emit(this.retrying() ? 'disconnected' : 'close');
+
+		if (this.retrying()) this.emit('disconnected');
+		else this.emitClose();
 	}
 
-	/** A drop the loop will bring the session back from is a disconnect, not the end of it. */
 	private retrying(): boolean {
 		return this.reconnectLoop !== undefined && !this.reconnectLoop.isStopped();
 	}
@@ -390,55 +406,9 @@ export class Session extends EventEmitter<SessionEvents> {
 		return this.concatReference;
 	}
 
-	private write(pdu: Buffer): VoidResult {
-		if (this.sock.destroyed) {
-			return { err: new Error('Socket is closed') };
-		}
-
-		this.sock.write(pdu);
-
-		return {};
-	}
-
 	private onData(chunk: Buffer): void {
 		this.emit('data', chunk);
 		this.resetTimers();
-		this.framer.push(chunk);
-
-		const framed = this.framer.next();
-
-		if (framed.err) {
-			this.log.warn('session - unusable stream, closing', { message: framed.err.message });
-			this.emit('sessionError', framed.err);
-			this.end();
-
-			return;
-		}
-
-		for (const pdu of framed.pdus) {
-			if (!this.receive(pdu)) return;
-		}
-	}
-
-	/** False means the PDU could not be read and the session has been closed. */
-	private receive(pdu: Buffer): boolean {
-		this.emit('incomingPdu', pdu);
-
-		const parsed = pduToObj(pdu);
-
-		if (parsed.err) {
-			this.log.warn('session - could not parse an incoming PDU, closing', {
-				message: parsed.err.message,
-			});
-			this.emit('sessionError', parsed.err);
-			this.end();
-
-			return false;
-		}
-
-		this.dispatch(parsed.pduObj);
-
-		return true;
 	}
 
 	private dispatch(pduObj: PduObject): void {

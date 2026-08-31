@@ -365,22 +365,28 @@ describe('reconnect', () => {
 		assert.deepEqual(events, ['disconnected', 'close']);
 	});
 
-	test('reports a drop as close when nothing will retry it', async t => {
+	test('emits close when the session ends while the link is still down', async t => {
 		const smpp = await startServer(t);
-		const { session } = await connect(t, smpp, { reconnect: false });
+		const { session } = await connect(t, smpp);
 
 		assert.ok(session);
 
 		const events: string[] = [];
 
+		session.on('close', () => { events.push('close'); });
 		session.on('disconnected', () => { events.push('disconnected'); });
 
-		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
+		const down = once<true>(resolve => { session.on('disconnected', () => { resolve(true); }); });
 
 		await peerOf(smpp).close();
-		await closed;
+		await down;
+		await session.close();
 
-		assert.deepEqual(events, []);
+		assert.deepEqual(events, ['disconnected', 'close']);
+
+		await session.close();
+
+		assert.deepEqual(events, ['disconnected', 'close'], 'closing twice is still one close');
 	});
 
 	test('refuses a backoff that would retry without pausing', () => {
@@ -391,11 +397,17 @@ describe('reconnect', () => {
 			/false/,
 			'off is spelled false, so nothing else may stand in for it',
 		);
+		assert.match(
+			checkSessionOptions({ reconnect: { maxDelay: 1000, minDelay: 30_000 } }).err?.message ?? '',
+			/maxDelay/,
+			'a transposed pair asks to never retry faster than 30 s and gets one every second',
+		);
+		assert.match(checkSessionOptions({ reconnect: { minDelayMs: 20 } }).err?.message ?? '', /minDelayMs/);
 		assert.equal(checkSessionOptions({ reconnect: false }).err, undefined);
 		assert.equal(checkSessionOptions({ reconnect: { maxDelay: 60_000, minDelay: 500 } }).err, undefined);
 	});
 
-	test('schedules nothing after a drop when reconnect is false', async t => {
+	test('reports a drop as close, and schedules nothing, when reconnect is false', async t => {
 		const smpp = await startServer(t);
 		const noop = (): void => undefined;
 		const infos: string[] = [];
@@ -410,11 +422,16 @@ describe('reconnect', () => {
 
 		assert.ok(session);
 
+		let disconnects = 0;
+
+		session.on('disconnected', () => { disconnects++; });
+
 		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
 
 		await peerOf(smpp).close();
 		await closed;
 
+		assert.equal(disconnects, 0);
 		assert.ok(!infos.includes('reconnect - retrying after a drop'));
 	});
 

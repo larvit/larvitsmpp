@@ -143,6 +143,8 @@ function checkLimits(limits: [string, number, number][]): VoidResult {
 	return {};
 }
 
+const backoffDelays: readonly string[] = ['maxDelay', 'minDelay'];
+
 function checkReconnect(reconnect: unknown): VoidResult {
 	if (reconnect === undefined || reconnect === false) return {};
 
@@ -150,11 +152,20 @@ function checkReconnect(reconnect: unknown): VoidResult {
 		return { err: new Error('reconnect takes { maxDelay, minDelay }, or false to turn it off') };
 	}
 
-	// A minDelay of 0 never doubles, so the backoff never starts and every retry lands at once.
-	return checkLimits([
-		['maxDelay', delayOr(reconnect.maxDelay, defaults.maxDelay), 1],
-		['minDelay', delayOr(reconnect.minDelay, defaults.minDelay), 1],
-	]);
+	for (const key of Object.keys(reconnect)) {
+		if (!backoffDelays.includes(key)) {
+			return { err: new Error(`reconnect has no ${key}, name ${backoffDelays.join(' or ')}`) };
+		}
+	}
+
+	const maxDelay = delayOr(reconnect.maxDelay, defaults.maxDelay);
+	const minDelay = delayOr(reconnect.minDelay, defaults.minDelay);
+	// A delay of 0 never doubles, so the backoff never starts and every retry lands at once.
+	const checked = checkLimits([['maxDelay', maxDelay, 1], ['minDelay', minDelay, 1]]);
+
+	if (checked.err || maxDelay >= minDelay) return checked;
+
+	return { err: new Error(`maxDelay must be minDelay or more, got ${String(maxDelay)}`) };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

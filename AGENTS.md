@@ -50,6 +50,7 @@ src/
 	message.ts           Encoding detection, splitting, bit counting, SMPP date formatting
 	pdu.ts               pduToObj / objToPdu / pduReturn — synchronous, result-returning
 	pdu-framer.ts        PduFramer: a byte stream cut into complete PDUs
+	pdu-transport.ts     PduTransport: the socket a session reads complete PDUs off
 	pending-requests.ts  PendingRequests: sequence numbers, correlation, timeout, abort
 	reassembly.ts        Reassembler: capped, expiring multipart groups
 	reconnect-loop.ts    ReconnectLoop: backoff, retry timer, stopped-ness
@@ -294,6 +295,13 @@ exactly 140.
   `closed`. `teardown()` picks the event by whether the reconnect loop is still live, and `end()` stops
   that loop before tearing down, so every deliberate shutdown emits `close`. Without the split an
   application that opens a replacement client on `close` ends up holding two binds on one account.
+
+- **`session.sock` is a getter over `PduTransport`, and stays public.** Maintainer's call, 2026-08-31:
+  `session.ts` had reached its line cap, so the socket-to-PDU seam todo.md named was opened —
+  `PduTransport` owns the socket, the framer and the parse, and hands the session raw bytes, framed
+  PDUs, parsed ones and an unreadable stream. Reading `session.sock` is unchanged; assigning it no
+  longer compiles, which never rewired the handlers and so never worked. The transport stays
+  unpublished like the other collaborators.
 
 - **A client re-binds after a drop unless it is told not to.** Maintainer's call, 2026-08-31:
   surviving a dropped link is most of what the session layer is for, and behind an opt-in an
