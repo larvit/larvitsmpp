@@ -69,6 +69,9 @@ function delay(ms: number): Promise<void> {
 	return new Promise(resolve => { setTimeout(resolve, ms); });
 }
 
+/** A cmd_length below the 16-octet header: a stream no framing can recover from. */
+const unreadablePdu = Buffer.from([0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1]);
+
 /** The server's side of the one connection under test. */
 function peerOf(smpp: SmppServer): Session {
 	const [peer] = smpp.sessions;
@@ -402,8 +405,7 @@ describe('reconnect', () => {
 
 		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
 
-		// A cmd_length below the 16-octet header is a stream no framing can recover from.
-		peerOf(smpp).sock.write(Buffer.from([0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1]));
+		peerOf(smpp).sock.write(unreadablePdu);
 		await reconnected;
 
 		assert.deepEqual(events, ['sessionError']);
@@ -448,8 +450,7 @@ describe('reconnect', () => {
 
 		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
 
-		// A cmd_length below the 16-octet header: unreadable, and nothing left to retry it.
-		peerOf(smpp).sock.write(Buffer.from([0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1]));
+		peerOf(smpp).sock.write(unreadablePdu);
 		await closed;
 
 		assert.equal(disconnects, 0);

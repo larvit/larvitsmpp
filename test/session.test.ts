@@ -1374,7 +1374,6 @@ describe('application hooks that throw or reject', () => {
 	});
 
 	test('keeps backing off when every link dies as soon as it comes up', async t => {
-		// A stream we cannot read is found after the bind, so a bind alone must not prove the link.
 		const clock = { now: 0 };
 		const delays: number[] = [];
 		const noop = (): void => undefined;

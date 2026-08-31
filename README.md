@@ -104,7 +104,7 @@ Every one is optional.
 | `shutdownTimeout` | `5000` | How long `close()` and `unbind()` wait for the requests this end already sent; `0` waits forever. |
 | `maxOutstanding` | `10` | Requests allowed on the wire at once; further sends queue. |
 | `smsIdFormat` | — | The notation the SMSC writes message ids in, per place it writes them: `{ receipt: 'decimal', submitResp: 'hex' }`. Only needed where the two disagree. |
-| `reconnect` | on | Re-binds after a drop, an idle timeout, or a stream the library cannot read, backing off from `minDelay` 1 s to `maxDelay` 30 s. `{ minDelay, maxDelay }` retunes it; `false` turns it off, so a drop ends the session. |
+| `reconnect` | on | Re-binds after a drop, an idle timeout, or a stream the library cannot read, backing off from `minDelay` 1 s to `maxDelay` 30 s and starting over at `minDelay` once a link has lasted `maxDelay`. `{ minDelay, maxDelay }` retunes it; `false` turns it off, so a drop ends the session. |
 | `log` | silent | Any object with `debug`, `error`, `info`, `verbose` and `warn` methods — see [Logging](#logging). |
 | `signal` | — | An `AbortSignal` that cancels connecting and tears the session down. |
 
