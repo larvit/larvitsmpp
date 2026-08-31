@@ -344,7 +344,7 @@ describe('reconnect', () => {
 
 	test('reports a drop it will retry as disconnected, keeping close for the end', async t => {
 		const smpp = await startServer(t);
-		const { session } = await connect(t, smpp);
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
 
 		assert.ok(session);
 
@@ -391,7 +391,7 @@ describe('reconnect', () => {
 
 	test('re-binds after a stream it cannot read, rather than ending the session', async t => {
 		const smpp = await startServer(t);
-		const { session } = await connect(t, smpp);
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
 
 		assert.ok(session);
 
@@ -448,7 +448,8 @@ describe('reconnect', () => {
 
 		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
 
-		await peerOf(smpp).close();
+		// A cmd_length below the 16-octet header: unreadable, and nothing left to retry it.
+		peerOf(smpp).sock.write(Buffer.from([0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1]));
 		await closed;
 
 		assert.equal(disconnects, 0);

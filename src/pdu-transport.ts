@@ -14,7 +14,7 @@ export type PduTransportOptions = {
 	/** A complete PDU, before it is parsed. */
 	onFramed: (pdu: Buffer) => void;
 	onPdu: (pduObj: PduObject) => void;
-	/** Nothing further can be read off this stream; the socket has to go.  */
+	/** Nothing further can be read off this stream, whatever the socket does next. */
 	onUnreadable: (err: Error) => void;
 };
 

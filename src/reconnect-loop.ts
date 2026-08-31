@@ -7,19 +7,23 @@ export type ReconnectLoopOptions = {
 	log: SmppLog;
 	maxDelay: number;
 	minDelay: number;
+	now?: (() => number) | undefined;
 	/** Brings the owner back up on a freshly opened socket. An err means try again. */
 	onConnected: (sock: Socket) => Promise<VoidResult>;
 };
 
 /** Reopens a dropped connection, backing off between attempts until it is told to stop. */
 export class ReconnectLoop {
+	private readonly now: () => number;
 	private readonly options: ReconnectLoopOptions;
 	private attempting = false;
 	private delay: number;
 	private halted = false;
 	private timer: NodeJS.Timeout | undefined;
+	private upAt: number | undefined;
 
 	constructor(options: ReconnectLoopOptions) {
+		this.now = options.now ?? Date.now;
 		this.options = options;
 		this.delay = options.minDelay;
 	}
@@ -31,6 +35,13 @@ export class ReconnectLoop {
 
 	schedule(): void {
 		if (this.timer || this.attempting || this.isStopped()) return;
+
+		// Coming up is not proof: a stream we cannot read is only found once the link is bound.
+		if (this.upAt !== undefined && this.now() - this.upAt >= this.options.maxDelay) {
+			this.delay = this.options.minDelay;
+		}
+
+		this.upAt = undefined;
 
 		const delay = this.delay;
 
@@ -98,7 +109,7 @@ export class ReconnectLoop {
 			return true;
 		}
 
-		this.delay = this.options.minDelay;
+		this.upAt = this.now();
 
 		return false;
 	}

@@ -4,6 +4,7 @@ import test, { describe } from 'node:test';
 import type { Dlr } from '../src/dlr.ts';
 import type { PduObject, PduObjectInput } from '../src/pdu.ts';
 import type { Sms } from '../src/sms.ts';
+import type { SmppLog } from '../src/log.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
 import type { VoidResult } from '../src/result.ts';
@@ -1370,6 +1371,52 @@ describe('application hooks that throw or reject', () => {
 		const retried = await waitFor(() => attempts >= 2);
 
 		assert.ok(retried, 'a throwing connect should be retried, not left for the process to die on');
+	});
+
+	test('keeps backing off when every link dies as soon as it comes up', async t => {
+		// A stream we cannot read is found after the bind, so a bind alone must not prove the link.
+		const clock = { now: 0 };
+		const delays: number[] = [];
+		const noop = (): void => undefined;
+		const log: SmppLog = {
+			debug: noop,
+			error: noop,
+			info: (msg, metadata) => {
+				if (msg === 'reconnect - retrying after a drop') delays.push(Number(metadata?.delay));
+			},
+			verbose: noop,
+			warn: noop,
+		};
+		let up = 0;
+		const loop = new ReconnectLoop({
+			connect: () => Promise.resolve({ sock: new net.Socket() }),
+			log,
+			maxDelay: 80,
+			minDelay: 10,
+			now: () => clock.now,
+			onConnected: () => {
+				up++;
+
+				return Promise.resolve({});
+			},
+		});
+
+		t.after(() => { loop.stop(); });
+
+		for (let died = 0; died < 4; died++) {
+			loop.schedule();
+			await waitFor(() => up === died + 1);
+			await delay(5);
+		}
+
+		assert.deepEqual(delays, [10, 20, 40, 80]);
+
+		// A link that outlasted the longest wait earned a fresh start.
+		clock.now += 80;
+		loop.schedule();
+		await waitFor(() => delays.length === 5);
+
+		assert.deepEqual(delays, [10, 20, 40, 80, 10]);
 	});
 
 	test('starts only one reconnect attempt at a time', async t => {

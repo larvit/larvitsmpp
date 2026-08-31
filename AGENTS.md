@@ -296,19 +296,24 @@ exactly 140.
   that loop before tearing down, so every deliberate shutdown emits `close`. Without the split an
   application that opens a replacement client on `close` ends up holding two binds on one account.
 
+- **Only a link that outlasted `maxDelay` resets the backoff.** Coming up is not proof it works: an
+  unreadable stream is found after the bind returns, so resetting there gave a link that died on
+  arrival a fresh `minDelay` every cycle — one TCP connect and bind per second, forever, which is how
+  an account gets blocked for bind flooding. `ReconnectLoop` records when it brought the owner up and
+  resets only if the link then lasted longer than the longest wait it would ever schedule. A drop
+  after a healthy link still retries at `minDelay`.
+
 - **A stream this library cannot read is a dead link, not a dead session.** Maintainer's call,
   2026-08-31: a framing or codec error tears the link down through `teardown()`, so the reconnect
   loop retries it on a fresh socket with a fresh framer — which is what a desynced stream needs, and
   the common cause. `sessionError` still carries every failure, so a peer that only ever sends
-  garbage is visible in the log rather than silent, and the backoff caps the retries at one per
-  `maxDelay`. Ending the session outright was inherited from when reconnect was opt-in, where the
-  distinction could not arise.
+  garbage is visible in the log rather than silent, and the backoff grows to one attempt per
+  `maxDelay`.
 
-- **`disconnected` counts failed links, not outages.** A retry that opens a socket and then loses its
-  bind re-enters `attach()` and so emits again, which makes it deliberately not one-to-one with
-  `reconnected`: each emission is a link that went down, and suppressing the later ones would leave a
-  failed rebind with nothing but a log line. The README says so, because the pairing is what a reader
-  would otherwise assume.
+- **`disconnected` counts failed links, not outages.** A retry that opens a socket and then loses it
+  clears `closed` through `attach()`, so the next `teardown()` emits again: each emission is a link
+  that went down, which makes the event deliberately not one-to-one with `reconnected`. Suppressing
+  the later ones would leave a failed rebind with nothing but a log line.
 
 - **`session.sock` is a getter over `PduTransport`, and stays public.** Maintainer's call, 2026-08-31:
   `session.ts` had reached its line cap, so the socket-to-PDU seam todo.md named was opened —
