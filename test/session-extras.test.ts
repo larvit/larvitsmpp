@@ -326,6 +326,43 @@ describe('sendSms()', () => {
 });
 
 describe('reconnect', () => {
+	test('re-binds after a drop with nothing asked for, since it is the default', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+
+		await peerOf(smpp).close();
+		await reconnected;
+
+		assert.ok(session.loggedIn);
+	});
+
+	test('schedules nothing after a drop when reconnect is false', async t => {
+		const smpp = await startServer(t);
+		const noop = (): void => undefined;
+		const infos: string[] = [];
+		const log: SmppLog = {
+			debug: noop,
+			error: noop,
+			info: msg => { infos.push(msg); },
+			verbose: noop,
+			warn: noop,
+		};
+		const { session } = await connect(t, smpp, { log, reconnect: false });
+
+		assert.ok(session);
+
+		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
+
+		await peerOf(smpp).close();
+		await closed;
+
+		assert.ok(!infos.includes('reconnect - retrying after a drop'));
+	});
+
 	test('re-binds after the connection drops, keeping the same session object', async t => {
 		const smpp = await startServer(t);
 		const messages: string[] = [];

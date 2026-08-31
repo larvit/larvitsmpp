@@ -17,7 +17,7 @@ by hand on top of a library; it is built in here.
 | | |
 | --- | --- |
 | **Keepalive** | `enquire_link` every 20 s on a quiet link, and a peer that stops answering is dropped. |
-| **Reconnect with backoff** | Opt-in `reconnect` reopens the socket and re-binds, 1 s doubling to 30 s. |
+| **Reconnect with backoff** | A dropped client link reopens the socket and re-binds by default, 1 s doubling to 30 s. |
 | **Submit window** | `maxOutstanding` holds requests in flight at 10; further sends queue instead of overrunning the SMSC. |
 | **Delivery receipts** | Correlated by `receipted_message_id`/`message_state` where the SMSC sends them, falling back to parsing the receipt text — what Kannel and several others send. |
 | **Multipart** | Long messages split on send; concatenated `deliver_sm` reassembled into one `sms`. |
@@ -99,12 +99,12 @@ Every one is optional.
 | `systemType`, `addressRange`, `addrTon`, `addrNpi` | `''`, `''`, `0`, `0` | The remaining bind fields, for operators that require them. |
 | `tls` | `false` | `true` for defaults, or a `tls.ConnectionOptions` object for a private CA or a client certificate. |
 | `enquireLinkInterval` | `20000` | How often to send `enquire_link` on a quiet link. |
-| `idleTimeout` | `2 × enquireLinkInterval` | Give up on a link the peer has stopped answering; with `reconnect` set, it re-binds. |
+| `idleTimeout` | `2 × enquireLinkInterval` | Give up on a link the peer has stopped answering, and re-bind unless `reconnect` is `false`. |
 | `responseTimeout` | `30000` | How long to wait for a response before giving up on it; `0` waits forever. |
 | `shutdownTimeout` | `5000` | How long `close()` and `unbind()` wait for the requests this end already sent; `0` waits forever. |
 | `maxOutstanding` | `10` | Requests allowed on the wire at once; further sends queue. |
 | `smsIdFormat` | — | The notation the SMSC writes message ids in, per place it writes them: `{ receipt: 'decimal', submitResp: 'hex' }`. Only needed where the two disagree. |
-| `reconnect` | off | `{ minDelay, maxDelay }` to re-bind automatically after a drop or an idle timeout, with exponential backoff. |
+| `reconnect` | on | Re-binds after a drop or an idle timeout, backing off from `minDelay` 1 s to `maxDelay` 30 s. `{ minDelay, maxDelay }` retunes it; `false` turns it off, so a drop ends the session. |
 | `log` | silent | Any object with `debug`, `error`, `info`, `verbose` and `warn` methods — see [Logging](#logging). |
 | `signal` | — | An `AbortSignal` that cancels connecting and tears the session down. |
 
@@ -317,7 +317,7 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 | `dlr` | A delivery report arrives, one per segment. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. `statusMsg` names `statusId` unless the peer sent a `message_state` this library cannot name — then `statusId` is that raw value and `statusMsg` is whatever the body said, or `UNKNOWN`. |
 | `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. A base is merged once: a later message the SMSC gives the same ids is reported on through `dlr` alone, and an earlier one still collecting loses its merged report as well. |
 | `close` | The connection closed. |
-| `reconnected` | The client re-bound after a drop (only with `reconnect` configured). |
+| `reconnected` | The client re-bound after a drop. Never fires with `reconnect: false`. |
 | `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. |
 | `data` | Raw bytes arrived on the socket. |
 | `incomingPdu` | A complete PDU arrived, as a buffer. |

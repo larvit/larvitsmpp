@@ -1,6 +1,6 @@
 import type { ConnectionOptions } from 'node:tls';
 import type { Result, VoidResult } from './result.ts';
-import type { BindType } from './session-options.ts';
+import type { BindType, ReconnectOptions } from './session-options.ts';
 import type { SmppLog } from './log.ts';
 import type { SmsIdFormat } from './sms-id.ts';
 import type { Socket } from 'node:net';
@@ -26,7 +26,7 @@ export type ClientOptions = {
 	maxOutstanding?: number;
 	password?: string;
 	port?: number;
-	reconnect?: { maxDelay?: number; minDelay?: number };
+	reconnect?: { maxDelay?: number; minDelay?: number } | false;
 	responseTimeout?: number;
 	shutdownTimeout?: number;
 	signal?: AbortSignal;
@@ -139,6 +139,19 @@ async function bind(session: Session, options: ClientOptions): Promise<VoidResul
 	return {};
 }
 
+function reconnectFor(options: ClientOptions): ReconnectOptions | undefined {
+	if (options.reconnect === false) return undefined;
+
+	const tuning = options.reconnect ?? {};
+
+	return {
+		connect: () => openSocket(options),
+		maxDelay: tuning.maxDelay,
+		minDelay: tuning.minDelay,
+		onConnected: reconnected => bind(reconnected, options),
+	};
+}
+
 function createSession(options: ClientOptions, log: SmppLog, sock: Socket): Session {
 	const enquireLinkInterval = options.enquireLinkInterval ?? defaults.enquireLinkInterval;
 
@@ -147,20 +160,11 @@ function createSession(options: ClientOptions, log: SmppLog, sock: Socket): Sess
 		idleTimeout: options.idleTimeout ?? enquireLinkInterval * defaults.idleTimeoutFactor,
 		log,
 		maxOutstanding: options.maxOutstanding,
+		reconnect: reconnectFor(options),
 		responseTimeout: options.responseTimeout,
 		shutdownTimeout: options.shutdownTimeout,
 		smsIdFormat: options.smsIdFormat,
 		sock,
-		...(options.reconnect
-			? {
-				reconnect: {
-					connect: () => openSocket(options),
-					maxDelay: options.reconnect.maxDelay,
-					minDelay: options.reconnect.minDelay,
-					onConnected: reconnected => bind(reconnected, options),
-				},
-			}
-			: {}),
 	});
 }
 

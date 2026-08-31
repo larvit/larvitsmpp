@@ -288,6 +288,14 @@ exactly 140.
   and fail on every developer machine, and a committed key leaks in a public repository. Valid while
   the dev image has no openssl.
 
+- **A client re-binds after a drop unless it is told not to.** Maintainer's call, 2026-08-31:
+  surviving a dropped link is most of what the session layer is for, and behind an opt-in an
+  application that never read the options table got none of it. `reconnect` takes
+  `{ minDelay, maxDelay }` to retune the backoff and `false` to turn it off, so absent means on and
+  there is one spelling for each. Only `client()` reconnects — a `server()` session is a connection
+  the peer opened, and nothing at this end can reopen it. The retry timer is `unref()`'d, so a
+  process with nothing else left to do still exits between attempts.
+
 - **The notation a peer writes message ids in is named per place, and normalisation never reaches
   inside a `<base>-<n>` id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's
   `id:` in decimal, so one transform over both sides cannot make them equal — `smsIdFormat` names

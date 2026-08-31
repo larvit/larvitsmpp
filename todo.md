@@ -168,10 +168,6 @@ session message is a change to every call site.
       Mirror the `onRequest` seam — return a `Dlr` to own the receipt, `undefined` to fall through
       to the built-in parser.
 
-- [ ] **Turn `reconnect` on by default in `client()`.** Surviving a dropped link is most of why the
-      session layer exists, and it is opt-in behind an empty object today, so an application that
-      does not read the options table gets none of it. A default change, so it needs a decision.
-
 ## Declined
 
 - **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** Two reasons, either
