@@ -1408,7 +1408,11 @@ describe('application hooks that throw or reject', () => {
 describe('link timers', () => {
 	test('closes a client link the peer has stopped answering', async t => {
 		const peer = await bindOnlyPeer(t);
-		const { err, session } = await client({ enquireLinkInterval: 50, port: peer.port });
+		const { err, session } = await client({
+			enquireLinkInterval: 50,
+			port: peer.port,
+			reconnect: false,
+		});
 
 		assert.equal(err, undefined);
 		assert.ok(session);

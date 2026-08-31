@@ -316,8 +316,9 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 | `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and the `smsId` it was answered with. |
 | `dlr` | A delivery report arrives, one per segment. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. `statusMsg` names `statusId` unless the peer sent a `message_state` this library cannot name — then `statusId` is that raw value and `statusMsg` is whatever the body said, or `UNKNOWN`. |
 | `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. A base is merged once: a later message the SMSC gives the same ids is reported on through `dlr` alone, and an earlier one still collecting loses its merged report as well. |
-| `close` | The connection closed. |
-| `reconnected` | The client re-bound after a drop. Never fires with `reconnect: false`. |
+| `close` | The session is over: you closed it, or the link dropped with `reconnect: false`. Nothing brings it back. |
+| `disconnected` | The link dropped and the reconnect loop will retry it. Do not open a replacement client here — the session you hold comes back on its own, and `reconnected` says when. |
+| `reconnected` | The client re-bound after a drop. |
 | `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. |
 | `data` | Raw bytes arrived on the socket. |
 | `incomingPdu` | A complete PDU arrived, as a buffer. |

@@ -376,7 +376,12 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.pending.settleAll(new Error('Session closed before a response arrived'));
 		this.incoming.clear();
 		this.sock.destroy();
-		this.emit('close');
+		this.emit(this.retrying() ? 'disconnected' : 'close');
+	}
+
+	/** A drop the loop will bring the session back from is a disconnect, not the end of it. */
+	private retrying(): boolean {
+		return this.reconnectLoop !== undefined && !this.reconnectLoop.isStopped();
 	}
 
 	private nextConcatReference(): number {

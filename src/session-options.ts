@@ -12,6 +12,7 @@ import { isSmsIdNotation, smsIdNotations, smsIdPlaces } from './sms-id.ts';
 export type SessionEvents = {
 	close: [];
 	data: [Buffer];
+	disconnected: [];
 	dlr: [Dlr, PduObject];
 	incomingPdu: [Buffer];
 	incomingPduObj: [PduObject];
@@ -116,26 +117,55 @@ export const defaults = {
  * queued behind a slot that is never freed, so the call never settles at all.
  */
 export function checkSessionOptions(options: CheckableOptions): VoidResult {
-	const limits: [string, number, number][] = [
+	const checked = checkLimits([
 		['idleTimeout', options.idleTimeout ?? 0, 0],
 		['maxOutstanding', options.maxOutstanding ?? defaults.maxOutstanding, 1],
 		['maxReassembly', options.maxReassembly ?? defaults.maxReassembly, 1],
 		['reassemblyTimeout', options.reassemblyTimeout ?? defaults.reassemblyTimeout, 0],
 		['responseTimeout', options.responseTimeout ?? defaults.responseTimeout, 0],
 		['shutdownTimeout', options.shutdownTimeout ?? defaults.shutdownTimeout, 0],
-	];
+	]);
 
+	if (checked.err) return checked;
+
+	const backoff = checkReconnect(options.reconnect);
+
+	return backoff.err ? backoff : checkSmsIdFormat(options.smsIdFormat);
+}
+
+function checkLimits(limits: [string, number, number][]): VoidResult {
 	for (const [name, value, min] of limits) {
 		if (!Number.isInteger(value) || value < min) {
 			return { err: new Error(`${name} must be ${String(min)} or more, got ${String(value)}`) };
 		}
 	}
 
-	return checkSmsIdFormat(options.smsIdFormat);
+	return {};
+}
+
+function checkReconnect(reconnect: unknown): VoidResult {
+	if (reconnect === undefined || reconnect === false) return {};
+
+	if (!isRecord(reconnect)) {
+		return { err: new Error('reconnect takes { maxDelay, minDelay }, or false to turn it off') };
+	}
+
+	// A minDelay of 0 never doubles, so the backoff never starts and every retry lands at once.
+	return checkLimits([
+		['maxDelay', delayOr(reconnect.maxDelay, defaults.maxDelay), 1],
+		['minDelay', delayOr(reconnect.minDelay, defaults.minDelay), 1],
+	]);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A tuning value that is not a number lands on NaN, which the range check refuses by name. */
+function delayOr(value: unknown, fallback: number): number {
+	if (value === undefined) return fallback;
+
+	return typeof value === 'number' ? value : NaN;
 }
 
 function checkSmsIdFormat(smsIdFormat: unknown): VoidResult {
@@ -167,6 +197,7 @@ export type CheckableOptions = {
 	maxOutstanding?: number | undefined;
 	maxReassembly?: number | undefined;
 	reassemblyTimeout?: number | undefined;
+	reconnect?: unknown;
 	responseTimeout?: number | undefined;
 	shutdownTimeout?: number | undefined;
 	smsIdFormat?: unknown;

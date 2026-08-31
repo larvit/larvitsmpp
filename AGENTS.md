@@ -288,6 +288,13 @@ exactly 140.
   and fail on every developer machine, and a committed key leaks in a public repository. Valid while
   the dev image has no openssl.
 
+- **`close` means the session is over, and a drop the loop will retry is `disconnected`.** Maintainer's
+  call, 2026-08-31: with reconnect on by default a `close` on every transient drop left an application
+  unable to tell a retry from the end, and no second one follows because `teardown()` is a no-op once
+  `closed`. `teardown()` picks the event by whether the reconnect loop is still live, and `end()` stops
+  that loop before tearing down, so every deliberate shutdown emits `close`. Without the split an
+  application that opens a replacement client on `close` ends up holding two binds on one account.
+
 - **A client re-binds after a drop unless it is told not to.** Maintainer's call, 2026-08-31:
   surviving a dropped link is most of what the session layer is for, and behind an opt-in an
   application that never read the options table got none of it. `reconnect` takes

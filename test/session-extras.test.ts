@@ -334,10 +334,65 @@ describe('reconnect', () => {
 
 		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
 
+		const dropped = session.sock;
+
 		await peerOf(smpp).close();
 		await reconnected;
 
-		assert.ok(session.loggedIn);
+		assert.notEqual(session.sock, dropped, 'the session should be live on a fresh socket');
+	});
+
+	test('reports a drop it will retry as disconnected, keeping close for the end', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const events: string[] = [];
+
+		session.on('close', () => { events.push('close'); });
+		session.on('disconnected', () => { events.push('disconnected'); });
+
+		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+
+		await peerOf(smpp).close();
+		await reconnected;
+
+		assert.deepEqual(events, ['disconnected'], 'a link the loop brings back is not the end');
+
+		await session.close();
+
+		assert.deepEqual(events, ['disconnected', 'close']);
+	});
+
+	test('reports a drop as close when nothing will retry it', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp, { reconnect: false });
+
+		assert.ok(session);
+
+		const events: string[] = [];
+
+		session.on('disconnected', () => { events.push('disconnected'); });
+
+		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
+
+		await peerOf(smpp).close();
+		await closed;
+
+		assert.deepEqual(events, []);
+	});
+
+	test('refuses a backoff that would retry without pausing', () => {
+		assert.match(checkSessionOptions({ reconnect: { minDelay: 0 } }).err?.message ?? '', /minDelay/);
+		assert.match(checkSessionOptions({ reconnect: { maxDelay: -1 } }).err?.message ?? '', /maxDelay/);
+		assert.match(
+			checkSessionOptions({ reconnect: null }).err?.message ?? '',
+			/false/,
+			'off is spelled false, so nothing else may stand in for it',
+		);
+		assert.equal(checkSessionOptions({ reconnect: false }).err, undefined);
+		assert.equal(checkSessionOptions({ reconnect: { maxDelay: 60_000, minDelay: 500 } }).err, undefined);
 	});
 
 	test('schedules nothing after a drop when reconnect is false', async t => {
