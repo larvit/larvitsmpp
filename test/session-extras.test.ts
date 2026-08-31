@@ -389,6 +389,26 @@ describe('reconnect', () => {
 		assert.deepEqual(events, ['disconnected', 'close'], 'closing twice is still one close');
 	});
 
+	test('re-binds after a stream it cannot read, rather than ending the session', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const events: string[] = [];
+
+		session.on('close', () => { events.push('close'); });
+		session.on('sessionError', () => { events.push('sessionError'); });
+
+		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+
+		// A cmd_length below the 16-octet header is a stream no framing can recover from.
+		peerOf(smpp).sock.write(Buffer.from([0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1]));
+		await reconnected;
+
+		assert.deepEqual(events, ['sessionError']);
+	});
+
 	test('refuses a backoff that would retry without pausing', () => {
 		assert.match(checkSessionOptions({ reconnect: { minDelay: 0 } }).err?.message ?? '', /minDelay/);
 		assert.match(checkSessionOptions({ reconnect: { maxDelay: -1 } }).err?.message ?? '', /maxDelay/);
@@ -453,6 +473,11 @@ describe('reconnect', () => {
 		assert.ok(session);
 
 		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+		const halfPdu = once<true>(resolve => { session.on('data', () => { resolve(true); }); });
+
+		// A PDU header promising 32 octets and sending 8: the next link must not continue it.
+		peerOf(smpp).sock.write(Buffer.from([0, 0, 0, 32, 0, 0, 0, 4]));
+		await halfPdu;
 
 		// Drop the connection from the server's side, as a peer restart would.
 		for (const serverSession of smpp.sessions) {

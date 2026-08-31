@@ -163,9 +163,13 @@ function checkReconnect(reconnect: unknown): VoidResult {
 	// A delay of 0 never doubles, so the backoff never starts and every retry lands at once.
 	const checked = checkLimits([['maxDelay', maxDelay, 1], ['minDelay', minDelay, 1]]);
 
-	if (checked.err || maxDelay >= minDelay) return checked;
+	if (checked.err) return checked;
 
-	return { err: new Error(`maxDelay must be minDelay or more, got ${String(maxDelay)}`) };
+	if (maxDelay < minDelay) {
+		return { err: new Error(`maxDelay must be minDelay (${String(minDelay)}) or more, got ${String(maxDelay)}`) };
+	}
+
+	return {};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

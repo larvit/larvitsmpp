@@ -136,7 +136,6 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.transport = this.transportFor(options.sock);
 		this.window = new SendWindow(options.maxOutstanding ?? defaults.maxOutstanding);
 
-		this.attach(options.sock);
 		this.resetTimers();
 	}
 
@@ -263,7 +262,7 @@ export class Session extends EventEmitter<SessionEvents> {
 			onPdu: pduObj => { this.dispatch(pduObj); },
 			onUnreadable: err => {
 				this.emit('sessionError', err);
-				this.end();
+				this.teardown();
 			},
 		}, sock);
 	}
@@ -375,7 +374,6 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.emitClose();
 	}
 
-	/** A session torn down by a drop the loop was retrying reaches here with nothing left to tear down. */
 	private emitClose(): void {
 		if (this.ended) return;
 

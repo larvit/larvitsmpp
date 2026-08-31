@@ -274,10 +274,10 @@ exactly 140.
   `shutdownTimeout` bounds the drain alone, and `0` waits forever like every other timeout here;
   `unbind()` then waits `responseTimeout` for its own response, and sends that PDU through
   `request()` past both the window and the drain gate because it must go out either way. A stream
-  the framer or the codec cannot read takes `end()` instead, and so does `close({ signal })` on an
-  aborted signal and a peer's own `unbind` — nothing on a dead link can answer, an abort means stop
-  now, and a peer that has declared itself finished will not answer what it still owes us, so
-  draining any of the three would only hold a socket open for the timeout. `SmppServer.close()`
+  the framer or the codec cannot read takes `teardown()` instead, and `close({ signal })` on an
+  aborted signal and a peer's own `unbind` take `end()` — nothing on a dead link can answer, an abort
+  means stop now, and a peer that has declared itself finished will not answer what it still owes us,
+  so draining any of the three would only hold a socket open for the timeout. `SmppServer.close()`
   reports each session's unfinished drain through `serverError`, because its own result says
   nothing but that the listener stopped. `shutdownTimeout` stays a session option rather than a
   `close()` argument: `server()` builds sessions on the caller's behalf, so the option
@@ -295,6 +295,20 @@ exactly 140.
   `closed`. `teardown()` picks the event by whether the reconnect loop is still live, and `end()` stops
   that loop before tearing down, so every deliberate shutdown emits `close`. Without the split an
   application that opens a replacement client on `close` ends up holding two binds on one account.
+
+- **A stream this library cannot read is a dead link, not a dead session.** Maintainer's call,
+  2026-08-31: a framing or codec error tears the link down through `teardown()`, so the reconnect
+  loop retries it on a fresh socket with a fresh framer — which is what a desynced stream needs, and
+  the common cause. `sessionError` still carries every failure, so a peer that only ever sends
+  garbage is visible in the log rather than silent, and the backoff caps the retries at one per
+  `maxDelay`. Ending the session outright was inherited from when reconnect was opt-in, where the
+  distinction could not arise.
+
+- **`disconnected` counts failed links, not outages.** A retry that opens a socket and then loses its
+  bind re-enters `attach()` and so emits again, which makes it deliberately not one-to-one with
+  `reconnected`: each emission is a link that went down, and suppressing the later ones would leave a
+  failed rebind with nothing but a log line. The README says so, because the pairing is what a reader
+  would otherwise assume.
 
 - **`session.sock` is a getter over `PduTransport`, and stays public.** Maintainer's call, 2026-08-31:
   `session.ts` had reached its line cap, so the socket-to-PDU seam todo.md named was opened —

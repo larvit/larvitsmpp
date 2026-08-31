@@ -127,8 +127,8 @@ session message is a change to every call site.
       back, which is a public-surface decision.
 - [ ] **Group the session's collaborators under `src/session/`.** Only `session.ts` imports
       `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `reconnect-loop`, `pending-requests`
-      and `send-sms`, so the directory would make that boundary visible. Do it on the next
-      extraction out of `session.ts`, not as a move of its own.
+      and `send-sms`, so the directory would make that boundary visible. `pdu-transport` joined them
+      on 2026-08-31 without the move being made, so it is a move of its own now.
 - [ ] **Does an intermediate delivery notification deserve to be a `dlr`?** `esm_class` message type
       `INTERMEDIATE_DELIVERY` (0x20) is classified as a message today, so a peer that reports
       non-final states with it hands the application a raw `id:… stat:ENROUTE` text as an inbound

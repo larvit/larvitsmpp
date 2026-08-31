@@ -14,7 +14,7 @@ export type PduTransportOptions = {
 	/** A complete PDU, before it is parsed. */
 	onFramed: (pdu: Buffer) => void;
 	onPdu: (pduObj: PduObject) => void;
-	/** Nothing further can be read off this stream, whatever the socket does next. */
+	/** Nothing further can be read off this stream; the socket has to go.  */
 	onUnreadable: (err: Error) => void;
 };
 
@@ -27,20 +27,23 @@ export class PduTransport {
 	constructor(options: PduTransportOptions, sock: Socket) {
 		this.options = options;
 		this.socket = sock;
+		this.wire(sock);
 	}
 
 	get sock(): Socket {
 		return this.socket;
 	}
 
-	/** Wires a freshly opened socket in, replacing any previous one. */
+	/** Takes over a freshly opened socket. Half a PDU left on the old one must not prefix this one. */
 	attach(sock: Socket): void {
 		// The socket being replaced is already dead, and its three handlers still point here.
-		if (this.socket !== sock) this.socket.removeAllListeners();
-
+		this.socket.removeAllListeners();
 		this.socket = sock;
 		this.framer = new PduFramer();
+		this.wire(sock);
+	}
 
+	private wire(sock: Socket): void {
 		sock.on('data', chunk => { this.read(chunk); });
 		sock.on('close', () => { this.options.onClose(); });
 		sock.on('error', err => {
@@ -65,7 +68,7 @@ export class PduTransport {
 		const framed = this.framer.next();
 
 		if (framed.err) {
-			this.options.log.warn('transport - unusable stream, closing', { message: framed.err.message });
+			this.options.log.warn('transport - unusable stream', { message: framed.err.message });
 			this.options.onUnreadable(framed.err);
 
 			return;
@@ -77,7 +80,7 @@ export class PduTransport {
 			const parsed = pduToObj(pdu);
 
 			if (parsed.err) {
-				this.options.log.warn('transport - could not parse an incoming PDU, closing', {
+				this.options.log.warn('transport - could not parse an incoming PDU', {
 					message: parsed.err.message,
 				});
 				this.options.onUnreadable(parsed.err);
