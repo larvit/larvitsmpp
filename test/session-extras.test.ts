@@ -829,8 +829,6 @@ describe('LinkGate', () => {
 		assert.match(held.err?.message ?? '', /did not come back in time/);
 	});
 
-	// A held send is awaited with the socket destroyed, so an unref'd timer here lets a process whose
-	// only remaining work is that send exit without ever settling it, losing the message silently.
 	test('holds on a timer that keeps the process alive', async () => {
 		const gate = new LinkGate({ log: silentLog, timeout: 10_000 });
 		const timers = (): number => process.getActiveResourcesInfo().filter(name => name === 'Timeout').length;

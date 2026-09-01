@@ -139,8 +139,9 @@ session message is a change to every call site.
       things — `LinkGate.deadline()` and `wait(deadline)` are a two-call protocol whose only failure
       mode is calling `deadline()` inside the loop, which nothing catches; `Session.linkDown()` is
       read from both sides of the seam; and `UnansweredError` sits in `pending-requests.ts`, which
-      never uses it, for the sole edge that makes `send-sms` import that module at all. Every one of these is unpublished, so it is a two-way
-      door and belongs after 1.0.0. Raised by review, 2026-09-01.
+      never uses it, for the sole edge that makes `send-sms` import that module at all. Every one of
+      these is unpublished, so it is a two-way door and belongs after 1.0.0. Raised by review,
+      2026-09-01.
 - [ ] **Does an intermediate delivery notification deserve to be a `dlr`?** `esm_class` message type
       `INTERMEDIATE_DELIVERY` (0x20) is classified as a message today, so a peer that reports
       non-final states with it hands the application a raw `id:… stat:ENROUTE` text as an inbound

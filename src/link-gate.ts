@@ -110,8 +110,7 @@ export class LinkGate {
 				settle({ err: aborted() });
 			}
 
-			// Deliberately not unref()'d: a held request is awaited with a destroyed socket and no
-			// other handle, so an unref'd timer lets the process exit without ever settling it.
+			// Not unref()'d: a held request is awaited with no other handle, so the process would exit unsettled.
 			if (left > 0) timer = setTimeout(giveUp, left);
 
 			signal?.addEventListener('abort', onAbort, { once: true });
