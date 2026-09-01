@@ -189,7 +189,8 @@ export class Session extends EventEmitter<SessionEvents> {
 			const attempt = await this.attempt(input, options).finally(() => { this.window.release(); });
 
 			// Nothing reached the socket, so the next link carries it instead of the caller resending.
-			if (!attempt.retryOnNextLink || !this.linkDown() || !this.retrying()) return attempt.result;
+			// The gate's own answer, or a loop round one that admits everything spins on a dead socket.
+			if (!attempt.retryOnNextLink || this.gate.isUp() || !this.retrying()) return attempt.result;
 		}
 	}
 

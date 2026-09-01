@@ -379,4 +379,10 @@ exactly 140.
   second `send()` on the public surface or a changed `ReconnectOptions.onConnected`.
   The gate is told what happened and never reads back into the session: a collaborator that has to
   ask does not own its decision, which is how the first cut ended up answering the same question two
-  different ways at admit and at release.
+  different ways at admit and at release. For the same reason the retry in `send()` asks
+  `gate.isUp()` rather than `linkDown()`, which also reads the socket: a condition that loops on
+  something the gate does not gate on spins against a gate that admits it straight back.
+  `LinkGate.returning` is a copy of `retrying()` taken at teardown, and stays true only because
+  nothing stops the reconnect loop without `emitClose()` following it — `drain()` and `end()` are the
+  only callers of `stop()`. An `OutgoingRequests` owning both would not need the copy; until then,
+  a third caller of `stop()` has to shut the gate itself.
