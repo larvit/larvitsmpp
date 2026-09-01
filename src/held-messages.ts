@@ -10,6 +10,11 @@ export class HeldMessages {
 		this.held.add(pduObjs);
 	}
 
+	/** Whether a drain is still waiting for this message to be answered. */
+	has(pduObjs: PduObject[]): boolean {
+		return this.held.has(pduObjs);
+	}
+
 	release(pduObjs: PduObject[]): void {
 		if (!this.held.delete(pduObjs)) return;
 

@@ -10,17 +10,15 @@ import type { Socket } from 'node:net';
 import { DlrMerger } from './dlr-merger.ts';
 import { EventEmitter } from 'node:events';
 import { IncomingRequests } from './incoming-requests.ts';
-import { LinkGate } from './link-gate.ts';
 import { LinkTimers } from './link-timers.ts';
+import { OutgoingRequests } from './outgoing-requests.ts';
 import { PduTransport } from './pdu-transport.ts';
-import { PendingRequests, UnansweredError } from './pending-requests.ts';
 import { ReconnectLoop } from './reconnect-loop.ts';
-import { SendWindow } from './send-window.ts';
 import { leftOf } from './idle-waiters.ts';
 import { errorFrom } from './error-from.ts';
 import { optionalParamsMinVersion } from './defs/constants.ts';
 import { bindCarries, bindCommands, defaultSystemId, defaults } from './session-options.ts';
-import { isResp, objToPdu, pduReturn } from './pdu.ts';
+import { isResp, pduReturn } from './pdu.ts';
 import { silentLog } from './log.ts';
 import { submitSms, unsent } from './send-sms.ts';
 import { ConcatReference } from './udh.ts';
@@ -40,13 +38,6 @@ export { bindCommands, defaultSystemId };
 
 /** A listener may return a promise: an `async` one that rejects is routed like one that throws. */
 type SessionListener<K extends keyof SessionEvents> = (...args: SessionEvents[K]) => unknown;
-
-function abortedBeforeSend(): Error {
-	return new Error('Aborted before the request was sent');
-}
-
-/** `retryOnNextLink`: the write failed, so nothing reached the socket and another link may carry it. */
-type Attempt = { result: Result<{ pduObj: PduObject }>; retryOnNextLink: boolean };
 
 export class Session extends EventEmitter<SessionEvents> {
 	declare addListener: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
@@ -68,17 +59,14 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	private readonly concatReference = new ConcatReference();
 	private readonly dlrMerger: DlrMerger;
-	private readonly gate: LinkGate;
 	private readonly incoming: IncomingRequests;
 	private readonly options: SessionOptions;
-	private readonly pending: PendingRequests;
+	private readonly outgoing: OutgoingRequests;
 	private readonly reconnectLoop: ReconnectLoop | undefined;
 	private readonly timers: LinkTimers;
 	private readonly transport: PduTransport;
-	private readonly window: SendWindow;
 
 	private closed = false;
-	private draining = false;
 	private ended = false;
 
 	/** A listener that throws is the application's bug; it must not become ours. Hard rule 1. */
@@ -123,7 +111,6 @@ export class Session extends EventEmitter<SessionEvents> {
 			max: defaults.maxDlrMerges,
 			timeout: defaults.dlrMergeTimeout,
 		});
-		this.gate = new LinkGate({ log: this.log, timeout: options.responseTimeout ?? defaults.responseTimeout });
 		this.incoming = new IncomingRequests({
 			dlrMerger: this.dlrMerger,
 			log: this.log,
@@ -131,12 +118,11 @@ export class Session extends EventEmitter<SessionEvents> {
 			maxReassembly: options.maxReassembly,
 			onRequest: options.onRequest,
 			reassemblyTimeout: options.reassemblyTimeout,
-			sendHeld: input => this.sendThrough(input, {}),
+			sendPastDrain: input => this.outgoing.pastDrain(input, {}),
 			session: this,
 			smsIdFormat: options.smsIdFormat,
 			systemId: options.systemId,
 		});
-		this.pending = new PendingRequests(this.log);
 		this.reconnectLoop = this.loopFor(options.reconnect);
 		this.timers = new LinkTimers({
 			enquireLinkInterval: options.enquireLinkInterval,
@@ -147,7 +133,12 @@ export class Session extends EventEmitter<SessionEvents> {
 			onIdle: () => { this.teardown(); },
 		});
 		this.transport = this.transportFor(options.sock);
-		this.window = new SendWindow(options.maxOutstanding ?? defaults.maxOutstanding);
+		this.outgoing = new OutgoingRequests({
+			log: this.log,
+			maxOutstanding: options.maxOutstanding ?? defaults.maxOutstanding,
+			responseTimeout: options.responseTimeout ?? defaults.responseTimeout,
+			transport: this.transport,
+		});
 
 		this.resetTimers();
 	}
@@ -170,56 +161,7 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	/** Sends a request and resolves with the peer's response. */
 	send(input: PduObjectInput, options: SendOptions = {}): Promise<Result<{ pduObj: PduObject }>> {
-		// A drain on a live link. A link that is down is the gate's answer, which says closed instead.
-		if (this.draining && !this.linkDown()) return Promise.resolve({ err: new Error('Session is shutting down') });
-
-		return this.sendThrough(input, options);
-	}
-
-	/** The same path without that refusal, which a receipt for a held message has to take. */
-	private async sendThrough(
-		input: PduObjectInput,
-		options: SendOptions = {},
-	): Promise<Result<{ pduObj: PduObject }>> {
-		const refused = this.refuseSend(input, options);
-
-		if (refused) return { err: refused };
-
-		// A bind is what makes a link usable, so it cannot wait for one.
-		if (bindCommands.includes(input.cmdName)) return (await this.attempt(input, options)).result;
-
-		const deadline = this.gate.deadline();
-
-		for (;;) {
-			const held = await this.gate.wait(deadline, options.signal);
-
-			if (held.err) return { err: held.err };
-
-			await this.window.acquire();
-
-			const attempt = await this.attempt(input, options).finally(() => { this.window.release(); });
-
-			// Nothing reached the socket, so the next link carries it instead of the caller resending.
-			if (!attempt.retryOnNextLink || this.gate.isUp() || !this.retrying()) return attempt.result;
-		}
-	}
-
-	/** Why a request cannot go out at all, as opposed to not yet. */
-	private refuseSend(input: PduObjectInput, options: SendOptions): Error | undefined {
-		if (input.cmdName.endsWith('_resp')) {
-			return new Error(`Use sendReturn() for responses, not send(): ${input.cmdName}`);
-		}
-
-		// Before the gate and the window, or an aborted call waits for what it will never use.
-		if (options.signal?.aborted === true) return abortedBeforeSend();
-
-		// A bind skips the gate below, so the answer it would have given is given here instead.
-		return bindCommands.includes(input.cmdName) ? this.gate.refusal() : undefined;
-	}
-
-	/** Read through a method: a drop can land while a send is awaiting. */
-	private linkDown(): boolean {
-		return !this.gate.isUp() || this.sock.destroyed;
+		return this.outgoing.request(input, options);
 	}
 
 	/** Answers a request the peer sent us. Responses are never waited on. */
@@ -269,9 +211,9 @@ export class Session extends EventEmitter<SessionEvents> {
 	async unbind(): Promise<VoidResult> {
 		const drained = await this.drain(undefined);
 		const wasOpen = !this.closed;
-		// attempt(), not send(): the drain gate refuses a send, and the unbind goes out either way.
+		// now(), not send(): a drain refuses a send, and the unbind goes out either way.
 		const sent = wasOpen
-			? (await this.attempt({ cmdName: 'unbind' }, {})).result
+			? await this.outgoing.now({ cmdName: 'unbind' })
 			: { err: new Error('Session is closed') };
 		const closedOnUnbind = wasOpen && this.closed;
 
@@ -341,7 +283,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		}
 
 		this.resetTimers();
-		this.gate.open();
+		this.outgoing.linkUp();
 		this.log.info('session - reconnected');
 		this.emit('reconnected');
 
@@ -353,58 +295,27 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.closed = false;
 	}
 
-	private async attempt(input: PduObjectInput, options: SendOptions): Promise<Attempt> {
-		// pending.wait() alone settles the caller while the request still goes out to the peer.
-		if (options.signal?.aborted === true) {
-			return { result: { err: abortedBeforeSend() }, retryOnNextLink: false };
-		}
-
-		const seqNr = this.pending.nextSeqNr();
-		const built = objToPdu({ ...input, seqNr });
-
-		if (built.err) return { result: { err: built.err }, retryOnNextLink: false };
-
-		const response = this.pending.wait(seqNr, {
-			signal: options.signal,
-			timeout: this.options.responseTimeout ?? defaults.responseTimeout,
-		});
-		const written = this.transport.write(built.buffer);
-
-		if (written.err) {
-			this.pending.settle(seqNr, { err: written.err });
-
-			return { result: { err: written.err }, retryOnNextLink: true };
-		}
-
-		const answered = await response;
-
-		// It went out, so a failure now means the peer may have taken it and the answer was the loss.
-		return { result: answered.err ? { err: new UnansweredError(answered.err) } : answered, retryOnNextLink: false };
-	}
-
 	/** Stops new sends and waits out the messages we hold and the requests already issued. */
 	private async drain(signal: AbortSignal | undefined): Promise<VoidResult> {
 		this.reconnectLoop?.stop();
-		this.draining = true;
+		this.outgoing.stopAccepting();
 
-		if (this.linkDown()) return {};
+		if (this.outgoing.linkDown()) return {};
 
 		const timeout = this.options.shutdownTimeout ?? defaults.shutdownTimeout;
 		const deadline = timeout > 0 ? Date.now() + timeout : 0;
+		// Only the application answers a held message, so that half falls back rather than wait forever.
+		const answering = timeout > 0 ? timeout : (this.options.responseTimeout ?? defaults.responseTimeout);
 		// Answering a message can put a receipt on the wire; nothing on the wire produces a message.
-		const messages = await this.incoming.drain(timeout, signal);
-		const unfinished = await this.window.idle(leftOf(deadline), signal);
+		const messages = await this.incoming.drain(answering, signal);
+		const requests = await this.outgoing.drain(leftOf(deadline), signal);
 
 		// The window empties on a teardown too, which settles everything the link was carrying.
-		if (this.linkDown()) return { err: new Error('The session closed before the drain finished') };
+		if (this.outgoing.linkDown()) {
+			return { err: new Error('The session closed before the drain finished') };
+		}
 
-		if (messages.err) return messages;
-
-		if (unfinished === 0) return {};
-
-		this.log.warn('session - shutting down with requests unfinished', { timeout, unfinished });
-
-		return { err: new Error(`Shut down with ${String(unfinished)} request(s) unfinished`) };
+		return messages.err ? messages : requests;
 	}
 
 	/** The session is over now, drained or not. Nothing brings it back. */
@@ -419,7 +330,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		if (this.ended) return;
 
 		this.ended = true;
-		this.gate.shut(false);
+		this.outgoing.linkLost(false);
 		this.emit('close');
 	}
 
@@ -427,9 +338,8 @@ export class Session extends EventEmitter<SessionEvents> {
 		if (this.closed) return;
 
 		this.closed = true;
-		this.gate.shut(this.retrying());
+		this.outgoing.linkLost(this.retrying());
 		this.timers.clear();
-		this.pending.settleAll(new Error('Session closed before a response arrived'));
 		this.incoming.clear();
 		this.sock.destroy();
 
@@ -448,7 +358,7 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	private dispatch(pduObj: PduObject): void {
 		if (isResp(pduObj)) {
-			if (!this.pending.deliver(pduObj)) {
+			if (!this.outgoing.deliver(pduObj)) {
 				this.log.debug('session - response with no matching request', { seqNr: pduObj.seqNr });
 			}
 

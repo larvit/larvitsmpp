@@ -66,7 +66,7 @@ src/
 	index.ts             Public surface. Named exports only, no default export.
 	client.ts            client() -> { err, session }
 	server.ts            server() -> { err, server }, server owns the listener + close()
-	session.ts           Session: dispatch, events, and the collaborators below
+	session.ts           Session: the socket's life, dispatch, events, and the collaborators below
 	sms.ts               The live handle emitted as the 'sms' event (sendResp/sendDlr)
 	dlr.ts               Delivery receipts: text and TLV parsing, receipt status codes
 	dlr-merger.ts        DlrMerger: per-segment receipts counted into one MessageDlr
@@ -79,6 +79,7 @@ src/
 	link-timers.ts       LinkTimers: the enquire_link heartbeat and the idle timeout
 	log.ts               SmppLog, the logger contract, and silentLog — the default
 	message.ts           Encoding detection, splitting, bit counting, SMPP date formatting
+	outgoing-requests.ts OutgoingRequests: the gate, the window, the pending map and the retry
 	pdu.ts               pduToObj / objToPdu / pduReturn — synchronous, result-returning
 	pdu-framer.ts        PduFramer: a byte stream cut into complete PDUs
 	pdu-transport.ts     PduTransport: the socket a session reads complete PDUs off
@@ -91,6 +92,7 @@ src/
 	session-options.ts   SessionOptions, ReconnectOptions, bind direction and the session defaults
 	sms-id.ts            The notation a peer writes message ids in, normalised for comparison
 	udh.ts               User data header: the concatenation fields of a long SMS, and their reference
+	unanswered-error.ts  UnansweredError: it went out and no answer came back
 	uuid.ts              uuidv7() — the ids the library generates for messages
 	defs/
 		commands.ts      The 33 commands, their ids and ordered parameter lists
@@ -252,7 +254,10 @@ Grouped by what each one constrains.
   `super.on()` call needs one. The cost is that a subclass can no longer reach those seven through
   `super` — re-declaring them the same way is its way out. `unknown` rather than
   `void | Promise<void>` because a listener may return anything: `session.on('close', () =>
-  set.delete(session))` returns a boolean.
+  set.delete(session))` returns a boolean. This also settles what the drain can wait on: a listener's
+  own promise would be the better completion signal, and reaching it needs `listeners()`, which
+  cannot be re-declared the same way — Node types it invariantly enough that widening `void` to
+  `unknown` is `TS2416`. Re-probed 2026-09-01; `sendResp()` stays the signal.
 
 ### The wire
 
@@ -344,7 +349,12 @@ Grouped by what each one constrains.
   `teardown()` drops what is still held for the same reason it drops inbound segments. The release
   is one turn late, so a listener that sends its receipt straight after the response is still
   holding when the drain looks; `sendDlr()` is the one send that goes out past the drain's refusal,
-  being part of answering a message the drain is itself waiting for.
+  and only while the message is still held — past that it is an ordinary send, because the drain it
+  would slip past is no longer waiting for it. `shutdownTimeout: 0` does not carry over to this
+  half: waiting forever is safe for the peer, whose every request is bounded by `responseTimeout`,
+  and unsafe for the application, which nothing bounds — `close()` is what you reach for when the
+  application is stuck, so it may not block on the application coming unstuck. That half falls back
+  to `responseTimeout`, the same answer the link gate's hold already takes.
 
 - **A reconnect keeps the delivery-receipt merges; everything else the link held is dropped.**
   `onDeliverSm()` answers each receipt before the group it belongs to is complete, and `teardown()`

@@ -57,6 +57,7 @@ Rules the API follows:
 | `smsIdFormat`: a peer's `submit_sm_resp` and receipt ids read into one notation before they are compared | `test/dlr.test.ts`, `test/session-extras.test.ts` |
 | A draining `close()` and `unbind()`, bounded by `shutdownTimeout` or an abort | `test/session-extras.test.ts` |
 | A drain that also waits out the messages the application has not answered, with `sendDlr()` the one send that passes it | `test/session-extras.test.ts` |
+| `OutgoingRequests`: the gate, the window, the pending map and the retry under one owner, told when a link comes up or goes down | `test/session-extras.test.ts`, `test/session.test.ts` |
 | A send with no link held for the next one, and one the link dropped under counted as `unanswered` | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
@@ -118,26 +119,25 @@ session message is a change to every call site.
       loses every incomplete group, and a peer has no reason to resend a receipt it already had
       answered. Surviving one means exposing the merge state for the application to persist and hand
       back, which is a public-surface decision.
-- [ ] **Group the session's collaborators under `src/session/`.** Only `session.ts` imports
-      `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `link-gate`, `reconnect-loop`,
-      `pending-requests` and `send-sms`, so the directory would make that boundary visible.
-      `pdu-transport` joined them on 2026-08-31, `link-gate` and `idle-waiters` on 2026-09-01, all
-      without the move being made, so it is a move of its own now. Do it together with the extraction below rather
-      than before it — three reactive splits at whatever boundary fitted under the line cap is what
-      produced the current shape. Raised by review, 2026-09-01.
-- [ ] **An `OutgoingRequests` collaborator, owning `LinkGate`, `SendWindow` and `PendingRequests`.**
-      `session.ts` sits three lines under its 350-line cap and every split so far has been made to
-      get back under it — the inbound drain on 2026-09-01 only fitted once `ConcatReference` and the
-      unsent-result shape moved out to `udh.ts` and `send-sms.ts`. The seam that holds: one object owning the gate, the window, the pending
-      map and the retry loop, exposing a gated `request()` and the ungated door `unbind()` and the
-      bind already need, with `Session` calling it when a link comes up or goes down instead of
-      spreading `linkDown()` and `retrying()` across both sides. It would also close two smaller
-      things — `LinkGate.deadline()` and `wait(deadline)` are a two-call protocol whose only failure
-      mode is calling `deadline()` inside the loop, which nothing catches; `Session.linkDown()` is
-      read from both sides of the seam; and `UnansweredError` sits in `pending-requests.ts`, which
-      never uses it, for the sole edge that makes `send-sms` import that module at all. Every one of
-      these is unpublished, so it is a two-way door and belongs after 1.0.0. Raised by review,
+- [ ] **Group the session's collaborators under `src/session/`.** `session.ts` imports
+      `dlr-merger`, `incoming-requests`, `link-timers`, `outgoing-requests`, `pdu-transport`,
+      `reconnect-loop` and `send-sms`, and nothing else does, so the directory would make that
+      boundary visible. The `OutgoingRequests` extraction this was to be done with landed on
+      2026-09-01, so it is the remaining half. Raised by review, 2026-09-01.
+
+- [ ] **`leftOf()` and the link gate's own budget are one concept counted twice.**
+      `idle-waiters.ts` reads what is left of a budget as `Math.max(1, deadline - now)`, because 0
+      means "forever" there; `link-gate.ts` runs the same subtraction and calls `<= 0` expired.
+      Neither is reachable from the other, so nothing can disagree today, but a reader who learns one
+      and applies it to the other is wrong. A budget type both take would close it. Raised by review,
       2026-09-01.
+
+- [ ] **A message the reconnect dropped is answered into the void, and reported as delivered.**
+      `teardown()` clears the held messages along with the inbound segments, which is right — but the
+      application still holds the `Sms`, so `sendResp()` writes the old link's sequence numbers to the
+      new socket, succeeds, and returns `{}` for a response that correlates with nothing at the peer.
+      `HeldMessages` now knows exactly which messages went that way, so saying so is a small
+      addition. Goal 2, low frequency. Raised by review, 2026-09-01.
 - [ ] **Does an intermediate delivery notification deserve to be a `dlr`?** `esm_class` message type
       `INTERMEDIATE_DELIVERY` (0x20) is classified as a message today, so a peer that reports
       non-final states with it hands the application a raw `id:… stat:ENROUTE` text as an inbound

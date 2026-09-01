@@ -47,9 +47,11 @@ export class LinkGate {
 		return this.up || this.returning ? undefined : over();
 	}
 
-	/** When a hold starting now has to give up. 0 never does. */
-	deadline(): number {
-		return this.timeout > 0 ? this.now() + this.timeout : 0;
+	/** One budget for a request, however many links it waits through. 0 never gives up. */
+	hold(signal: AbortSignal | undefined): () => Promise<VoidResult> {
+		const deadline = this.timeout > 0 ? this.now() + this.timeout : 0;
+
+		return () => this.wait(deadline, signal);
 	}
 
 	/** A link is up and bound: everything held goes out on it. */
@@ -73,7 +75,7 @@ export class LinkGate {
 	}
 
 	/** Resolves once a link can carry the request, or with the reason none ever will. */
-	wait(deadline: number, signal: AbortSignal | undefined): Promise<VoidResult> {
+	private wait(deadline: number, signal: AbortSignal | undefined): Promise<VoidResult> {
 		if (this.up) return Promise.resolve({});
 
 		const refused = this.refusal();
@@ -86,10 +88,10 @@ export class LinkGate {
 
 		if (deadline !== 0 && left <= 0) return Promise.resolve({ err: expired() });
 
-		return this.hold(left, signal);
+		return this.waitForLink(left, signal);
 	}
 
-	private hold(left: number, signal: AbortSignal | undefined): Promise<VoidResult> {
+	private waitForLink(left: number, signal: AbortSignal | undefined): Promise<VoidResult> {
 		this.log.verbose('linkGate - holding a request until a link is back', { timeout: left });
 
 		return new Promise<VoidResult>(resolve => {

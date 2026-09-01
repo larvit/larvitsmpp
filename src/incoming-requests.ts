@@ -21,8 +21,8 @@ export type IncomingRequestsOptions = {
 	maxReassembly?: number | undefined;
 	onRequest?: OnRequest | undefined;
 	reassemblyTimeout?: number | undefined;
-	/** Past the drain gate: a receipt answering a message the shutdown is still waiting for. */
-	sendHeld: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
+	/** Past a drain's refusal, for a receipt the drain is itself waiting for. */
+	sendPastDrain: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 	session: Session;
 	smsIdFormat?: SmsIdFormat | undefined;
 	systemId?: string | undefined;
@@ -35,7 +35,7 @@ export class IncomingRequests {
 	private readonly log: SmppLog;
 	private readonly onRequest: OnRequest | undefined;
 	private readonly reassembler: Reassembler;
-	private readonly sendHeld: IncomingRequestsOptions['sendHeld'];
+	private readonly sendPastDrain: IncomingRequestsOptions['sendPastDrain'];
 	private readonly session: Session;
 	private readonly smsIdFormat: SmsIdFormat;
 	private readonly systemId: string;
@@ -50,7 +50,7 @@ export class IncomingRequests {
 			maxOctets: options.maxOctets,
 			timeout: options.reassemblyTimeout ?? defaults.reassemblyTimeout,
 		});
-		this.sendHeld = options.sendHeld;
+		this.sendPastDrain = options.sendPastDrain;
 		this.session = options.session;
 		this.smsIdFormat = options.smsIdFormat ?? {};
 		this.systemId = options.systemId ?? defaults.systemId;
@@ -167,7 +167,8 @@ export class IncomingRequests {
 		}, {
 			// A turn later, so a listener sending its receipt straight after the response still holds.
 			onAnswered: () => { setImmediate(() => { this.held.release(pduObjs); }); },
-			send: this.sendHeld,
+			// Past the refusal only while a drain is still waiting for this message; an ordinary send after.
+			send: input => (this.held.has(pduObjs) ? this.sendPastDrain(input) : this.session.send(input)),
 		});
 
 		this.held.hold(pduObjs);

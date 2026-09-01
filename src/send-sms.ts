@@ -4,7 +4,7 @@ import type { PduObject, PduObjectInput } from './pdu.ts';
 import type { Result } from './result.ts';
 import type { SmppLog } from './log.ts';
 import type { SmsIdNotation } from './sms-id.ts';
-import { UnansweredError } from './pending-requests.ts';
+import { UnansweredError } from './unanswered-error.ts';
 import { consts } from './defs/constants.ts';
 import { detect } from './defs/encodings.ts';
 import { normaliseSmsId } from './sms-id.ts';

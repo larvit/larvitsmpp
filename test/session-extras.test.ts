@@ -819,12 +819,12 @@ describe('LinkGate', () => {
 	test('refuses a hold whose deadline has already passed', async () => {
 		let now = 0;
 		const gate = new LinkGate({ log: silentLog, now: () => now, timeout: 100 });
-		const deadline = gate.deadline();
+		const waitForLink = gate.hold(undefined);
 
 		gate.shut(true);
 		now = 101;
 
-		const held = await gate.wait(deadline, undefined);
+		const held = await waitForLink();
 
 		assert.match(held.err?.message ?? '', /did not come back in time/);
 	});
@@ -836,7 +836,7 @@ describe('LinkGate', () => {
 		gate.shut(true);
 
 		const before = timers();
-		const held = gate.wait(gate.deadline(), undefined);
+		const held = gate.hold(undefined)();
 
 		assert.equal(timers(), before + 1, 'an unref\'d timer is not counted here, which is the point');
 
@@ -851,7 +851,7 @@ describe('LinkGate', () => {
 
 		gate.shut(true);
 
-		const held = await gate.wait(gate.deadline(), AbortSignal.abort());
+		const held = await gate.hold(AbortSignal.abort())();
 
 		assert.match(held.err?.message ?? '', /Aborted while waiting for a link/);
 	});
@@ -1100,6 +1100,17 @@ describe('graceful shutdown', () => {
 
 		assert.ok(closed.err instanceof Error);
 		assert.match(closed.err.message, /1 message\(s\) unanswered/);
+	});
+
+	// Waiting forever is safe for the peer, which every request times out on. The application is not.
+	test('falls back to responseTimeout for a held message when the shutdown waits forever', async t => {
+		const { smpp } = await submitInFlight(t, {}, { responseTimeout: 200, shutdownTimeout: 0 });
+		const started = Date.now();
+		const closed = await peerOf(smpp).close();
+
+		assert.ok(closed.err instanceof Error);
+		assert.match(closed.err.message, /1 message\(s\) unanswered/);
+		assert.ok(Date.now() - started < 2000);
 	});
 
 	// The README's own listener answers and then sends its receipt, one turn later.
