@@ -38,7 +38,7 @@ export type Sms = {
 	/** Answers every segment. Part of the protocol, not optional. Defaults to ESME_ROK. */
 	sendResp: (options?: SendRespOptions) => Promise<VoidResult>;
 	session: Session;
-	/** The id answered to the peer: what sendResp() was given, or a generated UUID v7. */
+	/** The id `sendResp()` was given, or a generated UUID v7. */
 	readonly smsId: string;
 	submitTime: Date;
 	to: string;
@@ -54,6 +54,7 @@ export type SmsInput = {
 
 /** What the session's incoming side gives a message so it can be answered and accounted for. */
 export type SmsHandlers = {
+	lostLink: () => boolean;
 	onAnswered: () => void;
 	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 };
@@ -76,7 +77,8 @@ export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 		message: input.message,
 		pduObjs: input.pduObjs,
 		sendDlr: status => sendDlr(sms, handlers.send, status),
-		sendResp: options => sendResp(sms, answered, options ?? {}).finally(handlers.onAnswered),
+		sendResp: options => sendResp(sms, answered, options ?? {}, handlers.lostLink)
+			.finally(handlers.onAnswered),
 		session: input.session,
 		get smsId(): string {
 			return answered.smsId;
@@ -92,6 +94,7 @@ async function sendResp(
 	sms: Sms,
 	answered: { smsId: string },
 	options: SendRespOptions,
+	lostLink: () => boolean,
 ): Promise<VoidResult> {
 	const total = sms.pduObjs.length;
 
@@ -104,6 +107,11 @@ async function sendResp(
 	}
 
 	if (options.smsId !== undefined) answered.smsId = options.smsId;
+
+	// A response carries the sequence number it was asked on, which the next link knows nothing about.
+	if (lostLink()) {
+		return { err: new Error('The link this message arrived on is gone, so nothing would correlate the response') };
+	}
 
 	const results = await Promise.all(sms.pduObjs.map((pduObj, index) => sms.session.sendReturn(
 		pduObj,
