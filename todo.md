@@ -1,17 +1,16 @@
 # todo.md
 
-Remaining work for the `@larvit/smpp` 1.0.0 rewrite. Read [AGENTS.md](AGENTS.md) first — the hard
-rules there constrain every item below.
+Remaining work for the `@larvit/smpp` 1.0.0 rewrite. Read [AGENTS.md](AGENTS.md) first — the goals
+and hard rules there constrain every item below.
+
+This is a temporary working file: it is deleted when 1.0.0 ships, and until then it sets its own
+rules. The documentation conventions in AGENTS.md do not govern it, and nothing here is a source
+anything else may cite.
 
 ## Status
 
 The rewrite is **feature complete and green**: the suite, lint and typecheck are clean on Node 18,
 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
-
-```bash
-docker compose run --rm node npm install
-docker compose run --rm node npm test
-```
 
 ## The agreed API
 
@@ -57,6 +56,10 @@ Rules the API follows:
 | Merged multipart DLRs including across a reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
 | `smsIdFormat`: a peer's `submit_sm_resp` and receipt ids read into one notation before they are compared | `test/dlr.test.ts`, `test/session-extras.test.ts` |
 | A draining `close()` and `unbind()`, bounded by `shutdownTimeout` or an abort | `test/session-extras.test.ts` |
+| A drain that also waits out the messages the application has not answered, with `sendDlr()` the one send that passes it | `test/session-extras.test.ts` |
+| `OutgoingRequests`: the gate, the window, the pending map and the retry under one owner, told when a link comes up or goes down | `test/session-extras.test.ts`, `test/session.test.ts` |
+| Held messages capped and expiring, so an application that answers nothing cannot grow them | `test/session-extras.test.ts` |
+| A send with no link held for the next one, and one the link dropped under counted as `unanswered` | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
@@ -113,25 +116,36 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
-- [ ] **In-flight sends across a reconnect.** They currently fail with "Session closed before a
-      response arrived" and the caller retries. Re-queueing them automatically would be friendlier
-      but risks duplicate delivery, so it needs a decision before it is built.
-- [ ] **The drain covers only what this end sent.** `close()` and `unbind()` wait on the send window,
-      which `sendReturn()` never enters, so a server session tears down without waiting for the
-      application to answer the messages it is holding — the duplicate-on-retry outcome again, in
-      the SMSC direction. A full inbound drain needs a completion signal the `sms` event does not
-      carry, so it is a public-surface decision. Raised by review, 2026-08-30.
 - [ ] **Merge state does not survive a process restart.** A drop no longer discards it, but a restart
       loses every incomplete group, and a peer has no reason to resend a receipt it already had
       answered. Surviving one means exposing the merge state for the application to persist and hand
       back, which is a public-surface decision.
-- [ ] **`session.ts` has one seam left in it**, a socket-to-PDU transport, which would move the
-      deliberately public `sock` field out of `Session` or turn it into a getter — a public-surface
-      change, so it waits for a decision.
-- [ ] **Group the session's collaborators under `src/session/`.** Only `session.ts` imports
-      `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `reconnect-loop`, `pending-requests`
-      and `send-sms`, so the directory would make that boundary visible. Do it on the next
-      extraction out of `session.ts`, not as a move of its own.
+- [ ] **Group the session's collaborators under `src/session/`.** `session.ts` imports
+      `dlr-merger`, `incoming-requests`, `link-timers`, `outgoing-requests`, `pdu-transport`,
+      `reconnect-loop` and `send-sms`, and nothing else does, so the directory would make that
+      boundary visible. The `OutgoingRequests` extraction this was to be done with landed on
+      2026-09-01, so it is the remaining half. Raised by review, 2026-09-01.
+
+- [ ] **`leftOf()` and the link gate's own budget are one concept counted twice.**
+      `idle-waiters.ts` reads what is left of a budget as `Math.max(1, deadline - now)`, because 0
+      means "forever" there; `link-gate.ts` runs the same subtraction and calls `<= 0` expired.
+      Neither is reachable from the other, so nothing can disagree today, but a reader who learns one
+      and applies it to the other is wrong. A budget type both take would close it. Raised by review,
+      2026-09-01.
+
+- [ ] **An `sms` listener that rejects before answering costs a whole `shutdownTimeout`.**
+      One that *throws* is fine: `emit()` catches it, returns false, and `emitSms()` releases the
+      hold. A rejecting `async` one reaches `sessionError` through `captureRejections`, which hands
+      the handler an `unknown[]` the `Sms` cannot be read out of without a cast, so nothing releases
+      until the message expires. Same cost as the `onRequest`-answers-nothing case that was declined,
+      but reached by a bug rather than a policy. Raised by review, 2026-09-01.
+
+- [ ] **A message the reconnect dropped is answered into the void, and reported as delivered.**
+      `teardown()` clears the held messages along with the inbound segments, which is right — but the
+      application still holds the `Sms`, so `sendResp()` writes the old link's sequence numbers to the
+      new socket, succeeds, and returns `{}` for a response that correlates with nothing at the peer.
+      `HeldMessages` now knows exactly which messages went that way, so saying so is a small
+      addition. Goal 2, low frequency. Raised by review, 2026-09-01.
 - [ ] **Does an intermediate delivery notification deserve to be a `dlr`?** `esm_class` message type
       `INTERMEDIATE_DELIVERY` (0x20) is classified as a message today, so a peer that reports
       non-final states with it hands the application a raw `id:… stat:ENROUTE` text as an inbound
@@ -168,19 +182,11 @@ session message is a change to every call site.
       Mirror the `onRequest` seam — return a `Dlr` to own the receipt, `undefined` to fall through
       to the built-in parser.
 
-- [ ] **Turn `reconnect` on by default in `client()`.** Surviving a dropped link is most of why the
-      session layer exists, and it is opt-in behind an empty object today, so an application that
-      does not read the options table gets none of it. A default change, so it needs a decision.
-
 ## Declined
 
-- **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** Two reasons, either
-  sufficient. An operator's rate limit is scoped to the account, while the widest thing this library
-  owns is a session: a bucket here cannot see a second process binding the same account, so it is
-  wrong in exactly the case it exists for. And a rate limiter's queue drains at a fixed ceiling
-  rather than at the peer's response rate, so a submit rate sustained above the limit grows it
-  without bound — and a queue holding messages the caller was told were accepted loses them on
-  restart, which is worse than refusing them up front. Pacing an account needs durable shared state
-  this library deliberately has none of. `sendSms()` surfaces `ESME_RTHROTTLED` to the caller
-  instead, and `maxOutstanding` stays: a window slot frees on the peer's next response, which is
-  self-limiting in a way a rate ceiling is not.
+- **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** Declined by AGENTS.md
+  goal 7: an operator's rate limit is scoped to the account, while the widest thing this library owns
+  is a session, so a bucket here cannot see a second process binding the same account and is wrong in
+  exactly the case it exists for. `sendSms()` surfaces `ESME_RTHROTTLED` to the caller instead, and
+  `maxOutstanding` stays — a window slot frees on the peer's next response, which is self-limiting in
+  a way a rate ceiling is not.

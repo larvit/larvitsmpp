@@ -17,11 +17,11 @@ by hand on top of a library; it is built in here.
 | | |
 | --- | --- |
 | **Keepalive** | `enquire_link` every 20 s on a quiet link, and a peer that stops answering is dropped. |
-| **Reconnect with backoff** | Opt-in `reconnect` reopens the socket and re-binds, 1 s doubling to 30 s. |
+| **Reconnect with backoff** | A dropped client link reopens the socket and re-binds by default, 1 s doubling to 30 s. |
 | **Submit window** | `maxOutstanding` holds requests in flight at 10; further sends queue instead of overrunning the SMSC. |
 | **Delivery receipts** | Correlated by `receipted_message_id`/`message_state` where the SMSC sends them, falling back to parsing the receipt text — what Kannel and several others send. |
 | **Multipart** | Long messages split on send; concatenated `deliver_sm` reassembled into one `sms`. |
-| **Graceful shutdown** | `close()` and `unbind()` wait out the requests this end already sent, so a submit the SMSC accepted is not reported as a failure. |
+| **Graceful shutdown** | `close()` and `unbind()` wait out the requests this end already sent and the messages the application has not answered yet, so neither end has to guess whether a message got through. |
 | **Never throws** | Everything fallible resolves to `{ err?, … }`, the codec included. |
 
 Throughput throttling is deliberately absent: an operator's rate limit is scoped to the account, and
@@ -99,12 +99,12 @@ Every one is optional.
 | `systemType`, `addressRange`, `addrTon`, `addrNpi` | `''`, `''`, `0`, `0` | The remaining bind fields, for operators that require them. |
 | `tls` | `false` | `true` for defaults, or a `tls.ConnectionOptions` object for a private CA or a client certificate. |
 | `enquireLinkInterval` | `20000` | How often to send `enquire_link` on a quiet link. |
-| `idleTimeout` | `2 × enquireLinkInterval` | Give up on a link the peer has stopped answering; with `reconnect` set, it re-binds. |
-| `responseTimeout` | `30000` | How long to wait for a response before giving up on it; `0` waits forever. |
-| `shutdownTimeout` | `5000` | How long `close()` and `unbind()` wait for the requests this end already sent; `0` waits forever. |
+| `idleTimeout` | `2 × enquireLinkInterval` | Give up on a link the peer has stopped answering, and re-bind unless `reconnect` is `false`. |
+| `responseTimeout` | `30000` | How long to wait for a response before giving up on it, and how long a send with no link waits for the next one; `0` waits forever. |
+| `shutdownTimeout` | `5000` | How long `close()` and `unbind()` wait for the requests this end already sent and the messages the application has not answered. `0` waits forever for the requests, which end when the peer answers or `responseTimeout` expires — so setting both to `0` never ends. The messages fall back to `responseTimeout`, or to its default where that is `0` too, since nothing but the application ends that wait. |
 | `maxOutstanding` | `10` | Requests allowed on the wire at once; further sends queue. |
 | `smsIdFormat` | — | The notation the SMSC writes message ids in, per place it writes them: `{ receipt: 'decimal', submitResp: 'hex' }`. Only needed where the two disagree. |
-| `reconnect` | off | `{ minDelay, maxDelay }` to re-bind automatically after a drop or an idle timeout, with exponential backoff. |
+| `reconnect` | on | Re-binds after a drop, an idle timeout, or a stream the library cannot read, backing off from `minDelay` 1 s to `maxDelay` 30 s and starting over at `minDelay` once a link has lasted `maxDelay`. `{ minDelay, maxDelay }` retunes it; `false` turns it off, so a drop ends the session. |
 | `log` | silent | Any object with `debug`, `error`, `info`, `verbose` and `warn` methods — see [Logging](#logging). |
 | `signal` | — | An `AbortSignal` that cancels connecting and tears the session down. |
 
@@ -135,14 +135,17 @@ Messages too long for one SMS are split automatically and sent as a concatenated
 one id per segment:
 
 ```javascript
-const { err, pduObjs, smsIds } = await session.sendSms({ from, message, to });
+const { err, pduObjs, smsIds, unanswered } = await session.sendSms({ from, message, to });
 ```
 
 `err` is set when the SMSC refuses a segment, and it names the status it refused with. Because every
 segment goes on the wire together, `pduObjs` and `smsIds` then hold what the SMSC did accept — enough
 to reconcile against a later receipt, not enough to resend the rest, so treat a partial failure as a
-failed message. A message needing more than 255 segments is refused before anything is sent, since
-the concatenation header numbers segments in a single octet. `maxSegments` lowers that ceiling:
+failed message. `unanswered` counts the segments that went out and were never answered: the SMSC may
+have taken each of them and lost only the response, so a message with `unanswered` above zero cannot
+be sent again without risking a duplicate, however empty `smsIds` is. A message needing more than 255
+segments is refused before anything is sent, since the concatenation header numbers segments in a
+single octet. `maxSegments` lowers that ceiling:
 most handsets and SMSCs stop well short of 255, and refusing beats a message only half delivered.
 
 ### Receiving
@@ -316,8 +319,9 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 | `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and the `smsId` it was answered with. |
 | `dlr` | A delivery report arrives, one per segment. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. `statusMsg` names `statusId` unless the peer sent a `message_state` this library cannot name — then `statusId` is that raw value and `statusMsg` is whatever the body said, or `UNKNOWN`. |
 | `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. A base is merged once: a later message the SMSC gives the same ids is reported on through `dlr` alone, and an earlier one still collecting loses its merged report as well. |
-| `close` | The connection closed. |
-| `reconnected` | The client re-bound after a drop (only with `reconnect` configured). |
+| `close` | The session is over, because nothing will bring the link back. Fires once, whether you closed it or the link failed for good. |
+| `disconnected` | The link dropped and the reconnect loop will retry it. Do not open a replacement client here — the session you hold comes back on its own, and `reconnected` says when. Fires again for each attempt that reconnects and then fails, so it is not one-to-one with `reconnected`. |
+| `reconnected` | The client re-bound after a drop. |
 | `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. |
 | `data` | Raw bytes arrived on the socket. |
 | `incomingPdu` | A complete PDU arrived, as a buffer. |
@@ -327,8 +331,12 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 
 `sendSms()`, `send()`, `sendReturn()`, `unbind()` and `close()`. Both `close()` and `unbind()`
 refuse further sends, wait out the requests this end already sent for up to `shutdownTimeout`, and
-then tear down whatever is left, resolving to an `err` that says what was lost. A request the peer
-sent *us* is answered through `sendReturn()` and is not waited for. `close({ signal })` takes an
+then tear down whatever is left, resolving to an `err` that says what was lost. They also wait for
+every `sms` the application has not called `sendResp()` on, so a peer whose `submit_sm` is still
+being handled is answered rather than left to re-send it — answering its PDUs through `sendReturn()`
+instead leaves that wait running until it gives up. `sendDlr()` is the one send the refusal lets
+past, and it catches the wait when issued straight after `sendResp()`; await anything in between and
+it races the shutdown like any other send. `close({ signal })` takes an
 `AbortSignal` that cuts the wait short; `unbind()` takes none, and waits a further
 `responseTimeout` for its own response. `send()` reaches any of the 33 SMPP commands the codec
 knows, not just the four the session handles natively:
@@ -339,6 +347,17 @@ const { err, pduObj } = await session.send({
 	params: { message_id: smsId },
 });
 ```
+
+A send issued while the link is down waits for the reconnect instead of failing, and goes out once
+the new link is bound — up to `responseTimeout`, after which it gives up having sent nothing. A
+request already on the wire is the other case: the SMSC may have taken it and lost only the response,
+so it fails, and `sendSms()` and `sms.sendDlr()` count it in `unanswered`, whether the link dropped
+under it, the peer never answered in time, or you aborted it after it went out. Neither applies with `reconnect: false`,
+where a drop ends the session and every send after it is refused.
+
+`responseTimeout` bounds the wait for a link and the wait for an answer separately, and a send also
+queues for a `maxOutstanding` slot, which nothing bounds — so it is not a deadline for the call.
+Pass `{ signal: AbortSignal.timeout(ms) }` when you need one.
 
 `acceptsOptionalParams()` answers whether the peer declared SMPP 3.4 or later, which is the version
 at and above which the spec allows optional parameters to be sent to it; `peerInterfaceVersion` is

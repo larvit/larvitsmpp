@@ -1,3 +1,14 @@
+/** The 8-bit reference tying a long SMS's segments together, counted per session. */
+export class ConcatReference {
+	private current = 0;
+
+	next(): number {
+		this.current = this.current >= 255 ? 1 : this.current + 1;
+
+		return this.current;
+	}
+}
+
 export type ConcatInfo = {
 	part: number;
 	reference: number;

@@ -83,7 +83,7 @@ describe('README: Client', () => {
 		closeAfter(t, session);
 
 		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
-		const { err: sendErr, smsIds } = await session.sendSms({
+		const { err: sendErr, smsIds, unanswered } = await session.sendSms({
 			dlr: true,
 			from: '46701113311',
 			message: '«baff»',
@@ -92,6 +92,7 @@ describe('README: Client', () => {
 
 		assert.equal(sendErr, undefined);
 		assert.equal(smsIds.length, 1);
+		assert.equal(unanswered, 0);
 		assert.equal((await reported).smsId, smsIds[0]);
 	});
 
