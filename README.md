@@ -355,6 +355,10 @@ so it fails, and `sendSms()` and `sms.sendDlr()` count it in `unanswered`, wheth
 under it, the peer never answered in time, or you aborted it after it went out. Neither applies with `reconnect: false`,
 where a drop ends the session and every send after it is refused.
 
+An answer cannot wait for a link that way, because it carries the sequence number the message arrived
+on: `sms.sendResp()` on a message whose link dropped writes nothing and returns an `err`. Its
+`sms.sendDlr()` still goes out, since a receipt is a request of its own, correlated by the id it names.
+
 `responseTimeout` bounds the wait for a link and the wait for an answer separately, and a send also
 queues for a `maxOutstanding` slot, which nothing bounds — so it is not a deadline for the call.
 Pass `{ signal: AbortSignal.timeout(ms) }` when you need one.

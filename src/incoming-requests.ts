@@ -170,6 +170,7 @@ export class IncomingRequests {
 			session: this.session,
 			to: paramText(first.params.destination_addr),
 		}, {
+			lostLink: () => this.held.lostLink(pduObjs),
 			// A turn later, so a listener sending its receipt straight after the response still holds.
 			onAnswered: () => { setImmediate(() => { this.held.release(pduObjs); }); },
 			// Past the refusal only while a drain is still waiting for this message; an ordinary send after.

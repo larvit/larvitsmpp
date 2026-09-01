@@ -58,9 +58,14 @@ export class ExpiringGroups<T> {
 		this.idle();
 	}
 
-	clear(): void {
+	/** Removes every group and hands them over. */
+	takeAll(): [string, T][] {
+		const taken: [string, T][] = [...this.entries].map(([key, entry]) => [key, entry.group]);
+
 		this.entries.clear();
 		this.idle();
+
+		return taken;
 	}
 
 	/** Removes every group past its deadline and hands them over. */

@@ -557,6 +557,40 @@ describe('reconnect', () => {
 		assert.equal(report.segments.length, 3);
 	});
 
+	test('refuses to answer a message whose link went, rather than reporting it delivered', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
+
+		assert.ok(session);
+
+		const arrived = once<Sms>(resolve => { session.on('sms', resolve); });
+
+		void peerOf(smpp).send({
+			cmdName: 'deliver_sm',
+			params: {
+				destination_addr: '46701113311',
+				short_message: 'answered too late',
+				source_addr: '46709771337',
+			},
+		});
+
+		const sms = await arrived;
+		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+
+		await peerOf(smpp).close({ signal: AbortSignal.abort() });
+		await reconnected;
+
+		const answered = await sms.sendResp();
+
+		assert.match(answered.err?.message ?? '', /link this message arrived on is gone/);
+
+		// A receipt is a request of its own, correlated by its id, so the new link carries it.
+		const report = await sms.sendDlr('DELIVERED');
+
+		assert.equal(report.err, undefined);
+		assert.equal(report.pduObjs.length, 1);
+	});
+
 	test('does not reconnect after an explicit close', async t => {
 		const smpp = await startServer(t);
 		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 50, minDelay: 10 } });
@@ -913,6 +947,20 @@ describe('held message bounds', () => {
 		held.clear();
 	});
 
+	test('remembers which messages went with the link, and which were answered', () => {
+		const held = new HeldMessages({ log: silentLog, max: 10, timeout: 10_000 });
+		const answered = message(1);
+		const dropped = message(2);
+
+		held.hold(answered);
+		held.hold(dropped);
+		held.release(answered);
+		held.clear();
+
+		assert.equal(held.lostLink(dropped), true);
+		assert.equal(held.lostLink(answered), false);
+	});
+
 	// Without this the drain sits out its whole budget before returning what a sweep already settled.
 	test('wakes a waiting drain when the last message expires', async () => {
 		let now = 0;
@@ -944,6 +992,7 @@ describe('sendDlr()', () => {
 			session,
 			to: '46709771337',
 		}, {
+			lostLink: () => false,
 			onAnswered: () => undefined,
 			send: () => {
 				call++;

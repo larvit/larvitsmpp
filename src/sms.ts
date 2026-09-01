@@ -54,6 +54,8 @@ export type SmsInput = {
 
 /** What the session's incoming side gives a message so it can be answered and accounted for. */
 export type SmsHandlers = {
+	/** Whether the link this message arrived on is gone, so no answer of ours correlates. */
+	lostLink: () => boolean;
 	onAnswered: () => void;
 	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 };
@@ -76,7 +78,8 @@ export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 		message: input.message,
 		pduObjs: input.pduObjs,
 		sendDlr: status => sendDlr(sms, handlers.send, status),
-		sendResp: options => sendResp(sms, answered, options ?? {}).finally(handlers.onAnswered),
+		sendResp: options => sendResp(sms, answered, options ?? {}, handlers.lostLink)
+			.finally(handlers.onAnswered),
 		session: input.session,
 		get smsId(): string {
 			return answered.smsId;
@@ -92,6 +95,7 @@ async function sendResp(
 	sms: Sms,
 	answered: { smsId: string },
 	options: SendRespOptions,
+	lostLink: () => boolean,
 ): Promise<VoidResult> {
 	const total = sms.pduObjs.length;
 
@@ -101,6 +105,11 @@ async function sendResp(
 
 	if (options.smsId === '') {
 		return { err: new Error('smsId must not be empty') };
+	}
+
+	// A response carries the sequence number it was asked on, which the next link knows nothing about.
+	if (lostLink()) {
+		return { err: new Error('The link this message arrived on is gone, so nothing would correlate the response') };
 	}
 
 	if (options.smsId !== undefined) answered.smsId = options.smsId;

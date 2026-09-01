@@ -60,6 +60,7 @@ Rules the API follows:
 | `OutgoingRequests`: the gate, the window, the pending map and the retry under one owner, told when a link comes up or goes down | `test/session-extras.test.ts`, `test/session.test.ts` |
 | Held messages capped and expiring, so an application that answers nothing cannot grow them | `test/session-extras.test.ts` |
 | A send with no link held for the next one, and one the link dropped under counted as `unanswered` | `test/session-extras.test.ts` |
+| A message whose link dropped refused an answer, with its receipt still allowed out | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
@@ -140,12 +141,6 @@ session message is a change to every call site.
       until the message expires. Same cost as the `onRequest`-answers-nothing case that was declined,
       but reached by a bug rather than a policy. Raised by review, 2026-09-01.
 
-- [ ] **A message the reconnect dropped is answered into the void, and reported as delivered.**
-      `teardown()` clears the held messages along with the inbound segments, which is right — but the
-      application still holds the `Sms`, so `sendResp()` writes the old link's sequence numbers to the
-      new socket, succeeds, and returns `{}` for a response that correlates with nothing at the peer.
-      `HeldMessages` now knows exactly which messages went that way, so saying so is a small
-      addition. Goal 2, low frequency. Raised by review, 2026-09-01.
 - [ ] **Does an intermediate delivery notification deserve to be a `dlr`?** `esm_class` message type
       `INTERMEDIATE_DELIVERY` (0x20) is classified as a message today, so a peer that reports
       non-final states with it hands the application a raw `id:… stat:ENROUTE` text as an inbound
