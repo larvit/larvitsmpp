@@ -56,21 +56,23 @@ export type Dlr = {
 	statusMsg: MessageState;
 };
 
-const field = (name: string) => new RegExp(`\\b${name}:([^ ]*)`, 'i');
+const field = (name: string) => new RegExp(`\\b${name}:(\\S*)`, 'i');
 
 const patterns = {
 	dlvrd: field('dlvrd'),
-	doneDate: /\bdone date:([^ ]*)/i,
+	doneDate: field('done date'),
 	err: field('err'),
 	id: field('id'),
 	stat: field('stat'),
 	sub: field('sub'),
-	submitDate: /\bsubmit date:([^ ]*)/i,
-	text: /\btext:(.*)$/i,
+	submitDate: field('submit date'),
+	// The one field that may hold a space, carrying the message's own start, so it ends at its line.
+	text: /\btext:([^\r\n]*)/i,
 };
 
 function toNumber(value: string | undefined): number | undefined {
-	if (value === undefined) return undefined;
+	// Number('') is 0, which would report a receipt that stated no count as one that stated none sent.
+	if (value === undefined || value === '') return undefined;
 
 	const parsed = Number(value);
 
