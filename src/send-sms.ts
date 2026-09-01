@@ -37,6 +37,11 @@ export type SendSmsResult = {
 	unanswered: number;
 };
 
+/** A message that never went out, in the shape a caller aggregating segments still reads. */
+export function unsent(err: Error): SendSmsResult {
+	return { err, pduObjs: [], smsIds: [], unanswered: 0 };
+}
+
 /** What sending needs from the session: a concat reference and a way onto the wire. */
 export type SendSmsDeps = {
 	log: SmppLog;
@@ -141,7 +146,7 @@ export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise
 	const segments = splitMessage(sms.message, { encoding, reference: deps.reference });
 	const refused = checkSegments(allowed, segments.length);
 
-	if (refused) return { err: refused, pduObjs: [], smsIds: [], unanswered: 0 };
+	if (refused) return unsent(refused);
 
 	const multipart = segments.length > 1;
 

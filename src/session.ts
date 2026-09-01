@@ -16,12 +16,14 @@ import { PduTransport } from './pdu-transport.ts';
 import { PendingRequests, UnansweredError } from './pending-requests.ts';
 import { ReconnectLoop } from './reconnect-loop.ts';
 import { SendWindow } from './send-window.ts';
+import { leftOf } from './idle-waiters.ts';
 import { errorFrom } from './error-from.ts';
 import { optionalParamsMinVersion } from './defs/constants.ts';
 import { bindCarries, bindCommands, defaultSystemId, defaults } from './session-options.ts';
 import { isResp, objToPdu, pduReturn } from './pdu.ts';
 import { silentLog } from './log.ts';
-import { submitSms } from './send-sms.ts';
+import { submitSms, unsent } from './send-sms.ts';
+import { ConcatReference } from './udh.ts';
 
 export type {
 	CloseOptions,
@@ -64,6 +66,7 @@ export class Session extends EventEmitter<SessionEvents> {
 	peerInterfaceVersion: number | undefined = undefined;
 	userData: unknown = undefined;
 
+	private readonly concatReference = new ConcatReference();
 	private readonly dlrMerger: DlrMerger;
 	private readonly gate: LinkGate;
 	private readonly incoming: IncomingRequests;
@@ -75,7 +78,6 @@ export class Session extends EventEmitter<SessionEvents> {
 	private readonly window: SendWindow;
 
 	private closed = false;
-	private concatReference = 0;
 	private draining = false;
 	private ended = false;
 
@@ -129,6 +131,7 @@ export class Session extends EventEmitter<SessionEvents> {
 			maxReassembly: options.maxReassembly,
 			onRequest: options.onRequest,
 			reassemblyTimeout: options.reassemblyTimeout,
+			sendHeld: input => this.sendThrough(input, {}),
 			session: this,
 			smsIdFormat: options.smsIdFormat,
 			systemId: options.systemId,
@@ -166,7 +169,15 @@ export class Session extends EventEmitter<SessionEvents> {
 	}
 
 	/** Sends a request and resolves with the peer's response. */
-	async send(
+	send(input: PduObjectInput, options: SendOptions = {}): Promise<Result<{ pduObj: PduObject }>> {
+		// A drain on a live link. A link that is down is the gate's answer, which says closed instead.
+		if (this.draining && !this.linkDown()) return Promise.resolve({ err: new Error('Session is shutting down') });
+
+		return this.sendThrough(input, options);
+	}
+
+	/** The same path without that refusal, which a receipt for a held message has to take. */
+	private async sendThrough(
 		input: PduObjectInput,
 		options: SendOptions = {},
 	): Promise<Result<{ pduObj: PduObject }>> {
@@ -198,9 +209,6 @@ export class Session extends EventEmitter<SessionEvents> {
 		if (input.cmdName.endsWith('_resp')) {
 			return new Error(`Use sendReturn() for responses, not send(): ${input.cmdName}`);
 		}
-
-		// A drain on a live link. A link that is down is the gate's answer, which says closed instead.
-		if (this.draining && !this.linkDown()) return new Error('Session is shutting down');
 
 		// Before the gate and the window, or an aborted call waits for what it will never use.
 		if (options.signal?.aborted === true) return abortedBeforeSend();
@@ -239,17 +247,12 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	async sendSms(sms: SendSmsOptions, options: SendOptions = {}): Promise<SendSmsResult> {
 		if (!this.bindAllows('submit_sm')) {
-			return {
-				err: new Error('A receiver-bound session does not carry submit_sm'),
-				pduObjs: [],
-				smsIds: [],
-				unanswered: 0,
-			};
+			return unsent(new Error('A receiver-bound session does not carry submit_sm'));
 		}
 
 		const sent = await submitSms({
 			log: this.log,
-			reference: this.nextConcatReference(),
+			reference: this.concatReference.next(),
 			respIdNotation: this.options.smsIdFormat?.submitResp,
 			send: input => this.send(input, options),
 		}, sms);
@@ -379,7 +382,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		return { result: answered.err ? { err: new UnansweredError(answered.err) } : answered, retryOnNextLink: false };
 	}
 
-	/** Stops new sends and waits out the ones already issued. */
+	/** Stops new sends and waits out the messages we hold and the requests already issued. */
 	private async drain(signal: AbortSignal | undefined): Promise<VoidResult> {
 		this.reconnectLoop?.stop();
 		this.draining = true;
@@ -387,10 +390,15 @@ export class Session extends EventEmitter<SessionEvents> {
 		if (this.linkDown()) return {};
 
 		const timeout = this.options.shutdownTimeout ?? defaults.shutdownTimeout;
-		const unfinished = await this.window.idle(timeout, signal);
+		const deadline = timeout > 0 ? Date.now() + timeout : 0;
+		// Answering a message can put a receipt on the wire; nothing on the wire produces a message.
+		const messages = await this.incoming.drain(timeout, signal);
+		const unfinished = await this.window.idle(leftOf(deadline), signal);
 
 		// The window empties on a teardown too, which settles everything the link was carrying.
 		if (this.linkDown()) return { err: new Error('The session closed before the drain finished') };
+
+		if (messages.err) return messages;
 
 		if (unfinished === 0) return {};
 
@@ -431,12 +439,6 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	private retrying(): boolean {
 		return this.reconnectLoop !== undefined && !this.reconnectLoop.isStopped();
-	}
-
-	private nextConcatReference(): number {
-		this.concatReference = this.concatReference >= 255 ? 1 : this.concatReference + 1;
-
-		return this.concatReference;
 	}
 
 	private onData(chunk: Buffer): void {

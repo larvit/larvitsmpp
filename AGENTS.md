@@ -72,6 +72,8 @@ src/
 	dlr-merger.ts        DlrMerger: per-segment receipts counted into one MessageDlr
 	error-from.ts        errorFrom(): whatever was thrown or rejected, as an Error
 	expiring-groups.ts   ExpiringGroups: the capped, expiring store both of those share
+	held-messages.ts     HeldMessages: the messages handed to the application and not yet answered
+	idle-waiters.ts      IdleWaiters: waiting for a count to fall to zero, and what is left of a budget
 	incoming-requests.ts Every request the peer sends: messages, receipts, links, unknown commands
 	link-gate.ts         LinkGate: where a request with no link to go out on waits for the next one
 	link-timers.ts       LinkTimers: the enquire_link heartbeat and the idle timeout
@@ -88,7 +90,7 @@ src/
 	send-window.ts       SendWindow: the maxOutstanding semaphore
 	session-options.ts   SessionOptions, ReconnectOptions, bind direction and the session defaults
 	sms-id.ts            The notation a peer writes message ids in, normalised for comparison
-	udh.ts               User data header: the concatenation fields of a long SMS
+	udh.ts               User data header: the concatenation fields of a long SMS, and their reference
 	uuid.ts              uuidv7() — the ids the library generates for messages
 	defs/
 		commands.ts      The 33 commands, their ids and ordered parameter lists
@@ -330,6 +332,19 @@ Grouped by what each one constrains.
   sessions on the caller's behalf, so the option is the only composition point. `SmppServer.close()`
   reports each session's unfinished drain through `serverError`, because its own result says nothing
   but that the listener stopped.
+
+- **The drain waits on the messages the application holds, and `sendResp()` is what says it is done
+  with one.** Maintainer's call, 2026-09-01: waiting on the send window alone tore a server session
+  down while the application was still answering a `submit_sm`, so the peer timed out and re-sent —
+  the duplicate goal 2 forbids, in the direction the window already covers. No completion signal was
+  added to the `sms` event: `sendResp()` is the answer the peer is waiting for, so it is the one the
+  drain waits for. Counting every inbound request until `sendReturn()` answered it was rejected —
+  an `onRequest` that deliberately answers nothing would then cost a full `shutdownTimeout` on every
+  close — and a message no listener took is released at once, since nothing is going to answer it.
+  `teardown()` drops what is still held for the same reason it drops inbound segments. The release
+  is one turn late, so a listener that sends its receipt straight after the response is still
+  holding when the drain looks; `sendDlr()` is the one send that goes out past the drain's refusal,
+  being part of answering a message the drain is itself waiting for.
 
 - **A reconnect keeps the delivery-receipt merges; everything else the link held is dropped.**
   `onDeliverSm()` answers each receipt before the group it belongs to is complete, and `teardown()`

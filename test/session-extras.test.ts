@@ -1037,8 +1037,12 @@ describe('AbortSignal on a send', () => {
 });
 
 describe('graceful shutdown', () => {
-	async function submitInFlight(t: TestContext, options: Parameters<typeof client>[0] = {}) {
-		const smpp = await startServer(t);
+	async function submitInFlight(
+		t: TestContext,
+		options: Parameters<typeof client>[0] = {},
+		serverOptions: Parameters<typeof server>[0] = {},
+	) {
+		const smpp = await startServer(t, serverOptions);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', bound => bound.on('sms', resolve));
 		});
@@ -1077,6 +1081,69 @@ describe('graceful shutdown', () => {
 
 		assert.deepEqual((await sent).smsIds, ['answered-before-unbind']);
 		assert.deepEqual(await unbound, {});
+	});
+
+	test('close() waits for a message the application has not answered yet', async t => {
+		const { sent, smpp, sms } = await submitInFlight(t);
+		const closing = peerOf(smpp).close();
+
+		await delay(50);
+		await sms.sendResp({ smsId: 'answered-during-the-inbound-drain' });
+
+		assert.deepEqual(await closing, {});
+		assert.deepEqual((await sent).smsIds, ['answered-during-the-inbound-drain']);
+	});
+
+	test('gives up on a message the application never answers', async t => {
+		const { smpp } = await submitInFlight(t, {}, { shutdownTimeout: 50 });
+		const closed = await peerOf(smpp).close();
+
+		assert.ok(closed.err instanceof Error);
+		assert.match(closed.err.message, /1 message\(s\) unanswered/);
+	});
+
+	// The README's own listener answers and then sends its receipt, one turn later.
+	test('a receipt sent right after the response still goes out mid-drain', async t => {
+		const { sent, session, smpp, sms } = await submitInFlight(t);
+		const receipt = once<Dlr>(resolve => { session.on('dlr', resolve); });
+		const closing = peerOf(smpp).close();
+
+		await sms.sendResp({ smsId: 'held-through-the-drain' });
+
+		const receiptSent = await sms.sendDlr('DELIVERED');
+
+		assert.equal(receiptSent.err, undefined);
+		assert.equal((await receipt).smsId, 'held-through-the-drain');
+		assert.deepEqual(await closing, {});
+		assert.deepEqual((await sent).smsIds, ['held-through-the-drain']);
+	});
+
+	test('a message no listener took does not hold the shutdown up', async t => {
+		const smpp = await startServer(t, { shutdownTimeout: 30_000 });
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const bound = peerOf(smpp);
+		const arrived = once<PduObject>(resolve => {
+			bound.on('incomingPduObj', pduObj => {
+				if (pduObj.cmdName === 'submit_sm') resolve(pduObj);
+			});
+		});
+		const sent = session.sendSms({
+			from: '46701113311',
+			message: 'nobody is listening',
+			to: '46709771337',
+		});
+
+		await arrived;
+		await delay(50);
+
+		const started = Date.now();
+
+		assert.deepEqual(await bound.close(), {});
+		assert.ok(Date.now() - started < 1000);
+		assert.ok((await sent).err instanceof Error);
 	});
 
 	test('gives up on a request that outlasts shutdownTimeout', async t => {

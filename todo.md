@@ -56,6 +56,7 @@ Rules the API follows:
 | Merged multipart DLRs including across a reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
 | `smsIdFormat`: a peer's `submit_sm_resp` and receipt ids read into one notation before they are compared | `test/dlr.test.ts`, `test/session-extras.test.ts` |
 | A draining `close()` and `unbind()`, bounded by `shutdownTimeout` or an abort | `test/session-extras.test.ts` |
+| A drain that also waits out the messages the application has not answered, with `sendDlr()` the one send that passes it | `test/session-extras.test.ts` |
 | A send with no link held for the next one, and one the link dropped under counted as `unanswered` | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
@@ -113,11 +114,6 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
-- [ ] **The drain covers only what this end sent.** `close()` and `unbind()` wait on the send window,
-      which `sendReturn()` never enters, so a server session tears down without waiting for the
-      application to answer the messages it is holding — the duplicate-on-retry outcome again, in
-      the SMSC direction. A full inbound drain needs a completion signal the `sms` event does not
-      carry, so it is a public-surface decision. Raised by review, 2026-08-30.
 - [ ] **Merge state does not survive a process restart.** A drop no longer discards it, but a restart
       loses every incomplete group, and a peer has no reason to resend a receipt it already had
       answered. Surviving one means exposing the merge state for the application to persist and hand
@@ -125,13 +121,14 @@ session message is a change to every call site.
 - [ ] **Group the session's collaborators under `src/session/`.** Only `session.ts` imports
       `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `link-gate`, `reconnect-loop`,
       `pending-requests` and `send-sms`, so the directory would make that boundary visible.
-      `pdu-transport` joined them on 2026-08-31 and `link-gate` on 2026-09-01, both without the move
-      being made, so it is a move of its own now. Do it together with the extraction below rather
+      `pdu-transport` joined them on 2026-08-31, `link-gate` and `idle-waiters` on 2026-09-01, all
+      without the move being made, so it is a move of its own now. Do it together with the extraction below rather
       than before it — three reactive splits at whatever boundary fitted under the line cap is what
       produced the current shape. Raised by review, 2026-09-01.
 - [ ] **An `OutgoingRequests` collaborator, owning `LinkGate`, `SendWindow` and `PendingRequests`.**
-      `session.ts` sits a few lines under its 350-line cap and every split so far has been made to
-      get back under it. The seam that holds: one object owning the gate, the window, the pending
+      `session.ts` sits three lines under its 350-line cap and every split so far has been made to
+      get back under it — the inbound drain on 2026-09-01 only fitted once `ConcatReference` and the
+      unsent-result shape moved out to `udh.ts` and `send-sms.ts`. The seam that holds: one object owning the gate, the window, the pending
       map and the retry loop, exposing a gated `request()` and the ungated door `unbind()` and the
       bind already need, with `Session` calling it when a link comes up or goes down instead of
       spreading `linkDown()` and `retrying()` across both sides. It would also close two smaller
