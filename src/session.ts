@@ -121,7 +121,7 @@ export class Session extends EventEmitter<SessionEvents> {
 			max: defaults.maxDlrMerges,
 			timeout: defaults.dlrMergeTimeout,
 		});
-		this.gate = new LinkGate({ timeout: options.responseTimeout ?? defaults.responseTimeout });
+		this.gate = new LinkGate({ log: this.log, timeout: options.responseTimeout ?? defaults.responseTimeout });
 		this.incoming = new IncomingRequests({
 			dlrMerger: this.dlrMerger,
 			log: this.log,
@@ -174,7 +174,7 @@ export class Session extends EventEmitter<SessionEvents> {
 
 		if (refused) return { err: refused };
 
-		// A bind is what makes a link usable, so it cannot wait for one. The door unbind() uses too.
+		// A bind is what makes a link usable, so it cannot wait for one.
 		if (bindCommands.includes(input.cmdName)) return (await this.attempt(input, options)).result;
 
 		const deadline = this.gate.deadline();
@@ -189,7 +189,6 @@ export class Session extends EventEmitter<SessionEvents> {
 			const attempt = await this.attempt(input, options).finally(() => { this.window.release(); });
 
 			// Nothing reached the socket, so the next link carries it instead of the caller resending.
-			// The gate's own answer, or a loop round one that admits everything spins on a dead socket.
 			if (!attempt.retryOnNextLink || this.gate.isUp() || !this.retrying()) return attempt.result;
 		}
 	}
@@ -206,7 +205,8 @@ export class Session extends EventEmitter<SessionEvents> {
 		// Before the gate and the window, or an aborted call waits for what it will never use.
 		if (options.signal?.aborted === true) return abortedBeforeSend();
 
-		return undefined;
+		// A bind skips the gate below, so the answer it would have given is given here instead.
+		return bindCommands.includes(input.cmdName) ? this.gate.refusal() : undefined;
 	}
 
 	/** Read through a method: a drop can land while a send is awaiting. */
@@ -338,9 +338,9 @@ export class Session extends EventEmitter<SessionEvents> {
 		}
 
 		this.resetTimers();
+		this.gate.open();
 		this.log.info('session - reconnected');
 		this.emit('reconnected');
-		this.gate.open();
 
 		return {};
 	}

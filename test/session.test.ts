@@ -236,7 +236,7 @@ describe('bind', () => {
 		const sent = await session.send({ cmdName: 'enquire_link' });
 
 		assert.ok(sent.err instanceof Error);
-		assert.match(sent.err.message, /may have accepted/);
+		assert.match(sent.err.message, /may have accepted.*Session closed before a response arrived/);
 	});
 
 	test('reports an unbind the peer left unanswered on a link that stays up', async t => {

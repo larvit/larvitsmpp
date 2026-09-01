@@ -33,7 +33,7 @@ export type SendSmsResult = {
 	err?: Error;
 	pduObjs: PduObject[];
 	smsIds: string[];
-	/** Segments the link dropped under. The peer may have taken them, so sending again may duplicate. */
+	/** Segments that went out unanswered. The peer may have taken them, so sending again may duplicate. */
 	unanswered: number;
 };
 

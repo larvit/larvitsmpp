@@ -674,7 +674,7 @@ describe('sends across a reconnect', () => {
 
 		smpp.on('session', peer => { peer.on('sms', () => undefined); });
 
-		const { session } = await connect(t, smpp, { responseTimeout: 60 });
+		const { session } = await connect(t, smpp, { responseTimeout: 200 });
 
 		assert.ok(session);
 
@@ -729,7 +729,7 @@ describe('sends across a reconnect', () => {
 		const smpp = await startServer(t);
 		const { session } = await connect(t, smpp, {
 			reconnect: { maxDelay: 10_000, minDelay: 10_000 },
-			responseTimeout: 60,
+			responseTimeout: 200,
 		});
 
 		assert.ok(session);
@@ -818,7 +818,7 @@ describe('sends across a reconnect', () => {
 describe('LinkGate', () => {
 	test('refuses a hold whose deadline has already passed', async () => {
 		let now = 0;
-		const gate = new LinkGate({ now: () => now, timeout: 100 });
+		const gate = new LinkGate({ log: silentLog, now: () => now, timeout: 100 });
 		const deadline = gate.deadline();
 
 		gate.shut(true);
@@ -829,9 +829,27 @@ describe('LinkGate', () => {
 		assert.match(held.err?.message ?? '', /did not come back in time/);
 	});
 
+	// A held send is awaited with the socket destroyed, so an unref'd timer here lets a process whose
+	// only remaining work is that send exit without ever settling it, losing the message silently.
+	test('holds on a timer that keeps the process alive', async () => {
+		const gate = new LinkGate({ log: silentLog, timeout: 10_000 });
+		const timers = (): number => process.getActiveResourcesInfo().filter(name => name === 'Timeout').length;
+
+		gate.shut(true);
+
+		const before = timers();
+		const held = gate.wait(gate.deadline(), undefined);
+
+		assert.equal(timers(), before + 1, 'an unref\'d timer is not counted here, which is the point');
+
+		gate.open();
+
+		assert.deepEqual(await held, {});
+	});
+
 	// addEventListener never fires for a signal that already aborted, so it would wait out the timeout.
 	test('gives up at once on a signal that was already aborted', async () => {
-		const gate = new LinkGate({ timeout: 100 });
+		const gate = new LinkGate({ log: silentLog, timeout: 100 });
 
 		gate.shut(true);
 
@@ -1073,7 +1091,7 @@ describe('graceful shutdown', () => {
 		const result = await sent;
 
 		assert.ok(result.err instanceof Error);
-		assert.match(result.err.message, /may have accepted/);
+		assert.match(result.err.message, /may have accepted.*Session closed before a response arrived/);
 		assert.equal(result.unanswered, 1);
 	});
 

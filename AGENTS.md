@@ -365,7 +365,11 @@ exactly 140.
   answer to how long one request may wait. It bounds the hold and the answer separately, and the
   wait for a `maxOutstanding` slot is bounded by nothing, so `responseTimeout` is not a deadline for
   the call; `SendOptions.signal` with `AbortSignal.timeout()` is, and both the gate and
-  `pending.wait()` honour it.
+  `pending.wait()` honour it. The hold's clock starts when the send is issued rather than when it
+  first finds the gate shut, so one budget covers every hold a single call makes — a send that spent
+  it queued behind the window is refused rather than held. The hold timer is the one timer here that
+  is not `unref()`'d: a held request is awaited with the socket already destroyed, so an unref'd one
+  lets a process whose only remaining work is that send exit without settling it.
 
 - **The gate decides whether a link can carry a request, and a bind is what makes it one.**
   Maintainer's call, 2026-09-01: `attach()` clears `closed` the moment a socket is handed over, one

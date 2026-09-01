@@ -1,6 +1,8 @@
+import type { SmppLog } from './log.ts';
 import type { VoidResult } from './result.ts';
 
 export type LinkGateOptions = {
+	log: SmppLog;
 	now?: (() => number) | undefined;
 	/** How long a request may wait for a link. 0 waits for as long as one may still arrive. */
 	timeout: number;
@@ -20,11 +22,9 @@ function over(): Error {
 	return new Error('Session is closed');
 }
 
-/**
- * Where a request with no link to go out on waits for the next one. The owner reports what became of
- * the link; nothing here reads back into the owner to find out.
- */
+/** Where a request with no link to go out on waits for the next one. */
 export class LinkGate {
+	private readonly log: SmppLog;
 	private readonly now: () => number;
 	private readonly timeout: number;
 	private readonly waiting = new Set<Waiter>();
@@ -32,6 +32,7 @@ export class LinkGate {
 	private up = true;
 
 	constructor(options: LinkGateOptions) {
+		this.log = options.log;
 		this.now = options.now ?? Date.now;
 		this.timeout = options.timeout;
 	}
@@ -39,6 +40,11 @@ export class LinkGate {
 	/** Whether a request can go out right now. A link that is attached but not yet bound cannot. */
 	isUp(): boolean {
 		return this.up;
+	}
+
+	/** Why the gate will never admit a request, or undefined while one may still get through. */
+	refusal(): Error | undefined {
+		return this.up || this.returning ? undefined : over();
 	}
 
 	/** When a hold starting now has to give up. 0 never does. */
@@ -50,6 +56,11 @@ export class LinkGate {
 	open(): void {
 		this.up = true;
 		this.returning = false;
+
+		if (this.waiting.size > 0) {
+			this.log.verbose('linkGate - sending what was held for a link', { held: this.waiting.size });
+		}
+
 		this.release({});
 	}
 
@@ -65,7 +76,9 @@ export class LinkGate {
 	wait(deadline: number, signal: AbortSignal | undefined): Promise<VoidResult> {
 		if (this.up) return Promise.resolve({});
 
-		if (!this.returning) return Promise.resolve({ err: over() });
+		const refused = this.refusal();
+
+		if (refused) return Promise.resolve({ err: refused });
 
 		if (signal?.aborted === true) return Promise.resolve({ err: aborted() });
 
@@ -77,6 +90,8 @@ export class LinkGate {
 	}
 
 	private hold(left: number, signal: AbortSignal | undefined): Promise<VoidResult> {
+		this.log.verbose('linkGate - holding a request until a link is back', { timeout: left });
+
 		return new Promise<VoidResult>(resolve => {
 			let timer: NodeJS.Timeout | undefined = undefined;
 			const settle = (result: VoidResult): void => {
@@ -86,15 +101,18 @@ export class LinkGate {
 				this.waiting.delete(settle);
 				resolve(result);
 			};
+			const giveUp = (): void => {
+				this.log.warn('linkGate - no link came back in time', { timeout: left });
+				settle({ err: expired() });
+			};
 
 			function onAbort(): void {
 				settle({ err: aborted() });
 			}
 
-			if (left > 0) {
-				timer = setTimeout(() => { settle({ err: expired() }); }, left);
-				timer.unref();
-			}
+			// Deliberately not unref()'d: a held request is awaited with a destroyed socket and no
+			// other handle, so an unref'd timer lets the process exit without ever settling it.
+			if (left > 0) timer = setTimeout(giveUp, left);
 
 			signal?.addEventListener('abort', onAbort, { once: true });
 			this.waiting.add(settle);
