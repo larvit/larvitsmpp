@@ -1041,6 +1041,7 @@ describe('graceful shutdown', () => {
 		t: TestContext,
 		options: Parameters<typeof client>[0] = {},
 		serverOptions: Parameters<typeof server>[0] = {},
+		message = 'answer me',
 	) {
 		const smpp = await startServer(t, serverOptions);
 		const incoming = once<Sms>(resolve => {
@@ -1050,7 +1051,7 @@ describe('graceful shutdown', () => {
 
 		assert.ok(session);
 
-		const sent = session.sendSms({ from: '46701113311', message: 'answer me', to: '46709771337' });
+		const sent = session.sendSms({ from: '46701113311', message, to: '46709771337' });
 
 		return { sent, session, sms: await incoming, smpp };
 	}
@@ -1113,20 +1114,29 @@ describe('graceful shutdown', () => {
 		assert.ok(Date.now() - started < 2000);
 	});
 
-	// The README's own listener answers and then sends its receipt, one turn later.
+	// The README's own listener answers and then sends its receipt, one turn later. Multipart, because
+	// a receipt sent one-after-a-response outruns that turn on every segment past the first.
 	test('a receipt sent right after the response still goes out mid-drain', async t => {
-		const { sent, session, smpp, sms } = await submitInFlight(t);
-		const receipt = once<Dlr>(resolve => { session.on('dlr', resolve); });
+		const { sent, session, smpp, sms } = await submitInFlight(t, {}, {}, 'x'.repeat(400));
+		const received: Dlr[] = [];
+		const receipts = once<Dlr[]>(resolve => {
+			session.on('dlr', dlr => {
+				received.push(dlr);
+
+				if (received.length === 3) resolve(received);
+			});
+		});
 		const closing = peerOf(smpp).close();
 
 		await sms.sendResp({ smsId: 'held-through-the-drain' });
 
 		const receiptSent = await sms.sendDlr('DELIVERED');
+		const ids = ['held-through-the-drain-1', 'held-through-the-drain-2', 'held-through-the-drain-3'];
 
 		assert.equal(receiptSent.err, undefined);
-		assert.equal((await receipt).smsId, 'held-through-the-drain');
+		assert.deepEqual((await receipts).map(dlr => dlr.smsId), ids);
 		assert.deepEqual(await closing, {});
-		assert.deepEqual((await sent).smsIds, ['held-through-the-drain']);
+		assert.deepEqual((await sent).smsIds, ids);
 	});
 
 	test('a message no listener took does not hold the shutdown up', async t => {

@@ -84,8 +84,12 @@ export class OutgoingRequests {
 
 		if (refused) return { err: refused };
 
-		// A bind is what makes a link usable, so it cannot wait for one.
-		if (bindCommands.includes(input.cmdName)) return this.now(input, options);
+		// A bind is what makes a link usable, so it cannot wait for one: it takes the gate's answer now.
+		if (bindCommands.includes(input.cmdName)) {
+			const shut = this.gate.refusal();
+
+			return shut ? { err: shut } : this.now(input, options);
+		}
 
 		const waitForLink = this.gate.hold(options.signal);
 
@@ -131,10 +135,7 @@ export class OutgoingRequests {
 		}
 
 		// Before the gate and the window, or an aborted call waits for what it will never use.
-		if (options.signal?.aborted === true) return abortedBeforeSend();
-
-		// A bind skips the gate below, so the answer it would have given is given here instead.
-		return bindCommands.includes(input.cmdName) ? this.gate.refusal() : undefined;
+		return options.signal?.aborted === true ? abortedBeforeSend() : undefined;
 	}
 
 	private async attempt(input: PduObjectInput, options: SendOptions): Promise<Attempt> {

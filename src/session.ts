@@ -304,10 +304,8 @@ export class Session extends EventEmitter<SessionEvents> {
 
 		const timeout = this.options.shutdownTimeout ?? defaults.shutdownTimeout;
 		const deadline = timeout > 0 ? Date.now() + timeout : 0;
-		// Only the application answers a held message, so that half falls back rather than wait forever.
-		const answering = timeout > 0 ? timeout : (this.options.responseTimeout ?? defaults.responseTimeout);
 		// Answering a message can put a receipt on the wire; nothing on the wire produces a message.
-		const messages = await this.incoming.drain(answering, signal);
+		const messages = await this.incoming.drain(this.answering(timeout), signal);
 		const requests = await this.outgoing.drain(leftOf(deadline), signal);
 
 		// The window empties on a teardown too, which settles everything the link was carrying.
@@ -316,6 +314,19 @@ export class Session extends EventEmitter<SessionEvents> {
 		}
 
 		return messages.err ? messages : requests;
+	}
+
+	/**
+	 * How long the drain waits for the application, which is the only thing that can end that wait.
+	 * Neither timeout may hand it "forever": both are answers about a peer, and a peer is not what
+	 * this half is waiting for.
+	 */
+	private answering(timeout: number): number {
+		if (timeout > 0) return timeout;
+
+		const responseTimeout = this.options.responseTimeout ?? defaults.responseTimeout;
+
+		return responseTimeout > 0 ? responseTimeout : defaults.responseTimeout;
 	}
 
 	/** The session is over now, drained or not. Nothing brings it back. */

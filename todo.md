@@ -132,6 +132,13 @@ session message is a change to every call site.
       and applies it to the other is wrong. A budget type both take would close it. Raised by review,
       2026-09-01.
 
+- [ ] **An `sms` listener that rejects before answering costs a whole `shutdownTimeout`.**
+      One that *throws* is fine: `emit()` catches it, returns false, and `emitSms()` releases the
+      hold. A rejecting `async` one reaches `sessionError` through `captureRejections`, which hands
+      the handler an `unknown[]` the `Sms` cannot be read out of without a cast, so nothing releases.
+      Same cost as the `onRequest`-answers-nothing case that was declined, but reached by a bug
+      rather than a policy. Raised by review, 2026-09-01.
+
 - [ ] **A message the reconnect dropped is answered into the void, and reported as delivered.**
       `teardown()` clears the held messages along with the inbound segments, which is right — but the
       application still holds the `Sms`, so `sendResp()` writes the old link's sequence numbers to the

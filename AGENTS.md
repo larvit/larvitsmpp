@@ -354,7 +354,8 @@ Grouped by what each one constrains.
   half: waiting forever is safe for the peer, whose every request is bounded by `responseTimeout`,
   and unsafe for the application, which nothing bounds — `close()` is what you reach for when the
   application is stuck, so it may not block on the application coming unstuck. That half falls back
-  to `responseTimeout`, the same answer the link gate's hold already takes.
+  to `responseTimeout`, the same answer the link gate's hold already takes — and to that option's
+  default where it is 0 as well, since neither option is an answer about the application.
 
 - **A reconnect keeps the delivery-receipt merges; everything else the link held is dropped.**
   `onDeliverSm()` answers each receipt before the group it belongs to is complete, and `teardown()`

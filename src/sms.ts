@@ -138,11 +138,11 @@ async function sendDlr(
 	}
 
 	const total = sms.pduObjs.length;
-	const pduObjs: PduObject[] = [];
-
-	for (let index = 0; index < total; index++) {
+	// Together, not one after a response: a drain waiting for this message must see the whole receipt.
+	const sent = await Promise.all(sms.pduObjs.map((_segment, index) => {
 		const smsId = segmentId(sms.smsId, index, total);
-		const sent = await send({
+
+		return send({
 			cmdName: 'deliver_sm',
 			params: {
 				destination_addr: sms.from,
@@ -152,10 +152,13 @@ async function sendDlr(
 			},
 			...(sms.session.acceptsOptionalParams() ? { tlvs: receiptTlvs(smsId, status) } : {}),
 		});
+	}));
+	const pduObjs: PduObject[] = [];
 
-		if (sent.err) return { err: sent.err };
+	for (const one of sent) {
+		if (one.err) return { err: one.err };
 
-		pduObjs.push(sent.pduObj);
+		pduObjs.push(one.pduObj);
 	}
 
 	return { pduObjs };
