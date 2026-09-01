@@ -308,12 +308,9 @@ Grouped by what each one constrains.
   `attach()`, which is why a second drop emits again.
 
 - **An answer belongs to the link the message arrived on; a receipt does not.** Maintainer's call,
-  2026-09-01: `sendResp()` carries the peer's own sequence number, which the next link knows nothing
-  about, so on a message whose link went it writes nothing and returns an `err`. Writing it to the
-  new socket instead succeeds and reports `{}` for a response that correlates with nothing, which is
-  goal 2's wrong answer. `sendDlr()` still goes out, because a receipt is a request of its own
-  correlated by `receipted_message_id`; the accepted cost is that one sent after a refused response
-  names an id the peer has no record of.
+  2026-09-01. Rejected: answering on the new link, which succeeds and reports `{}` for a response
+  that correlates with nothing — goal 2's wrong answer. Accepted: a receipt sent after a refused
+  response names an id the peer has no record of.
 
 - **`reconnect` takes `{ minDelay, maxDelay }` to retune and `false` to turn off**, so absent means
   on and there is one spelling for each. Only `client()` reconnects — a `server()` session is a

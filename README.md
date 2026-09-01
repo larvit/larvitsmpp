@@ -316,7 +316,7 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 
 | Event | Fires when |
 | --- | --- |
-| `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and the `smsId` it was answered with. |
+| `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and its `smsId`. |
 | `dlr` | A delivery report arrives, one per segment. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. `statusMsg` names `statusId` unless the peer sent a `message_state` this library cannot name — then `statusId` is that raw value and `statusMsg` is whatever the body said, or `UNKNOWN`. |
 | `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. A base is merged once: a later message the SMSC gives the same ids is reported on through `dlr` alone, and an earlier one still collecting loses its merged report as well. |
 | `close` | The session is over, because nothing will bring the link back. Fires once, whether you closed it or the link failed for good. |

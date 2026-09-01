@@ -39,7 +39,6 @@ export class IncomingRequests {
 	private readonly session: Session;
 	private readonly smsIdFormat: SmsIdFormat;
 	private readonly systemId: string;
-	/** Bumped when a link goes, so a message from an earlier one knows its answer cannot correlate. */
 	private linkGeneration = 0;
 
 	constructor(options: IncomingRequestsOptions) {
@@ -64,7 +63,12 @@ export class IncomingRequests {
 	}
 
 	async handle(pduObj: PduObject): Promise<void> {
+		const generation = this.linkGeneration;
+
 		if (this.onRequest && await this.onRequest(this.session, pduObj)) return;
+
+		// The link it arrived on went while the hook ran, so nothing we answer now correlates.
+		if (this.linkGeneration !== generation) return;
 
 		if (!this.session.bindAllows(pduObj.cmdName)) {
 			this.log.info('session - command the peer\'s bind direction does not carry', {

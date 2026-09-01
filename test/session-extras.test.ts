@@ -13,6 +13,7 @@ import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
 import { HeldMessages } from '../src/held-messages.ts';
+import { IncomingRequests } from '../src/incoming-requests.ts';
 import { UnansweredError } from '../src/unanswered-error.ts';
 import { createSms } from '../src/sms.ts';
 import { LinkGate } from '../src/link-gate.ts';
@@ -589,6 +590,7 @@ describe('reconnect', () => {
 
 		assert.ok(answered);
 		assert.ok(held);
+		assert.equal(answered.message, 'answered before the drop');
 		assert.equal((await answered.sendResp()).err, undefined);
 
 		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
@@ -596,17 +598,43 @@ describe('reconnect', () => {
 		await peerOf(smpp).close({ signal: AbortSignal.abort() });
 		await reconnected;
 
-		const taken: string[] = [];
+		let taken = 0;
 
-		peerOf(smpp).on('incomingPduObj', pduObj => { taken.push(pduObj.cmdName); });
+		// A response is dispatched before `incomingPduObj`, so only the raw event sees one arrive.
+		peerOf(smpp).on('incomingPdu', () => { taken++; });
 
 		// The answered one is out of the hold and the held one is not, so neither may reach the answer.
 		assert.match((await answered.sendResp()).err?.message ?? '', /link this message arrived on is gone/);
 		assert.match((await held.sendResp()).err?.message ?? '', /link this message arrived on is gone/);
 
-		// A receipt is a request of its own, correlated by its id, so the new link carries it.
 		assert.equal((await held.sendDlr('DELIVERED')).err, undefined);
-		assert.deepEqual(taken, ['deliver_sm'], 'a response reached the new link');
+		assert.equal(taken, 1, 'a refused response reached the new link');
+	});
+
+	test('drops a message whose link went while onRequest was still running', async t => {
+		const session = new Session({ sock: new net.Socket() });
+
+		closeAfter(t, session);
+		session.boundAs = 'transceiver';
+
+		const incoming = new IncomingRequests({
+			dlrMerger: new DlrMerger({ log: silentLog, max: 10, timeout: 10_000 }),
+			log: silentLog,
+			onRequest: async () => { await delay(10); return false; },
+			sendPastDrain: () => Promise.resolve({ err: new Error('never sent') }),
+			session,
+		});
+		let messages = 0;
+
+		session.on('sms', () => { messages++; });
+
+		const handled = incoming.handle(submitPdu(1));
+
+		incoming.clear();
+
+		await handled;
+
+		assert.equal(messages, 0);
 	});
 
 	test('does not reconnect after an explicit close', async t => {
