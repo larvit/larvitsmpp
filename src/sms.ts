@@ -1,12 +1,21 @@
 import type { ErrorName } from './defs/errors.ts';
 import type { MessageState } from './defs/constants.ts';
-import type { PduObject, TlvInput } from './pdu.ts';
+import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
+import { UnansweredError } from './unanswered-error.ts';
 import { consts } from './defs/constants.ts';
 import { receiptCodes } from './dlr.ts';
 import { smppDate } from './message.ts';
 import { uuidv7 } from './uuid.ts';
+
+/** `pduObjs` holds what the peer took, so a partial failure names what is already receipted. */
+export type SendDlrResult = {
+	err?: Error;
+	pduObjs: PduObject[];
+	/** Segments that went out unanswered. The peer may have taken them, so sending again may duplicate. */
+	unanswered: number;
+};
 
 export type SendRespOptions = {
 	/** The id the peer correlates a later delivery receipt by. Defaults to a generated UUID v7. */
@@ -25,7 +34,7 @@ export type Sms = {
 	message: string;
 	pduObjs: PduObject[];
 	/** Sends a delivery report back to the sender. Defaults to DELIVERED. */
-	sendDlr: (status?: MessageState) => Promise<Result<{ pduObjs: PduObject[] }>>;
+	sendDlr: (status?: MessageState) => Promise<SendDlrResult>;
 	/** Answers every segment. Part of the protocol, not optional. Defaults to ESME_ROK. */
 	sendResp: (options?: SendRespOptions) => Promise<VoidResult>;
 	session: Session;
@@ -43,12 +52,18 @@ export type SmsInput = {
 	to: string;
 };
 
+/** What the session's incoming side gives a message so it can be answered and accounted for. */
+export type SmsHandlers = {
+	onAnswered: () => void;
+	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
+};
+
 /** Each segment of a multipart message gets its own message_id, as a separate submit_sm must. */
 function segmentId(smsId: string, index: number, total: number): string {
 	return total === 1 ? smsId : `${smsId}-${String(index + 1)}`;
 }
 
-export function createSms(input: SmsInput): Sms {
+export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 	const first = input.pduObjs[0];
 	const registered = first?.params.registered_delivery;
 	const dataCoding = first?.params.data_coding;
@@ -60,8 +75,8 @@ export function createSms(input: SmsInput): Sms {
 		from: input.from,
 		message: input.message,
 		pduObjs: input.pduObjs,
-		sendDlr: status => sendDlr(sms, status),
-		sendResp: options => sendResp(sms, answered, options ?? {}),
+		sendDlr: status => sendDlr(sms, handlers.send, status),
+		sendResp: options => sendResp(sms, answered, options ?? {}).finally(handlers.onAnswered),
 		session: input.session,
 		get smsId(): string {
 			return answered.smsId;
@@ -122,20 +137,47 @@ function receiptTlvs(smsId: string, status: MessageState): Record<string, TlvInp
 	};
 }
 
+function collectReceipt(sent: Result<{ pduObj: PduObject }>[]): SendDlrResult {
+	const pduObjs: PduObject[] = [];
+	let failure: Error | undefined;
+	let unanswered = 0;
+
+	for (const one of sent) {
+		if (one.err) {
+			if (one.err instanceof UnansweredError) unanswered++;
+
+			failure ??= one.err;
+		} else if (one.pduObj.cmdStatus === 'ESME_ROK') {
+			pduObjs.push(one.pduObj);
+		} else {
+			const refusal = one.pduObj.cmdStatus ?? String(one.pduObj.cmdStatusId);
+
+			failure ??= new Error(`deliver_sm refused by the peer: ${refusal}`);
+		}
+	}
+
+	return failure ? { err: failure, pduObjs, unanswered } : { pduObjs, unanswered };
+}
+
 async function sendDlr(
 	sms: Sms,
+	send: SmsHandlers['send'],
 	status: MessageState = 'DELIVERED',
-): Promise<Result<{ pduObjs: PduObject[] }>> {
+): Promise<SendDlrResult> {
 	if (!sms.session.bindAllows('deliver_sm')) {
-		return { err: new Error('A transmitter-bound session does not carry deliver_sm') };
+		return {
+			err: new Error('A transmitter-bound session does not carry deliver_sm'),
+			pduObjs: [],
+			unanswered: 0,
+		};
 	}
 
 	const total = sms.pduObjs.length;
-	const pduObjs: PduObject[] = [];
-
-	for (let index = 0; index < total; index++) {
+	// Together, not one after a response: a drain waiting for this message must see the whole receipt.
+	const sent = await Promise.all(sms.pduObjs.map((_segment, index) => {
 		const smsId = segmentId(sms.smsId, index, total);
-		const sent = await sms.session.send({
+
+		return send({
 			cmdName: 'deliver_sm',
 			params: {
 				destination_addr: sms.from,
@@ -145,11 +187,6 @@ async function sendDlr(
 			},
 			...(sms.session.acceptsOptionalParams() ? { tlvs: receiptTlvs(smsId, status) } : {}),
 		});
-
-		if (sent.err) return { err: sent.err };
-
-		pduObjs.push(sent.pduObj);
-	}
-
-	return { pduObjs };
+	}));
+	return collectReceipt(sent);
 }

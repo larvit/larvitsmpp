@@ -1,8 +1,11 @@
 import type { DlrMerger } from './dlr-merger.ts';
 import type { OnRequest } from './session-options.ts';
-import type { PduObject } from './pdu.ts';
+import type { PduObject, PduObjectInput } from './pdu.ts';
+import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
 import type { SmppLog } from './log.ts';
+import type { SmsIdFormat } from './sms-id.ts';
+import { HeldMessages } from './held-messages.ts';
 import { Reassembler, decodeSegments } from './reassembly.ts';
 import { bindCommands, defaults } from './session-options.ts';
 import { concatInfo } from './udh.ts';
@@ -18,21 +21,32 @@ export type IncomingRequestsOptions = {
 	maxReassembly?: number | undefined;
 	onRequest?: OnRequest | undefined;
 	reassemblyTimeout?: number | undefined;
+	/** Past a drain's refusal, for a receipt the drain is itself waiting for. */
+	sendPastDrain: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 	session: Session;
+	smsIdFormat?: SmsIdFormat | undefined;
 	systemId?: string | undefined;
 };
 
 /** Everything the peer asks of a session: messages, receipts, links and the answers to them. */
 export class IncomingRequests {
 	private readonly dlrMerger: DlrMerger;
+	private readonly held: HeldMessages;
 	private readonly log: SmppLog;
 	private readonly onRequest: OnRequest | undefined;
 	private readonly reassembler: Reassembler;
+	private readonly sendPastDrain: IncomingRequestsOptions['sendPastDrain'];
 	private readonly session: Session;
+	private readonly smsIdFormat: SmsIdFormat;
 	private readonly systemId: string;
 
 	constructor(options: IncomingRequestsOptions) {
 		this.dlrMerger = options.dlrMerger;
+		this.held = new HeldMessages({
+			log: options.log,
+			max: defaults.maxHeldMessages,
+			timeout: defaults.heldMessageTimeout,
+		});
 		this.log = options.log;
 		this.onRequest = options.onRequest;
 		this.reassembler = new Reassembler({
@@ -41,7 +55,9 @@ export class IncomingRequests {
 			maxOctets: options.maxOctets,
 			timeout: options.reassemblyTimeout ?? defaults.reassemblyTimeout,
 		});
+		this.sendPastDrain = options.sendPastDrain;
 		this.session = options.session;
+		this.smsIdFormat = options.smsIdFormat ?? {};
 		this.systemId = options.systemId ?? defaults.systemId;
 	}
 
@@ -78,9 +94,21 @@ export class IncomingRequests {
 		}
 	}
 
-	/** Drops the segments of every message that never became whole. */
+	/** Drops the segments of every message that never became whole, and of every one still held. */
 	clear(): void {
+		this.held.clear();
 		this.reassembler.clear();
+	}
+
+	/** Waits out the messages the application still holds, and says how many it never answered. */
+	async drain(timeout: number, signal: AbortSignal | undefined): Promise<VoidResult> {
+		const unanswered = await this.held.idle(timeout, signal);
+
+		if (unanswered === 0) return {};
+
+		this.log.warn('session - shutting down with messages unanswered', { timeout, unanswered });
+
+		return { err: new Error(`Shut down with ${String(unanswered)} message(s) unanswered`) };
 	}
 
 	private async unhandled(pduObj: PduObject): Promise<void> {
@@ -97,7 +125,7 @@ export class IncomingRequests {
 
 	/** SMPP carries a mobile-originated message and a delivery receipt on the same command. */
 	private async onDeliverSm(pduObj: PduObject): Promise<void> {
-		const dlr = dlrFromPdu(pduObj);
+		const dlr = dlrFromPdu(pduObj, this.smsIdFormat);
 
 		if (!dlr) {
 			this.onMessage(pduObj);
@@ -135,12 +163,22 @@ export class IncomingRequests {
 
 		if (!first) return;
 
-		this.session.emit('sms', createSms({
+		const sms = createSms({
 			from: paramText(first.params.source_addr),
 			message: decodeSegments(pduObjs),
 			pduObjs,
 			session: this.session,
 			to: paramText(first.params.destination_addr),
-		}));
+		}, {
+			// A turn later, so a listener sending its receipt straight after the response still holds.
+			onAnswered: () => { setImmediate(() => { this.held.release(pduObjs); }); },
+			// Past the refusal only while a drain is still waiting for this message; an ordinary send after.
+			send: input => (this.held.has(pduObjs) ? this.sendPastDrain(input) : this.session.send(input)),
+		});
+
+		this.held.hold(pduObjs);
+
+		// A message nobody took is not work a shutdown can wait for.
+		if (!this.session.emit('sms', sms)) this.held.release(pduObjs);
 	}
 }

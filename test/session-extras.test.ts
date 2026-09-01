@@ -12,14 +12,20 @@ import type { SmppLog } from '../src/log.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
+import { HeldMessages } from '../src/held-messages.ts';
+import { UnansweredError } from '../src/unanswered-error.ts';
+import { createSms } from '../src/sms.ts';
+import { LinkGate } from '../src/link-gate.ts';
 import { Reassembler, decodeSegments } from '../src/reassembly.ts';
 import { Session } from '../src/session.ts';
 import { DlrMerger } from '../src/dlr-merger.ts';
+import { checkSessionOptions } from '../src/session-options.ts';
 import { client } from '../src/client.ts';
 import { closeAfter, closeListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
 import { errors } from '../src/defs/errors.ts';
 import { objToPdu } from '../src/pdu.ts';
+import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
 import { submitSms } from '../src/send-sms.ts';
@@ -67,10 +73,54 @@ function delay(ms: number): Promise<void> {
 	return new Promise(resolve => { setTimeout(resolve, ms); });
 }
 
-type Gate = { open: () => void; passed: Promise<true> };
+function submitPdu(seqNr: number, cmdStatus: ErrorName = 'ESME_ROK'): PduObject {
+	return {
+		cmdId: 0x00000004,
+		cmdLength: 0,
+		cmdName: 'submit_sm',
+		cmdStatus,
+		cmdStatusId: 0,
+		params: { destination_addr: '46709771337', short_message: 'held', source_addr: '46701113311' },
+		seqNr,
+		tlvs: {},
+	};
+}
+
+/** A cmd_length below the 16-octet header: a stream no framing can recover from. */
+const unreadablePdu = Buffer.from([0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1]);
+
+/** The server's side of the one connection under test. */
+function peerOf(smpp: SmppServer): Session {
+	const [peer] = smpp.sessions;
+
+	assert.equal(smpp.sessions.size, 1);
+	assert.ok(peer);
+
+	return peer;
+}
+
+async function sendReceipt(peer: Session, smsId: string, tlvSmsId = smsId): Promise<void> {
+	const sent = await peer.send({
+		cmdName: 'deliver_sm',
+		params: {
+			destination_addr: '46701113311',
+			esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+			short_message: `id:${smsId} stat:DELIVRD err:000 text:`,
+			source_addr: '46709771337',
+		},
+		tlvs: {
+			message_state: { tagValue: consts.MESSAGE_STATE.DELIVERED },
+			receipted_message_id: { tagValue: tlvSmsId },
+		},
+	});
+
+	assert.equal(sent.err, undefined);
+}
+
+type Latch = { open: () => void; passed: Promise<true> };
 
 /** A promise the test opens by hand, guarded by once() against waiting on one it never does. */
-function gate(): Gate {
+function latch(): Latch {
 	const opener: { open?: () => void } = {};
 	const passed = once<true>(resolve => { opener.open = () => { resolve(true); }; });
 
@@ -296,33 +346,133 @@ describe('sendSms()', () => {
 });
 
 describe('reconnect', () => {
-	/** The server's side of the one connection under test, replaced by every reconnect. */
-	function peerOf(smpp: SmppServer): Session {
-		const [peer] = smpp.sessions;
+	test('re-binds after a drop with nothing asked for, since it is the default', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp);
 
-		assert.equal(smpp.sessions.size, 1);
-		assert.ok(peer);
+		assert.ok(session);
 
-		return peer;
-	}
+		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
 
-	async function sendReceipt(peer: Session, smsId: string): Promise<void> {
-		const sent = await peer.send({
-			cmdName: 'deliver_sm',
-			params: {
-				destination_addr: '46701113311',
-				esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
-				short_message: `id:${smsId} stat:DELIVRD err:000 text:`,
-				source_addr: '46709771337',
-			},
-			tlvs: {
-				message_state: { tagValue: consts.MESSAGE_STATE.DELIVERED },
-				receipted_message_id: { tagValue: smsId },
-			},
-		});
+		const dropped = session.sock;
 
-		assert.equal(sent.err, undefined);
-	}
+		await peerOf(smpp).close();
+		await reconnected;
+
+		assert.notEqual(session.sock, dropped, 'the session should be live on a fresh socket');
+	});
+
+	test('reports a drop it will retry as disconnected, keeping close for the end', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
+
+		assert.ok(session);
+
+		const events: string[] = [];
+
+		session.on('close', () => { events.push('close'); });
+		session.on('disconnected', () => { events.push('disconnected'); });
+
+		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+
+		await peerOf(smpp).close();
+		await reconnected;
+
+		assert.deepEqual(events, ['disconnected'], 'a link the loop brings back is not the end');
+
+		await session.close();
+
+		assert.deepEqual(events, ['disconnected', 'close']);
+	});
+
+	test('emits close when the session ends while the link is still down', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const events: string[] = [];
+
+		session.on('close', () => { events.push('close'); });
+		session.on('disconnected', () => { events.push('disconnected'); });
+
+		const down = once<true>(resolve => { session.on('disconnected', () => { resolve(true); }); });
+
+		await peerOf(smpp).close();
+		await down;
+		await session.close();
+
+		assert.deepEqual(events, ['disconnected', 'close']);
+
+		await session.close();
+
+		assert.deepEqual(events, ['disconnected', 'close'], 'closing twice is still one close');
+	});
+
+	test('re-binds after a stream it cannot read, rather than ending the session', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
+
+		assert.ok(session);
+
+		const events: string[] = [];
+
+		session.on('close', () => { events.push('close'); });
+		session.on('sessionError', () => { events.push('sessionError'); });
+
+		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+
+		peerOf(smpp).sock.write(unreadablePdu);
+		await reconnected;
+
+		assert.deepEqual(events, ['sessionError']);
+	});
+
+	test('refuses a backoff that would retry without pausing', () => {
+		assert.match(checkSessionOptions({ reconnect: { minDelay: 0 } }).err?.message ?? '', /minDelay/);
+		assert.match(checkSessionOptions({ reconnect: { maxDelay: -1 } }).err?.message ?? '', /maxDelay/);
+		assert.match(
+			checkSessionOptions({ reconnect: null }).err?.message ?? '',
+			/false/,
+			'off is spelled false, so nothing else may stand in for it',
+		);
+		assert.match(
+			checkSessionOptions({ reconnect: { maxDelay: 1000, minDelay: 30_000 } }).err?.message ?? '',
+			/maxDelay/,
+			'a transposed pair asks to never retry faster than 30 s and gets one every second',
+		);
+		assert.match(checkSessionOptions({ reconnect: { minDelayMs: 20 } }).err?.message ?? '', /minDelayMs/);
+		assert.equal(checkSessionOptions({ reconnect: false }).err, undefined);
+		assert.equal(checkSessionOptions({ reconnect: { maxDelay: 60_000, minDelay: 500 } }).err, undefined);
+	});
+
+	test('reports a drop as close, and schedules nothing, when reconnect is false', async t => {
+		const smpp = await startServer(t);
+		const noop = (): void => undefined;
+		const infos: string[] = [];
+		const log: SmppLog = {
+			debug: noop,
+			error: noop,
+			info: msg => { infos.push(msg); },
+			verbose: noop,
+			warn: noop,
+		};
+		const { session } = await connect(t, smpp, { log, reconnect: false });
+
+		assert.ok(session);
+
+		let disconnects = 0;
+
+		session.on('disconnected', () => { disconnects++; });
+
+		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
+
+		peerOf(smpp).sock.write(unreadablePdu);
+		await closed;
+
+		assert.equal(disconnects, 0);
+		assert.ok(!infos.includes('reconnect - retrying after a drop'));
+	});
 
 	test('re-binds after the connection drops, keeping the same session object', async t => {
 		const smpp = await startServer(t);
@@ -342,6 +492,11 @@ describe('reconnect', () => {
 		assert.ok(session);
 
 		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+		const halfPdu = once<true>(resolve => { session.on('data', () => { resolve(true); }); });
+
+		// A PDU header promising 32 octets and sending 8: the next link must not continue it.
+		peerOf(smpp).sock.write(Buffer.from([0, 0, 0, 32, 0, 0, 0, 4]));
+		await halfPdu;
 
 		// Drop the connection from the server's side, as a peer restart would.
 		for (const serverSession of smpp.sessions) {
@@ -416,6 +571,398 @@ describe('reconnect', () => {
 		await delay(150);
 
 		assert.equal(reconnects, 0);
+	});
+});
+
+describe('sends across a reconnect', () => {
+	/** Answers every message after the first, which is left to hold the send window open. */
+	function answerAfterTheFirst(smpp: SmppServer, arrived: string[]): Latch {
+		const first = latch();
+
+		smpp.on('session', peer => {
+			peer.on('sms', async sms => {
+				arrived.push(sms.message);
+
+				if (arrived.length === 1) first.open();
+				else await sms.sendResp();
+			});
+		});
+
+		return first;
+	}
+
+	test('holds a send issued while the link is down and puts it on the new link', async t => {
+		const smpp = await startServer(t);
+		const arrived: string[] = [];
+
+		smpp.on('session', peer => { peer.on('sms', async sms => { arrived.push(sms.message); await sms.sendResp(); }); });
+
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
+
+		assert.ok(session);
+
+		const down = once<true>(resolve => { session.on('disconnected', () => { resolve(true); }); });
+
+		await peerOf(smpp).close();
+		await down;
+
+		const sent = await session.sendSms({ from: '46701113311', message: 'held', to: '46709771337' });
+
+		assert.equal(sent.err, undefined);
+		assert.equal(sent.smsIds.length, 1);
+		assert.equal(sent.unanswered, 0);
+		assert.deepEqual(arrived, ['held']);
+	});
+
+	test('puts a segment still queued behind a full window on the new link', async t => {
+		const smpp = await startServer(t);
+		const arrived: string[] = [];
+		const first = answerAfterTheFirst(smpp, arrived);
+		const { session } = await connect(t, smpp, {
+			maxOutstanding: 1,
+			reconnect: { maxDelay: 100, minDelay: 20 },
+		});
+
+		assert.ok(session);
+
+		const holding = session.sendSms({ from: '46701113311', message: 'first', to: '46709771337' });
+
+		await first.passed;
+
+		const queued = session.sendSms({ from: '46701113311', message: 'second', to: '46709771337' });
+
+		peerOf(smpp).sock.destroy();
+
+		const [dropped, resent] = await Promise.all([holding, queued]);
+
+		assert.equal(dropped.unanswered, 1);
+		assert.equal(resent.err, undefined, 'a request that never reached the socket is not lost with it');
+		assert.equal(resent.smsIds.length, 1);
+		assert.deepEqual(arrived, ['first', 'second']);
+	});
+
+	test('holds a send issued while the rebind is still binding', async t => {
+		const binding = latch();
+		const release = latch();
+		let binds = 0;
+		const smpp = await startServer(t, {
+			authenticate: async () => {
+				binds++;
+
+				if (binds > 1) {
+					binding.open();
+					await release.passed;
+				}
+
+				return true;
+			},
+		});
+
+		smpp.on('session', peer => { peer.on('sms', async sms => { await sms.sendResp(); }); });
+
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
+
+		assert.ok(session);
+
+		peerOf(smpp).sock.destroy();
+
+		// The fresh socket is attached and the bind is in flight, so the link exists but carries nothing.
+		await binding.passed;
+
+		const sending = session.sendSms({ from: '46701113311', message: 'mid-bind', to: '46709771337' });
+		let settled = false;
+
+		void sending.then(() => { settled = true; });
+		await delay(30);
+
+		assert.equal(settled, false, 'an unbound link must not take a submit_sm that would be refused');
+
+		release.open();
+
+		const sent = await sending;
+
+		assert.equal(sent.err, undefined);
+		assert.equal(sent.smsIds.length, 1);
+	});
+
+	test('counts a segment the peer never answered in time as unanswered', async t => {
+		const smpp = await startServer(t);
+
+		smpp.on('session', peer => { peer.on('sms', () => undefined); });
+
+		const { session } = await connect(t, smpp, { responseTimeout: 200 });
+
+		assert.ok(session);
+
+		const sent = await session.sendSms({ from: '46701113311', message: 'no answer', to: '46709771337' });
+
+		assert.match(sent.err?.message ?? '', /may have accepted/);
+		assert.equal(sent.unanswered, 1, 'a slow SMSC may still have taken it');
+	});
+
+	test('counts a segment aborted after it went out as unanswered', async t => {
+		const smpp = await startServer(t);
+		const arrived = once<Sms>(resolve => { smpp.on('session', peer => peer.on('sms', resolve)); });
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const controller = new AbortController();
+		const sending = session.sendSms(
+			{ from: '46701113311', message: 'aborted mid-flight', to: '46709771337' },
+			{ signal: controller.signal },
+		);
+
+		await arrived;
+		controller.abort();
+
+		const sent = await sending;
+
+		assert.match(sent.err?.message ?? '', /may have accepted/);
+		assert.equal(sent.unanswered, 1, 'the abort is ours; the peer still holds the request');
+	});
+
+	test('reports a segment the link dropped under as unanswered, not as never sent', async t => {
+		const smpp = await startServer(t);
+		const arrived = once<Sms>(resolve => { smpp.on('session', peer => peer.on('sms', resolve)); });
+		const { session } = await connect(t, smpp, { reconnect: false });
+
+		assert.ok(session);
+
+		const sending = session.sendSms({ from: '46701113311', message: 'in flight', to: '46709771337' });
+
+		await arrived;
+		peerOf(smpp).sock.destroy();
+
+		const sent = await sending;
+
+		assert.match(sent.err?.message ?? '', /may have accepted/);
+		assert.equal(sent.unanswered, 1, 'the peer may have accepted it, so sending it again would duplicate');
+		assert.deepEqual(sent.smsIds, []);
+	});
+
+	test('gives up a held send after responseTimeout, with nothing put on the wire', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp, {
+			reconnect: { maxDelay: 10_000, minDelay: 10_000 },
+			responseTimeout: 200,
+		});
+
+		assert.ok(session);
+
+		const down = once<true>(resolve => { session.on('disconnected', () => { resolve(true); }); });
+
+		await peerOf(smpp).close();
+		await down;
+
+		const sent = await session.sendSms({ from: '46701113311', message: 'held', to: '46709771337' });
+
+		assert.match(sent.err?.message ?? '', /did not come back/);
+		assert.equal(sent.unanswered, 0, 'nothing reached the peer, so the message can be sent again');
+	});
+
+	test('fails a held send when the session closes rather than leaving it waiting', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp, {
+			reconnect: { maxDelay: 10_000, minDelay: 10_000 },
+		});
+
+		assert.ok(session);
+
+		const down = once<true>(resolve => { session.on('disconnected', () => { resolve(true); }); });
+
+		await peerOf(smpp).close();
+		await down;
+
+		const sending = session.sendSms({ from: '46701113311', message: 'held', to: '46709771337' });
+		let settled = false;
+
+		void sending.then(() => { settled = true; });
+		await delay(30);
+
+		assert.equal(settled, false, 'the send waits for a link rather than failing on the spot');
+
+		await session.close();
+
+		const sent = await sending;
+
+		assert.match(sent.err?.message ?? '', /closed/);
+		assert.equal(sent.unanswered, 0);
+	});
+
+	test('aborts a held send instead of making it wait out the link', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp, {
+			reconnect: { maxDelay: 10_000, minDelay: 10_000 },
+		});
+
+		assert.ok(session);
+
+		const down = once<true>(resolve => { session.on('disconnected', () => { resolve(true); }); });
+
+		await peerOf(smpp).close();
+		await down;
+
+		const controller = new AbortController();
+		const sending = session.sendSms(
+			{ from: '46701113311', message: 'held', to: '46709771337' },
+			{ signal: controller.signal },
+		);
+
+		controller.abort();
+
+		const sent = await sending;
+
+		assert.match(sent.err?.message ?? '', /Aborted while waiting for a link/);
+		assert.equal(sent.unanswered, 0);
+	});
+
+	test('refuses a send outright once the session is over', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp, { reconnect: false });
+
+		assert.ok(session);
+		await session.close();
+
+		const sent = await session.sendSms({ from: '46701113311', message: 'too late', to: '46709771337' });
+
+		assert.match(sent.err?.message ?? '', /closed/);
+		assert.equal(sent.unanswered, 0);
+	});
+});
+
+describe('LinkGate', () => {
+	test('refuses a hold whose deadline has already passed', async () => {
+		let now = 0;
+		const gate = new LinkGate({ log: silentLog, now: () => now, timeout: 100 });
+		const waitForLink = gate.hold(undefined);
+
+		gate.shut(true);
+		now = 101;
+
+		const held = await waitForLink();
+
+		assert.match(held.err?.message ?? '', /did not come back in time/);
+	});
+
+	test('holds on a timer that keeps the process alive', async () => {
+		const gate = new LinkGate({ log: silentLog, timeout: 10_000 });
+		const timers = (): number => process.getActiveResourcesInfo().filter(name => name === 'Timeout').length;
+
+		gate.shut(true);
+
+		const before = timers();
+		const held = gate.hold(undefined)();
+
+		assert.equal(timers(), before + 1, 'an unref\'d timer is not counted here, which is the point');
+
+		gate.open();
+
+		assert.deepEqual(await held, {});
+	});
+
+	// addEventListener never fires for a signal that already aborted, so it would wait out the timeout.
+	test('gives up at once on a signal that was already aborted', async () => {
+		const gate = new LinkGate({ log: silentLog, timeout: 100 });
+
+		gate.shut(true);
+
+		const held = await gate.hold(AbortSignal.abort())();
+
+		assert.match(held.err?.message ?? '', /Aborted while waiting for a link/);
+	});
+});
+
+// Goal 4: an application that answers nothing must not grow this for the life of the link.
+describe('held message bounds', () => {
+	function message(seqNr: number): PduObject[] {
+		return [submitPdu(seqNr)];
+	}
+
+	test('drops the message held longest rather than holding every one', () => {
+		const held = new HeldMessages({ log: silentLog, max: 2, timeout: 10_000 });
+		const oldest = message(1);
+
+		held.hold(oldest);
+		held.hold(message(2));
+		held.hold(message(2));
+
+		assert.equal(held.size, 2, 'a re-used sequence number replaces rather than evicting');
+		assert.equal(held.has(oldest), true);
+
+		held.hold(message(3));
+
+		assert.equal(held.size, 2);
+		assert.equal(held.has(oldest), false);
+
+		held.clear();
+	});
+
+	test('gives up on a message the application never answers', () => {
+		let now = 0;
+		const held = new HeldMessages({ log: silentLog, max: 10, now: () => now, timeout: 60 });
+
+		held.hold(message(1));
+		now = 61;
+
+		// The next message sweeps the one that expired, so only the new one is still waited for.
+		held.hold(message(2));
+
+		assert.equal(held.size, 1);
+
+		held.clear();
+	});
+
+	// Without this the drain sits out its whole budget before returning what a sweep already settled.
+	test('wakes a waiting drain when the last message expires', async () => {
+		let now = 0;
+		const held = new HeldMessages({ log: silentLog, max: 10, now: () => now, timeout: 60 });
+
+		held.hold(message(1));
+
+		const waiting = held.idle(1000, undefined);
+
+		now = 61;
+		held.sweep();
+
+		assert.equal(await waiting, 0);
+	});
+});
+
+describe('sendDlr()', () => {
+	// A receipt cannot be resent wholesale without duplicating the segments that landed.
+	test('names the segments the peer took, refused, and may have taken', async t => {
+		const session = new Session({ sock: new net.Socket() });
+
+		closeAfter(t, session);
+
+		let call = 0;
+		const sms = createSms({
+			from: '46701113311',
+			message: 'three segments',
+			pduObjs: [submitPdu(1), submitPdu(2), submitPdu(3)],
+			session,
+			to: '46709771337',
+		}, {
+			onAnswered: () => undefined,
+			send: () => {
+				call++;
+
+				if (call === 1) return Promise.resolve({ pduObj: submitPdu(1, 'ESME_RX_T_APPN') });
+
+				if (call === 2) {
+					return Promise.resolve({ err: new UnansweredError(new Error('nothing came back')) });
+				}
+
+				return Promise.resolve({ pduObj: submitPdu(3) });
+			},
+		});
+		const report = await sms.sendDlr('DELIVERED');
+
+		assert.ok(report.err instanceof Error);
+		assert.match(report.err.message, /deliver_sm refused by the peer/);
+		assert.equal(report.pduObjs.length, 1);
+		assert.equal(report.unanswered, 1);
 	});
 });
 
@@ -599,8 +1146,13 @@ describe('AbortSignal on a send', () => {
 });
 
 describe('graceful shutdown', () => {
-	async function submitInFlight(t: TestContext, options: Parameters<typeof client>[0] = {}) {
-		const smpp = await startServer(t);
+	async function submitInFlight(
+		t: TestContext,
+		options: Parameters<typeof client>[0] = {},
+		serverOptions: Parameters<typeof server>[0] = {},
+		message = 'answer me',
+	) {
+		const smpp = await startServer(t, serverOptions);
 		const incoming = once<Sms>(resolve => {
 			smpp.on('session', bound => bound.on('sms', resolve));
 		});
@@ -608,7 +1160,7 @@ describe('graceful shutdown', () => {
 
 		assert.ok(session);
 
-		const sent = session.sendSms({ from: '46701113311', message: 'answer me', to: '46709771337' });
+		const sent = session.sendSms({ from: '46701113311', message, to: '46709771337' });
 
 		return { sent, session, sms: await incoming, smpp };
 	}
@@ -631,6 +1183,21 @@ describe('graceful shutdown', () => {
 		assert.deepEqual(await closed, {});
 	});
 
+	// The drain refuses sends; a response was never a send, and saying so is the more useful answer.
+	test('names a response put through send() as the misuse it is, even mid-shutdown', async t => {
+		const { sent, session, sms } = await submitInFlight(t);
+		const closing = session.close();
+		const refused = await session.send({ cmdName: 'submit_sm_resp' });
+
+		assert.ok(refused.err instanceof Error);
+		assert.match(refused.err.message, /Use sendReturn\(\)/);
+
+		await sms.sendResp({ smsId: 'answered-after-the-misuse' });
+
+		assert.deepEqual((await sent).smsIds, ['answered-after-the-misuse']);
+		assert.deepEqual(await closing, {});
+	});
+
 	test('unbind() waits out a submit already on the wire before it unbinds', async t => {
 		const { sent, session, sms } = await submitInFlight(t);
 		const unbound = session.unbind();
@@ -639,6 +1206,115 @@ describe('graceful shutdown', () => {
 
 		assert.deepEqual((await sent).smsIds, ['answered-before-unbind']);
 		assert.deepEqual(await unbound, {});
+	});
+
+	test('close() waits for a message the application has not answered yet', async t => {
+		const { sent, smpp, sms } = await submitInFlight(t);
+		const closing = peerOf(smpp).close();
+
+		await delay(50);
+		await sms.sendResp({ smsId: 'answered-during-the-inbound-drain' });
+
+		assert.deepEqual(await closing, {});
+		assert.deepEqual((await sent).smsIds, ['answered-during-the-inbound-drain']);
+	});
+
+	test('gives up on a message the application never answers', async t => {
+		const { smpp } = await submitInFlight(t, {}, { shutdownTimeout: 50 });
+		const closed = await peerOf(smpp).close();
+
+		assert.ok(closed.err instanceof Error);
+		assert.match(closed.err.message, /1 message\(s\) unanswered/);
+	});
+
+	// Waiting forever is safe for the peer, which every request times out on. The application is not.
+	test('falls back to responseTimeout for a held message when the shutdown waits forever', async t => {
+		const { smpp } = await submitInFlight(t, {}, { responseTimeout: 200, shutdownTimeout: 0 });
+		const started = Date.now();
+		const closed = await peerOf(smpp).close();
+		const waited = Date.now() - started;
+
+		assert.ok(closed.err instanceof Error);
+		assert.match(closed.err.message, /1 message\(s\) unanswered/);
+		assert.ok(waited >= 190, `waited ${String(waited)} ms, so the fallback was not what bounded it`);
+		assert.ok(waited < 2000);
+	});
+
+	// leftOf() floors what is left at 1 ms: at 0 the request half would read "wait forever" instead.
+	test('still ends when the message half has spent the whole shutdown budget', async t => {
+		const { smpp } = await submitInFlight(t, {}, { shutdownTimeout: 100 });
+		const bound = peerOf(smpp);
+		// The client listens for no 'sms', so this one is never answered and stays in the window.
+		const unanswered = bound.send({
+			cmdName: 'submit_sm',
+			params: {
+				destination_addr: '46701113311',
+				short_message: 'nothing answers this',
+				source_addr: '46709771337',
+			},
+		});
+		const closed = await Promise.race([
+			bound.close(),
+			new Promise<{ err?: Error }>(resolve => {
+				setTimeout(() => { resolve({ err: new Error('close() never returned') }); }, 2000).unref();
+			}),
+		]);
+
+		assert.match(closed.err?.message ?? '', /1 message\(s\) unanswered; .*1 request\(s\) unfinished/);
+		assert.ok((await unanswered).err instanceof Error);
+	});
+
+	// The README's own listener answers and then sends its receipt, one turn later. Multipart, because
+	// a receipt sent one-after-a-response outruns that turn on every segment past the first.
+	test('a receipt sent right after the response still goes out mid-drain', async t => {
+		const { sent, session, smpp, sms } = await submitInFlight(t, {}, {}, 'x'.repeat(400));
+		const received: Dlr[] = [];
+		const receipts = once<Dlr[]>(resolve => {
+			session.on('dlr', dlr => {
+				received.push(dlr);
+
+				if (received.length === 3) resolve(received);
+			});
+		});
+		const closing = peerOf(smpp).close();
+
+		await sms.sendResp({ smsId: 'held-through-the-drain' });
+
+		const receiptSent = await sms.sendDlr('DELIVERED');
+		const ids = ['held-through-the-drain-1', 'held-through-the-drain-2', 'held-through-the-drain-3'];
+
+		assert.equal(receiptSent.err, undefined);
+		assert.deepEqual((await receipts).map(dlr => dlr.smsId), ids);
+		assert.deepEqual(await closing, {});
+		assert.deepEqual((await sent).smsIds, ids);
+	});
+
+	test('a message no listener took does not hold the shutdown up', async t => {
+		const smpp = await startServer(t, { shutdownTimeout: 30_000 });
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const bound = peerOf(smpp);
+		const arrived = once<PduObject>(resolve => {
+			bound.on('incomingPduObj', pduObj => {
+				if (pduObj.cmdName === 'submit_sm') resolve(pduObj);
+			});
+		});
+		const sent = session.sendSms({
+			from: '46701113311',
+			message: 'nobody is listening',
+			to: '46709771337',
+		});
+
+		await arrived;
+		await delay(50);
+
+		const started = Date.now();
+
+		assert.deepEqual(await bound.close(), {});
+		assert.ok(Date.now() - started < 1000);
+		assert.ok((await sent).err instanceof Error);
 	});
 
 	test('gives up on a request that outlasts shutdownTimeout', async t => {
@@ -651,7 +1327,8 @@ describe('graceful shutdown', () => {
 		const result = await sent;
 
 		assert.ok(result.err instanceof Error);
-		assert.equal(result.err.message, 'Session closed before a response arrived');
+		assert.match(result.err.message, /may have accepted.*Session closed before a response arrived/);
+		assert.equal(result.unanswered, 1);
 	});
 
 	// The window empties on a drop as well as on an answer, so it cannot be what the result reads.
@@ -775,8 +1452,8 @@ describe('graceful shutdown', () => {
 
 		assert.ok(first.sock);
 
-		const rebinding = gate();
-		const release = gate();
+		const rebinding = latch();
+		const release = latch();
 		const session = new Session({
 			reconnect: {
 				connect: open,
@@ -808,5 +1485,80 @@ describe('graceful shutdown', () => {
 		await delay(50);
 
 		assert.deepEqual(reported, []);
+	});
+});
+
+describe('message id notation', () => {
+	async function sendOne(session: Session, message: string): Promise<SendSmsResult> {
+		return session.sendSms({ dlr: true, from: '46701113311', message, to: '46709771337' });
+	}
+
+	test('correlates a hex submit_sm_resp against a decimal receipt', async t => {
+		const smpp = await startServer(t);
+
+		smpp.on('session', bound => {
+			bound.on('sms', sms => { void sms.sendResp({ smsId: '1a2b' }); });
+		});
+
+		const { session } = await connect(t, smpp, {
+			smsIdFormat: { receipt: 'decimal', submitResp: 'hex' },
+		});
+
+		assert.ok(session);
+
+		const reported = once<[Dlr, PduObject]>(resolve => {
+			session.on('dlr', (dlr, pduObj) => { resolve([dlr, pduObj]); });
+		});
+		const sent = await sendOne(session, 'one segment');
+
+		assert.deepEqual(sent.smsIds, ['6699']);
+		assert.equal(paramText(sent.pduObjs[0]?.params.message_id), '1a2b', 'the PDU keeps the id it carried');
+
+		// The receipt renders the id in decimal and mirrors the answered one in its TLV, as the spec has it.
+		await sendReceipt(peerOf(smpp), '6699', '1a2b');
+
+		const [dlr, pduObj] = await reported;
+
+		assert.equal(dlr.smsId, sent.smsIds[0]);
+		assert.equal(paramText(pduObj.tlvs.receipted_message_id?.tagValue), '1a2b');
+	});
+
+	test('leaves the segment ids of a multipart send to merge as they are', async t => {
+		const smpp = await startServer(t);
+
+		smpp.on('session', bound => {
+			bound.on('sms', sms => { void sms.sendResp({ smsId: 'beef' }); });
+		});
+
+		const { session } = await connect(t, smpp, {
+			smsIdFormat: { receipt: 'decimal', submitResp: 'hex' },
+		});
+
+		assert.ok(session);
+
+		const merged = once<MessageDlr>(resolve => { session.on('messageDlr', resolve); });
+		const sent = await sendOne(session, 'x'.repeat(200));
+
+		assert.deepEqual(sent.smsIds, ['beef-1', 'beef-2']);
+
+		for (const smsId of sent.smsIds) {
+			await sendReceipt(peerOf(smpp), smsId);
+		}
+
+		assert.equal((await merged).smsId, 'beef');
+	});
+
+	test('refuses a notation it cannot apply', () => {
+		const checked = checkSessionOptions({ smsIdFormat: { receipt: 'octal' } });
+
+		assert.ok(checked.err instanceof Error);
+		assert.match(checked.err.message, /smsIdFormat\.receipt/);
+		assert.ok(checkSessionOptions({ smsIdFormat: 'hex' }).err instanceof Error);
+		assert.match(
+			checkSessionOptions({ smsIdFormat: { receipts: 'decimal' } }).err?.message ?? '',
+			/receipts/,
+			'a misspelled place is the same silent no-op',
+		);
+		assert.equal(checkSessionOptions({ smsIdFormat: { submitResp: 'hex' } }).err, undefined);
 	});
 });

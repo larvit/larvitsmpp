@@ -3,8 +3,11 @@ import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput } from './pdu.ts';
 import type { Result } from './result.ts';
 import type { SmppLog } from './log.ts';
+import type { SmsIdNotation } from './sms-id.ts';
+import { UnansweredError } from './unanswered-error.ts';
 import { consts } from './defs/constants.ts';
 import { detect } from './defs/encodings.ts';
+import { normaliseSmsId } from './sms-id.ts';
 import { paramText } from './defs/types.ts';
 import { maxSegments, smppTime, splitMessage } from './message.ts';
 
@@ -26,12 +29,24 @@ export type SendSmsOptions = {
 };
 
 /** Both arrays hold what the peer accepted, so a partial failure names what is already delivered. */
-export type SendSmsResult = { err?: Error; pduObjs: PduObject[]; smsIds: string[] };
+export type SendSmsResult = {
+	err?: Error;
+	pduObjs: PduObject[];
+	smsIds: string[];
+	/** Segments that went out unanswered. The peer may have taken them, so sending again may duplicate. */
+	unanswered: number;
+};
+
+/** A message that never went out, in the shape a caller aggregating segments still reads. */
+export function unsent(err: Error): SendSmsResult {
+	return { err, pduObjs: [], smsIds: [], unanswered: 0 };
+}
 
 /** What sending needs from the session: a concat reference and a way onto the wire. */
 export type SendSmsDeps = {
 	log: SmppLog;
 	reference: number;
+	respIdNotation?: SmsIdNotation | undefined;
 	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 };
 
@@ -80,7 +95,6 @@ export function submitSmParams(
 	return params;
 }
 
-/** Puts a message on the wire as one submit_sm per segment. */
 /** Nothing goes on the wire until the whole message fits: a half-sent message bills twice. */
 function checkSegments(allowed: number, segments: number): Error | undefined {
 	if (!Number.isInteger(allowed) || allowed < 1 || allowed > maxSegments) {
@@ -98,17 +112,23 @@ function checkSegments(allowed: number, segments: number): Error | undefined {
 	return undefined;
 }
 
-function collectSent(sent: Result<{ pduObj: PduObject }>[]): SendSmsResult {
+function collectSent(
+	sent: Result<{ pduObj: PduObject }>[],
+	notation: SmsIdNotation | undefined,
+): SendSmsResult {
 	const pduObjs: PduObject[] = [];
 	const smsIds: string[] = [];
 	let failure: Error | undefined;
+	let unanswered = 0;
 
 	for (const one of sent) {
 		if (one.err) {
+			if (one.err instanceof UnansweredError) unanswered++;
+
 			failure ??= one.err;
 		} else if (one.pduObj.cmdStatus === 'ESME_ROK') {
 			pduObjs.push(one.pduObj);
-			smsIds.push(paramText(one.pduObj.params.message_id));
+			smsIds.push(normaliseSmsId(paramText(one.pduObj.params.message_id), notation));
 		} else {
 			const refusal = one.pduObj.cmdStatus ?? String(one.pduObj.cmdStatusId);
 
@@ -116,16 +136,17 @@ function collectSent(sent: Result<{ pduObj: PduObject }>[]): SendSmsResult {
 		}
 	}
 
-	return failure ? { err: failure, pduObjs, smsIds } : { pduObjs, smsIds };
+	return failure ? { err: failure, pduObjs, smsIds, unanswered } : { pduObjs, smsIds, unanswered };
 }
 
+/** Puts a message on the wire as one submit_sm per segment. */
 export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise<SendSmsResult> {
 	const allowed = sms.maxSegments ?? maxSegments;
 	const encoding = sms.encoding ?? detect(sms.message);
 	const segments = splitMessage(sms.message, { encoding, reference: deps.reference });
 	const refused = checkSegments(allowed, segments.length);
 
-	if (refused) return { err: refused, pduObjs: [], smsIds: [] };
+	if (refused) return unsent(refused);
 
 	const multipart = segments.length > 1;
 
@@ -138,5 +159,5 @@ export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise
 		params: submitSmParams(sms, segment, { encoding, multipart }),
 	})));
 
-	return collectSent(sent);
+	return collectSent(sent, deps.respIdNotation);
 }

@@ -1,7 +1,7 @@
 # AGENTS.md
 
-Guidance for LLM agents working in this repository. Human-facing documentation lives in
-[README.md](README.md); the remaining work is tracked in [todo.md](todo.md).
+Guidance for LLM agents working in this repository. What each file in it is for is under
+[Documentation](#documentation).
 
 ## What this is
 
@@ -10,7 +10,35 @@ started from an orphan commit — no history from 0.4.0 is carried over. The 0.4
 readable on the `master` branch of the same repository and is the reference for protocol behaviour,
 not for structure or style.
 
-The library's value is its very small API. Do not grow the public surface without being asked.
+## Goals
+
+In priority order, and the order is the point: where two of them pull against each other, the earlier
+one wins. They do not override the hard rules below.
+
+1. **Correct on the wire.** SMPP 3.4 as SMSCs actually run it. Every other goal yields to this one;
+   the defect table below is what the alternative costs.
+2. **Never give the application a wrong answer about what happened.** An outcome we cannot determine
+   is reported as undetermined rather than guessed; a request the peer may already have taken is
+   never re-sent on the library's own initiative; work the peer has no reason to send again is not
+   dropped.
+3. **Strict in what we send, generous in what we read.** The library's own senders follow 3.4, and
+   the codec parses whatever arrives. Where the letter of the spec would discard traffic a real SMSC
+   sends, keep the traffic.
+4. **A peer an operator never has to complain about.** No bind flooding, nothing a bind direction
+   forbids, no optional parameters to a peer that declared none, nothing held without a bound.
+5. **The session layer is in here, and its defaults are what most applications should run.**
+   Keepalive, reconnect, the send window, reassembly and receipt correlation. An option retunes a
+   default or opts out of it; an option does not switch on the thing the caller obviously wanted.
+6. **A small, stable public surface over reshapeable internals.** Only what `src/index.ts` exports is
+   published. A new option has to beat "the application can do this itself", and has to keep a
+   promise this library can verify. The low-level surface is a passthrough: policy binds what the
+   library composes, never what the caller wrote.
+7. **Nothing that needs state wider than one session.** No throughput throttling, no persistence
+   across a restart, no coordination between processes. This is the scope floor, and it is why an
+   otherwise reasonable feature is declined without a fresh argument each time.
+8. **It builds, tests and runs the same everywhere.** Container-only toolchain, no runtime
+   dependencies, the Node 18 floor verified in CI rather than asserted, every README example executed
+   by the suite.
 
 ## Hard rules
 
@@ -38,18 +66,23 @@ src/
 	index.ts             Public surface. Named exports only, no default export.
 	client.ts            client() -> { err, session }
 	server.ts            server() -> { err, server }, server owns the listener + close()
-	session.ts           Session: dispatch, events, and the collaborators below
+	session.ts           Session: the socket's life, dispatch, events, and the collaborators below
 	sms.ts               The live handle emitted as the 'sms' event (sendResp/sendDlr)
 	dlr.ts               Delivery receipts: text and TLV parsing, receipt status codes
 	dlr-merger.ts        DlrMerger: per-segment receipts counted into one MessageDlr
 	error-from.ts        errorFrom(): whatever was thrown or rejected, as an Error
 	expiring-groups.ts   ExpiringGroups: the capped, expiring store both of those share
+	held-messages.ts     HeldMessages: capped, expiring messages the application has not answered
+	idle-waiters.ts      IdleWaiters: waiting for a count to fall to zero, and what is left of a budget
 	incoming-requests.ts Every request the peer sends: messages, receipts, links, unknown commands
+	link-gate.ts         LinkGate: where a request with no link to go out on waits for the next one
 	link-timers.ts       LinkTimers: the enquire_link heartbeat and the idle timeout
 	log.ts               SmppLog, the logger contract, and silentLog — the default
 	message.ts           Encoding detection, splitting, bit counting, SMPP date formatting
+	outgoing-requests.ts OutgoingRequests: the gate, the window, the pending map and the retry
 	pdu.ts               pduToObj / objToPdu / pduReturn — synchronous, result-returning
 	pdu-framer.ts        PduFramer: a byte stream cut into complete PDUs
+	pdu-transport.ts     PduTransport: the socket a session reads complete PDUs off
 	pending-requests.ts  PendingRequests: sequence numbers, correlation, timeout, abort
 	reassembly.ts        Reassembler: capped, expiring multipart groups
 	reconnect-loop.ts    ReconnectLoop: backoff, retry timer, stopped-ness
@@ -57,7 +90,9 @@ src/
 	send-sms.ts          submitSms composition and the submitSmParams builder
 	send-window.ts       SendWindow: the maxOutstanding semaphore
 	session-options.ts   SessionOptions, ReconnectOptions, bind direction and the session defaults
-	udh.ts               User data header: the concatenation fields of a long SMS
+	sms-id.ts            The notation a peer writes message ids in, normalised for comparison
+	udh.ts               User data header: the concatenation fields of a long SMS, and their reference
+	unanswered-error.ts  UnansweredError: it went out and no answer came back
 	uuid.ts              uuidv7() — the ids the library generates for messages
 	defs/
 		commands.ts      The 33 commands, their ids and ordered parameter lists
@@ -96,9 +131,10 @@ docker compose run --rm node npm run build
 
 ## Defects found in 0.4.0
 
-Confirmed by reading the 0.4.0 source. The rewrite fixes all of them; each needs a regression test
-naming the behaviour, and the wire-affecting ones are cross-checked against a reference
-implementation (see todo.md).
+Every row names what 0.4.0's own code did, so it is not rebuilt here.
+[README.md](README.md#behaviour-that-changed-on-the-wire) names what changed for a consumer, and is
+the only place that does. Confirmed by reading the 0.4.0 source; each row has a regression test
+naming the behaviour.
 
 | Defect | 0.4.0 behaviour |
 | --- | --- |
@@ -115,13 +151,14 @@ implementation (see todo.md).
 | Unbounded reassembly | Incomplete long-SMS groups are capped by nothing and swept only when other traffic arrives, after 24 hours |
 | Dead DLR aggregation | `longSmsDlrs` is allocated to merge per-segment receipts and then never used |
 | Trailing NULL truncation | `types.buffer.size()` subtracts one whenever the value's last octet is `0x00`, so the PDU is allocated one octet short while `sm_length` still reports the full length. Any UCS2 message ending in a character like U+4E00 or U+3000 goes out corrupt |
-| Dormant filters | `defs.filters` is declared on commands and TLVs but never invoked anywhere. Dropped in the rewrite; SMPP time formatting is exported as `smppTime` instead |
-| Unchecked reads | Wire reads index straight into the buffer, so a short or malformed PDU throws out of the codec. Reads are bounds-checked and return results now |
+| Dormant filters | `defs.filters` is declared on commands and TLVs but never invoked anywhere |
+| Unchecked reads | Wire reads index straight into the buffer, so a short or malformed PDU throws out of the codec |
 | Unrangechecked writes | Integer params are handed to `writeUInt8`/`writeUInt16BE` unvalidated, so an out-of-range value throws from inside Node |
 | `submit_multi` missing `sm_length` | The field is commented out of the command table, so `short_message` never round-trips for that command |
 | Per-parameter defaults never applied | `calcCmdLength` reads `paramType.default` (the wire type's) rather than the parameter's, so `interface_version: 0x50` on the bind commands did nothing and every bind declared version 0x00 |
 | `source_telematics_id` width | Defined as a 2-octet integer; SMPP 3.4 5.3.2.8 makes it 1 octet, unlike `dest_telematics_id`, which really is 2 |
-| Binary payloads decoded as text | `data_coding` 0x02, 0x04, 0x14 and 0xF4-0xF7 are 8-bit binary and land on the GSM 03.38 table, which rewrites every octet outside it. They resolve to LATIN1 now, so the payload survives as bytes |
+| Binary payloads decoded as text | `data_coding` 0x02, 0x04, 0x14 and 0xF4-0xF7 are 8-bit binary and land on the GSM 03.38 table, which rewrites every octet outside it |
+| Binary TLVs round-trip corrupt | `pduToObj` turns a `Buffer` TLV value into a hex string (`utils.js:307`), and `objToPdu` writes that string back as its own ASCII, so `message_payload`, `network_error_code`, `callback_num` and the rest are destroyed by any round trip |
 | `ESME_RINVBCASTCHANIND` typo | Defined as `0x011`, three hex digits; the spec value is `0x0112` |
 
 ## Multipart sends and the send window
@@ -167,61 +204,214 @@ exactly 140.
 - `assert.equal` from `node:assert/strict` narrows its first argument, so a following `?.` on the
   same value is flagged as unnecessary. Assert once with `assert.ok(x)` and use plain access after.
 
+## Documentation
+
+Each file answers one question, and a fact belongs to the file whose question it answers:
+
+- **README.md — what you can rely on.** Observable behaviour, for someone using the package. It
+  carries a reason only where the reason changes how you would call the thing.
+- **AGENTS.md — what may not change, and why.** Goals, hard rules, architecture, conventions, and the
+  decisions the goals do not already settle. It does not restate behaviour README states.
+- **todo.md** is a temporary working file that sets its own rules; nothing here governs it.
+
+A sentence living in two of them is a defect: delete the copy in the file whose question it does not
+answer. The toolchain commands are the one deliberate exception — README's copy serves a contributor
+who never opens this file, and this file's copy carries the constraint that nothing runs on the host.
+
+**Write a decision down only when it cannot be put better as a goal.** A goal decides every case that
+follows from it; a decision record decides one. So reach for the goal list first — sharpen a goal,
+add one, or move one up the order — and write a decision only for what is left over: a choice a
+competent change would otherwise re-open, that no goal implies. Give the claim, the constraint that
+settled it and the alternative rejected, and nothing the code or README already says. Where a
+compiler or a test already forbids the other way, it is not a decision, it is a test name. Delete one
+once it no longer constrains anything; this is not a changelog.
+
 ## Decisions
+
+Grouped by what each one constrains.
+
+### The public surface
+
+- **`Session` is publicly constructible, which is what makes `SessionOptions` and `ReconnectOptions`
+  public too.** Raised twice as a leak; it is not one. The collaborators `session.ts` delegates to
+  (`Reassembler`, `PendingRequests`, `SendWindow`, `ReconnectLoop`, `LinkTimers`, `LinkGate`,
+  `DlrMerger`, `PduTransport`, `submitSms`) stay unpublished so they can be reshaped.
+
+- **`acceptsOptionalParams()` and `bindAllows()` are predicates, not chokepoints.** The library's own
+  senders consult them; `session.send({ tlvs })` is passed through as written, because silently
+  stripping a caller's explicit TLVs off a deliberately public low-level surface would be worse than
+  sending them. Only `submit_sm` and `deliver_sm` are policed by bind direction — the only two the
+  library sends and dispatches by it.
+
+- **`session.sock` is a getter over `PduTransport`.** Reading it is unchanged; assigning it no longer
+  compiles, which never rewired the handlers and so never worked.
+
+- **Both emitters re-declare their listener methods to accept a promise.** Maintainer's call,
+  2026-08-27: `EventEmitter` types every listener as void-returning, so the
+  `session.on('sms', async sms => …)` README documents reads as a misused promise in any strict
+  consumer. `declare on: …` and its six siblings re-type the inherited methods to return `unknown`,
+  which emits nothing and needs no cast; overriding them as real methods cannot work, because the
+  `super.on()` call needs one. The cost is that a subclass can no longer reach those seven through
+  `super` — re-declaring them the same way is its way out. `unknown` rather than
+  `void | Promise<void>` because a listener may return anything: `session.on('close', () =>
+  set.delete(session))` returns a boolean. This also settles what the drain can wait on: a listener's
+  own promise would be the better completion signal, and reaching it needs `listeners()`, which
+  cannot be re-declared the same way — Node types it invariantly enough that widening `void` to
+  `unknown` is `TS2416`. Re-probed 2026-09-01; `sendResp()` stays the signal.
+
+### The wire
+
+- **The declared interface version is an option on both `client()` and `server()`, and is not the
+  optional-parameter threshold.** That threshold is fixed at 0x34 by the spec, so an implementation
+  that must declare 5.0 throughout can, without moving it.
+
+- **A peer that declared no version is pre-3.4, and `undefined` means no bind yet.** `acceptBind()`
+  records what the ESME declared and the client's `bind()` records the `sc_interface_version` the
+  SMSC answered with; a peer that declared nothing is recorded as `undeclaredInterfaceVersion` (0x00)
+  and sent no optional parameters, which is how the spec reads an absent `sc_interface_version`.
+
+- **`esm_class` decides what a `deliver_sm` is, and the body is read only when it names nothing.**
+  `MC_DELIVERY_RECEIPT` (0x04) makes it a receipt whatever the body parses to, so a receipt in a
+  format `dlrFromPdu()` cannot read reaches `dlr` with `smsId` undefined instead of arriving as an
+  inbound SMS. Any other named type is not a receipt and its body is not scraped; a message type of 0
+  or one of the ten reserved keeps the scrape, and a non-empty `receipted_message_id` TLV marks a
+  receipt on the same footing. A receipt this library recognises never reaches the reassembler, so an
+  SMSC that splits one across segments gets a `dlr` per segment rather than one merged report. The
+  `message_state` TLV is authoritative only where it names a state in the table — SMPP reserves
+  0x80-0xFF for MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves
+  `statusMsg` to the body.
+
+- **`smsIdFormat` names a notation per place, and normalisation never reaches inside a `<base>-<n>`
+  id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's `id:` in decimal, so one
+  transform over both sides cannot make them equal. `submitResp` covers the `receipted_message_id`
+  TLV too, which SMPP 3.4 5.3.2.26 defines as the id the `submit_sm_resp` carried: naming one
+  notation for whichever id a receipt yields would break the peer that sends both. Omitting a place
+  is what leaving it alone means, so there is no `raw` notation, and a caller-supplied formatter is
+  refused because it would make the promise that the two ids are comparable unverifiable — `onRequest`
+  and the PDU on the `dlr` event are the escape hatches. A `<base>-<n>` id parses as no number and so
+  reaches `expect()` and `collect()` unchanged, which is what keeps `DlrMerger` working; normalising
+  the base instead would break that pair. The option is on `client()` only, since a `server()` session
+  writes both ids itself.
+
+### The session's life
 
 - **A close arriving after our own `unbind` is a clean unbind, not an error.** Maintainer's call,
   2026-08-26: most SMSCs drop the socket instead of answering, so the documented shutdown would
   otherwise always report a failure. It does mask a socket that died mid-unbind for an unrelated
   reason, which is accepted — the peer sees the same TCP close either way.
-- **The published surface is frozen at what `src/index.ts` exports today.** `Session` is exported and
-  publicly constructible, which is why `SessionOptions` and `ReconnectOptions` are public too — that
-  is correct, not a leak, and it has been raised twice. The collaborators `session.ts` delegates to
-  (`Reassembler`, `PendingRequests`, `SendWindow`, `ReconnectLoop`, `LinkTimers`, `DlrMerger`,
-  `submitSms`) stay unpublished so they can be reshaped.
-- **The sub-3.4 optional-parameter rule is a predicate, not a chokepoint.** `acceptsOptionalParams()`
-  is consulted by the library's own senders; `session.send({ tlvs })` is passed through as written,
-  because silently stripping a caller's explicit TLVs off a deliberately public low-level surface
-  would be worse than sending them. The guarantee is "what this library sends honours the rule",
-  never "the session cannot send optional parameters to an old peer".
-- **Both ends feed `peerInterfaceVersion`, and a peer that declared nothing is pre-3.4.**
-  `acceptBind()` records what the ESME declared in its bind request; the client's `bind()` records
-  the `sc_interface_version` the SMSC answered with. A peer that declared no version is recorded as
-  `undeclaredInterfaceVersion` (0x00) and is sent no optional parameters — the spec reads an absent
-  `sc_interface_version` as an SMSC that supports none. `undefined` is left to mean one thing only:
-  no bind has been accepted on this session yet.
-- **The library speaks SMPP 3.4 on the wire, and `defs/` keeps the 5.0 tables as a superset.**
-  Maintainer's call, 2026-08-26: 3.4 is what SMSCs actually run, while the wider tables let the codec
-  parse and build whatever a peer sends. The declared version is an option on both `client()` and
-  `server()`, so an implementation that needs 5.0 throughout can have it. The threshold at or above
-  which a peer may be sent optional parameters is fixed at 0x34 by the spec and is not the same
-  constant as the declared version.
-- **Bind direction is enforced on the library's own senders and on everything incoming, not on
-  `send()`.** A receiver-bound ESME carries no `submit_sm` and a transmitter-bound one no
-  `deliver_sm`; `sendSms()` and `sendDlr()` refuse locally, and an arriving PDU is answered
-  `ESME_RINVBNDSTS`. `bindAllows()` is a predicate on the same footing as `acceptsOptionalParams()`,
-  so the deliberately public low-level `send()` stays a passthrough. Only those two commands are
-  policed, because they are the only ones the library sends and dispatches by direction.
 
-- **The logger is a five-method contract this library declares, not a dependency.** `SmppLog` in
-  `log.ts` is what the code actually calls (`debug`, `error`, `info`, `verbose`, `warn`), so an
-  application can satisfy it with an object literal and `@larvit/smpp` ships with no runtime
-  dependencies. `@larvit/log` implements it structurally and stays a devDependency, where
-  `test/tls.test.ts` passing a real `Log` as the server's logger keeps that compatibility compiled.
+- **`close` means the session is over, and a drop the loop will retry is `disconnected`.**
+  Maintainer's call, 2026-08-31: without the split, an application that opens a replacement client on
+  `close` ends up holding two binds on one account. `teardown()` picks the event by whether the
+  reconnect loop is still live, and `end()` stops that loop before tearing down, so every deliberate
+  shutdown emits `close`. A retry that opens a socket and then loses it clears `closed` through
+  `attach()`, which is why a second drop emits again.
 
-- **`esm_class` decides what a `deliver_sm` is, and the body is only read when it names nothing.**
-  Message type `MC_DELIVERY_RECEIPT` (0x04) makes it a receipt whatever the body parses to, so a
-  receipt in a format `dlrFromPdu()` cannot read reaches `dlr` with `smsId` undefined instead of
-  arriving as an inbound SMS. Any other named type — delivery or user acknowledgement, conversation
-  abort, intermediate notification — is not a receipt and its body is not scraped. A message type of
-  0, or one of the ten the spec reserves, keeps the scrape: SMSCs that send text-only receipts leave
-  `esm_class` at 0, and reading that as the spec's "default message type" would lose every one of
-  them. A non-empty `receipted_message_id` TLV marks a receipt on the same footing there, since
-  nothing but a receipt carries one. What gets scraped is the decoded `short_message` with any UDH
-  stripped; a receipt this library recognises never reaches the reassembler, so an SMSC that splits one across segments gets a
-  `dlr` per segment rather than one merged report.
-  The `message_state` TLV is authoritative only where it names a state in the table — SMPP reserves
-  0x80-0xFF for MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves
-  `statusMsg` to the body.
+- **`reconnect` takes `{ minDelay, maxDelay }` to retune and `false` to turn off**, so absent means
+  on and there is one spelling for each. Only `client()` reconnects — a `server()` session is a
+  connection the peer opened, and nothing at this end can reopen it. The retry timer is `unref()`'d,
+  so a process with nothing else left to do still exits between attempts.
+
+- **Coming up is not proof a link works, so only one that outlasted `maxDelay` resets the backoff.**
+  An unreadable stream is found after the bind returns, so resetting on connect gave a link that died
+  on arrival a fresh `minDelay` every cycle — one TCP connect and bind per second, forever. A drop
+  after a healthy link still retries at `minDelay`.
+
+- **A stream this library cannot read is a dead link, not a dead session.** Maintainer's call,
+  2026-08-31: a framing or codec error tears the link down through `teardown()`, so the reconnect
+  loop retries it on a fresh socket with a fresh framer — which is what a desynced stream needs, and
+  the common cause. `sessionError` still carries every failure, so a peer that only ever sends
+  garbage is visible in the log rather than silent.
+
+- **A deliberate shutdown drains; an unusable link and an abort do not.** `close()` and `unbind()`
+  wait on the send window rather than the pending map — the map misses a segment still queued behind
+  a full window, and finishing a half-sent multipart message is the point. The window counts slots,
+  never outcomes, and empties on a drop too, where `teardown()` settles everything the link was
+  carrying, which is why `drain()` reads `closed` before it reads the count. A stream the framer or
+  the codec cannot read takes `teardown()` instead, and `close({ signal })` on an aborted signal and
+  a peer's own `unbind` take `end()`: nothing on a dead link can answer, an abort means stop now, and
+  a peer that has declared itself finished will not answer what it still owes, so draining any of the
+  three would only hold a socket open for the timeout. `unbind()` sends its own PDU through
+  `request()` past both the window and the drain gate, because it must go out either way.
+  `shutdownTimeout` stays a session option rather than a `close()` argument: `server()` builds
+  sessions on the caller's behalf, so the option is the only composition point. `SmppServer.close()`
+  reports each session's unfinished drain through `serverError`, because its own result says nothing
+  but that the listener stopped.
+
+- **The drain waits on the messages the application holds, and `sendResp()` is what says it is done
+  with one.** Maintainer's call, 2026-09-01: waiting on the send window alone tore a server session
+  down while the application was still answering a `submit_sm`, so the peer timed out and re-sent —
+  the duplicate goal 2 forbids, in the direction the window already covers. No completion signal was
+  added to the `sms` event: `sendResp()` is the answer the peer is waiting for, so it is the one the
+  drain waits for. Counting every inbound request until `sendReturn()` answered it was rejected —
+  an `onRequest` that deliberately answers nothing would then cost a full `shutdownTimeout` on every
+  close — and a message no listener took is released at once, since nothing is going to answer it.
+  `teardown()` drops what is still held for the same reason it drops inbound segments. The release
+  is one turn late, so a listener that sends its receipt straight after the response is still
+  holding when the drain looks; `sendDlr()` is the one send that goes out past the drain's refusal,
+  and only while the message is still held — past that it is an ordinary send, because the drain it
+  would slip past is no longer waiting for it. `shutdownTimeout: 0` does not carry over to this half:
+  waiting forever is safe for the peer, whose every request is bounded by `responseTimeout` unless the
+  caller set that to 0 as well, and unsafe for the application, which nothing bounds — `close()` is
+  what you reach for when the application is stuck, so it may not block on the application coming
+  unstuck. That half falls back to `responseTimeout`, the same answer the link gate's hold already
+  takes — and to that option's default where it is 0 as well, since neither option is an answer about
+  the application. What is held is capped and expiring like every other inbound store, on constants
+  rather than options, because a bound the application cannot raise is the point: an application that
+  answers nothing would otherwise grow it for the life of the link, which goal 4 forbids. A message
+  that falls out of the bound is one the drain stops waiting for, so `close()` can report fewer
+  unanswered than there were — accepted, because the alternative is holding what nothing will answer,
+  and both exits are logged.
+
+- **A reconnect keeps the delivery-receipt merges; everything else the link held is dropped.**
+  `onDeliverSm()` answers each receipt before the group it belongs to is complete, and `teardown()`
+  runs on every path — an idle timeout and a failed rebind, not only `close()` — so clearing the
+  merges there loses receipts no peer has a reason to send again. They are cleared where the session
+  is over instead. Inbound segments stay in `teardown()`, because they go unanswered until the
+  message is whole: the peer still holds them, and answering it on a later link with the old
+  segments' sequence numbers would correlate with nothing.
+
+- **A message id base is merged at most once.** A receipt carries nothing but `<base>-<n>`, so a
+  straggler for a message whose group is gone cannot be told from a receipt for a later message the
+  peer handed the same ids — an SMSC whose id counter restarts with its process is the realistic
+  case. `DlrMerger` remembers the bases it has finished with, capped and expiring exactly like the
+  groups, and refuses to open one a second time: the later message gets no `messageDlr`, and an
+  earlier one whose receipts are still arriving is dropped rather than left to collect the later
+  one's. Every segment still reaches the application as a `dlr`. `expect()` ignores a lone id, so a
+  single-part message never claims a base.
+
+- **A send that never reached the socket waits for the next link; one that did is counted, not
+  resent.** Maintainer's call, 2026-09-01: re-queueing everything unanswered would resend a
+  `submit_sm` the SMSC accepted and answered into a dead socket, which is delivered and billed twice,
+  while a request that never left this process can be lost for free. `attempt()` therefore wraps all
+  three ways a written request can fail in `UnansweredError`; counting only the dropped-link case, as
+  the first cut did, would have called the commonest one safe to resend. A count rather than a
+  boolean because `sendSms()` aggregates segments into one `err` slot, and required rather than
+  optional so every construction site answers. `UnansweredError` stays unexported: `unanswered` is
+  the one spelling on the public surface. The hold is bounded by `responseTimeout` rather than an
+  option of its own — that is already the answer to how long one request may wait — and its clock
+  starts when the send is issued rather than when it first finds the gate shut, so one budget covers
+  every hold a single call makes. That timer is the one here that is not `unref()`'d: a held request
+  is awaited with the socket already destroyed, so an unref'd one lets a process whose only remaining
+  work is that send exit without settling it.
+
+- **The gate decides whether a link can carry a request, and a bind is what makes it one.**
+  Maintainer's call, 2026-09-01: `attach()` clears `closed` the moment a socket is handed over, one
+  round trip before the bind is answered, so gating on `closed` let a send arriving in that window go
+  out unbound and come back `ESME_RINVBNDSTS`. `LinkGate` owns the answer instead — `shut(returning)`
+  on every teardown, `open()` only once `comeBackUp()` has a bound link — and
+  `OutgoingRequests.linkDown()` reads it rather than `closed`. The bind itself cannot wait for what it
+  creates, so `pastDrain()` lets the three bind commands past the gate and the window, the same door
+  `unbind()` takes through `now()`. The gate is told what happened and never reads back into the
+  session: a collaborator that has to ask does not own its decision, which is how the first cut ended
+  up answering the same question two different ways at admit and at release. For the same reason the
+  retry in `pastDrain()` asks `gate.isUp()` rather than `linkDown()`, which also reads the socket — a
+  condition that loops on something the gate does not gate on spins against a gate that admits it
+  straight back. `LinkGate.returning` is a copy of `retrying()` taken at teardown, and stays true
+  only because nothing stops the reconnect loop without `emitClose()` following it: `drain()` and
+  `end()` are the only callers of `stop()`. A third caller has to shut the gate itself.
+
+### Internals and tests
 
 - **A listener that rejects is routed by Node's `captureRejections`, not by hand-dispatching.** Both
   emitters construct with `captureRejections: true` and implement
@@ -232,57 +422,13 @@ exactly 140.
   handlers normalise through `errorFrom()` rather than inline — a route out of the handler would land
   on a bare `process.nextTick` with nothing to catch it.
 
-- **Both emitters re-declare their listener methods to accept a promise.** Maintainer's call,
-  2026-08-27: `EventEmitter` types every listener as void-returning, so the
-  `session.on('sms', async sms => …)` the README documents reads as a misused promise in any strict
-  consumer. `declare on: …` and its six siblings re-type the inherited methods to return `unknown`,
-  which emits nothing, needs no cast and leaves the runtime method on the prototype. Overriding them
-  as real methods instead cannot work: the `super.on()` call needs a cast to satisfy the conditional
-  `Listener` type. The cost is that a subclass can no longer reach those seven through `super` or
-  override them as methods — re-declaring them the same way is its way out. `unknown` rather than `void | Promise<void>` because a listener may return
-  anything — `session.on('close', () => set.delete(session))` returns a boolean.
-
-- **A reconnect keeps the delivery-receipt merges; everything else the link held is dropped.**
-  `onDeliverSm()` answers each receipt before the group it belongs to is complete, and `teardown()`
-  runs on every path — an idle timeout and a failed rebind, not only `close()` — so clearing the
-  merges there loses receipts no peer has a reason to send again. They are cleared where the session
-  is over instead: `close()`, or a drop with no reconnect loop left to bring the link back. Inbound
-  segments stay in `teardown()`, because they go unanswered until the message is whole: the peer
-  still holds them, and answering it on a later link with the old segments' sequence numbers would
-  correlate with nothing. Surviving a process restart is a separate, public-surface question, and is
-  in todo.md.
-
-- **A message id base is merged at most once.** A receipt carries nothing but `<base>-<n>`, so a
-  straggler for a message whose group is gone cannot be told from a receipt for a later message the
-  peer handed the same ids — an SMSC whose id counter restarts with its process is the realistic
-  case. `DlrMerger` remembers the bases it has finished with, capped and expiring exactly like the
-  groups, and refuses to open one a second time: the later message gets no `messageDlr`, and an
-  earlier one whose receipts are still arriving is dropped rather than left to collect the later
-  one's. Every segment still reaches the application as a `dlr`. The rule covers the bases the
-  merger opened — `expect()` ignores a lone id, so a single-part message never claims one.
-
-- **A deliberate shutdown drains; an unusable link and an abort do not.** `close()` and `unbind()`
-  refuse further sends and wait on the send window, not the pending map — the map misses a segment
-  still queued behind a full window, and finishing a half-sent multipart message is the point. The
-  window counts slots, never outcomes, so it says when to stop waiting and nothing about what
-  happened: it empties on a drop too, where `teardown()` settles everything the link was carrying,
-  which is why `drain()` reads `closed` before it reads the count. The wait covers what this end
-  sent — a request the peer sent us is answered through `sendReturn()`, which never enters the
-  window, so a server session waits for none of its inbound work; that half is in todo.md.
-  `shutdownTimeout` bounds the drain alone, and `0` waits forever like every other timeout here;
-  `unbind()` then waits `responseTimeout` for its own response, and sends that PDU through
-  `request()` past both the window and the drain gate because it must go out either way. A stream
-  the framer or the codec cannot read takes `end()` instead, and so does `close({ signal })` on an
-  aborted signal and a peer's own `unbind` — nothing on a dead link can answer, an abort means stop
-  now, and a peer that has declared itself finished will not answer what it still owes us, so
-  draining any of the three would only hold a socket open for the timeout. `SmppServer.close()`
-  reports each session's unfinished drain through `serverError`, because its own result says
-  nothing but that the listener stopped. `shutdownTimeout` stays a session option rather than a
-  `close()` argument: `server()` builds sessions on the caller's behalf, so the option
-  is the only composition point, and `close({ signal })` already covers a hard deadline.
+- **`SmppLog` is a five-method contract this library declares, not a dependency.** `debug`, `error`,
+  `info`, `verbose` and `warn` are what the code actually calls, so an application can satisfy it
+  with an object literal. `@larvit/log` implements it structurally and stays a devDependency, where
+  `test/tls.test.ts` passing a real `Log` as the server's logger keeps that compatibility compiled.
 
 - **The TLS tests build their own self-signed certificate in DER** (`test/tls.test.ts`) instead of
   adding a devDependency or shelling out to openssl. Maintainer's call, 2026-08-26: the dev image
-  `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI
-  and fail on every developer machine, and a committed key leaks in a public repository. Valid while
-  the dev image has no openssl.
+  `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI and
+  fail on every developer machine, and a committed key leaks in a public repository. Valid while the
+  dev image has no openssl.

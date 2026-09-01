@@ -11,16 +11,17 @@ import { DlrMerger } from './dlr-merger.ts';
 import { EventEmitter } from 'node:events';
 import { IncomingRequests } from './incoming-requests.ts';
 import { LinkTimers } from './link-timers.ts';
-import { PduFramer } from './pdu-framer.ts';
-import { PendingRequests } from './pending-requests.ts';
+import { OutgoingRequests } from './outgoing-requests.ts';
+import { PduTransport } from './pdu-transport.ts';
 import { ReconnectLoop } from './reconnect-loop.ts';
-import { SendWindow } from './send-window.ts';
+import { leftOf } from './idle-waiters.ts';
 import { errorFrom } from './error-from.ts';
 import { optionalParamsMinVersion } from './defs/constants.ts';
 import { bindCarries, bindCommands, defaultSystemId, defaults } from './session-options.ts';
-import { isResp, objToPdu, pduReturn, pduToObj } from './pdu.ts';
+import { isResp, pduReturn } from './pdu.ts';
 import { silentLog } from './log.ts';
-import { submitSms } from './send-sms.ts';
+import { submitSms, unsent } from './send-sms.ts';
+import { ConcatReference } from './udh.ts';
 
 export type {
 	CloseOptions,
@@ -47,8 +48,6 @@ export class Session extends EventEmitter<SessionEvents> {
 	declare prependOnceListener: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
 	declare removeListener: <K extends keyof SessionEvents>(event: K, listener: SessionListener<K>) => this;
 
-	/** Replaced on reconnect, so hold the session rather than this. */
-	sock: Socket;
 	readonly log: SmppLog;
 
 	/** The role the ESME bound with, whichever end of the link this is. Undefined before any bind. */
@@ -58,18 +57,17 @@ export class Session extends EventEmitter<SessionEvents> {
 	peerInterfaceVersion: number | undefined = undefined;
 	userData: unknown = undefined;
 
+	private readonly concatReference = new ConcatReference();
 	private readonly dlrMerger: DlrMerger;
 	private readonly incoming: IncomingRequests;
 	private readonly options: SessionOptions;
-	private readonly pending: PendingRequests;
+	private readonly outgoing: OutgoingRequests;
 	private readonly reconnectLoop: ReconnectLoop | undefined;
 	private readonly timers: LinkTimers;
-	private readonly window: SendWindow;
+	private readonly transport: PduTransport;
 
 	private closed = false;
-	private concatReference = 0;
-	private draining = false;
-	private framer = new PduFramer();
+	private ended = false;
 
 	/** A listener that throws is the application's bug; it must not become ours. Hard rule 1. */
 	override emit<K extends keyof SessionEvents>(
@@ -120,12 +118,12 @@ export class Session extends EventEmitter<SessionEvents> {
 			maxReassembly: options.maxReassembly,
 			onRequest: options.onRequest,
 			reassemblyTimeout: options.reassemblyTimeout,
+			sendPastDrain: input => this.outgoing.pastDrain(input, {}),
 			session: this,
+			smsIdFormat: options.smsIdFormat,
 			systemId: options.systemId,
 		});
-		this.pending = new PendingRequests(this.log);
 		this.reconnectLoop = this.loopFor(options.reconnect);
-		this.sock = options.sock;
 		this.timers = new LinkTimers({
 			enquireLinkInterval: options.enquireLinkInterval,
 			idleTimeout: options.idleTimeout,
@@ -134,10 +132,20 @@ export class Session extends EventEmitter<SessionEvents> {
 			// Not close(): a link that went quiet is a drop, and a drop is what reconnect is for.
 			onIdle: () => { this.teardown(); },
 		});
-		this.window = new SendWindow(options.maxOutstanding ?? defaults.maxOutstanding);
+		this.transport = this.transportFor(options.sock);
+		this.outgoing = new OutgoingRequests({
+			log: this.log,
+			maxOutstanding: options.maxOutstanding ?? defaults.maxOutstanding,
+			responseTimeout: options.responseTimeout ?? defaults.responseTimeout,
+			transport: this.transport,
+		});
 
-		this.attach(options.sock);
 		this.resetTimers();
+	}
+
+	/** Replaced on reconnect, so hold the session rather than this. */
+	get sock(): Socket {
+		return this.transport.sock;
 	}
 
 	/** Whether this session's bind direction carries a command. Consulted by the library's senders. */
@@ -152,30 +160,8 @@ export class Session extends EventEmitter<SessionEvents> {
 	}
 
 	/** Sends a request and resolves with the peer's response. */
-	async send(
-		input: PduObjectInput,
-		options: SendOptions = {},
-	): Promise<Result<{ pduObj: PduObject }>> {
-		if (input.cmdName.endsWith('_resp')) {
-			return { err: new Error(`Use sendReturn() for responses, not send(): ${input.cmdName}`) };
-		}
-
-		if (this.closed) return { err: new Error('Session is closed') };
-
-		if (this.draining) return { err: new Error('Session is shutting down') };
-
-		// Before the window, or a full window makes an aborted call wait for a slot it will not use.
-		if (options.signal?.aborted === true) {
-			return { err: new Error('Aborted before the request was sent') };
-		}
-
-		await this.window.acquire();
-
-		try {
-			return await this.request(input, options);
-		} finally {
-			this.window.release();
-		}
+	send(input: PduObjectInput, options: SendOptions = {}): Promise<Result<{ pduObj: PduObject }>> {
+		return this.outgoing.request(input, options);
 	}
 
 	/** Answers a request the peer sent us. Responses are never waited on. */
@@ -186,7 +172,7 @@ export class Session extends EventEmitter<SessionEvents> {
 		tlvs?: Record<string, TlvInput>,
 	): Promise<VoidResult> {
 		const built = pduReturn(pdu, status, params, tlvs);
-		const sent = built.err ? { err: built.err } : this.write(built.buffer);
+		const sent = built.err ? { err: built.err } : this.transport.write(built.buffer);
 
 		// A peer that unbinds and drops the link takes our response with it; that is not a failure.
 		if (sent.err && !this.closed) {
@@ -203,12 +189,13 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	async sendSms(sms: SendSmsOptions, options: SendOptions = {}): Promise<SendSmsResult> {
 		if (!this.bindAllows('submit_sm')) {
-			return { err: new Error('A receiver-bound session does not carry submit_sm'), pduObjs: [], smsIds: [] };
+			return unsent(new Error('A receiver-bound session does not carry submit_sm'));
 		}
 
 		const sent = await submitSms({
 			log: this.log,
-			reference: this.nextConcatReference(),
+			reference: this.concatReference.next(),
+			respIdNotation: this.options.smsIdFormat?.submitResp,
 			send: input => this.send(input, options),
 		}, sms);
 
@@ -224,9 +211,9 @@ export class Session extends EventEmitter<SessionEvents> {
 	async unbind(): Promise<VoidResult> {
 		const drained = await this.drain(undefined);
 		const wasOpen = !this.closed;
-		// request(), not send(): the drain gate refuses a send, and the unbind goes out either way.
+		// now(), not send(): a drain refuses a send, and the unbind goes out either way.
 		const sent = wasOpen
-			? await this.request({ cmdName: 'unbind' }, {})
+			? await this.outgoing.now({ cmdName: 'unbind' })
 			: { err: new Error('Session is closed') };
 		const closedOnUnbind = wasOpen && this.closed;
 
@@ -245,6 +232,21 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.end();
 
 		return drained;
+	}
+
+	private transportFor(sock: Socket): PduTransport {
+		return new PduTransport({
+			log: this.log,
+			onClose: () => { this.onClose(); },
+			onData: chunk => { this.onData(chunk); },
+			onError: err => { this.emit('sessionError', err); },
+			onFramed: pdu => { this.emit('incomingPdu', pdu); },
+			onPdu: pduObj => { this.dispatch(pduObj); },
+			onUnreadable: err => {
+				this.emit('sessionError', err);
+				this.teardown();
+			},
+		}, sock);
 	}
 
 	private loopFor(reconnect: ReconnectOptions | undefined): ReconnectLoop | undefined {
@@ -281,82 +283,50 @@ export class Session extends EventEmitter<SessionEvents> {
 		}
 
 		this.resetTimers();
+		this.outgoing.linkUp();
 		this.log.info('session - reconnected');
 		this.emit('reconnected');
 
 		return {};
 	}
 
-	/** Wires a freshly opened socket into this session, replacing any previous one. */
 	private attach(sock: Socket): void {
-		// The socket being replaced is already dead, and its three handlers still point here.
-		if (this.sock !== sock) this.sock.removeAllListeners();
-
-		this.sock = sock;
-		this.framer = new PduFramer();
+		this.transport.attach(sock);
 		this.closed = false;
-
-		sock.on('data', chunk => { this.onData(chunk); });
-		sock.on('close', () => { this.onClose(); });
-		sock.on('error', err => {
-			this.log.warn('session - socket error', { message: err.message });
-			this.emit('sessionError', err);
-			this.onClose();
-		});
 	}
 
-	private async request(
-		input: PduObjectInput,
-		options: SendOptions,
-	): Promise<Result<{ pduObj: PduObject }>> {
-		// pending.wait() alone settles the caller while the request still goes out to the peer.
-		if (options.signal?.aborted === true) {
-			return { err: new Error('Aborted before the request was sent') };
-		}
-
-		const seqNr = this.pending.nextSeqNr();
-		const built = objToPdu({ ...input, seqNr });
-
-		if (built.err) return { err: built.err };
-
-		const response = this.pending.wait(seqNr, {
-			signal: options.signal,
-			timeout: this.options.responseTimeout ?? defaults.responseTimeout,
-		});
-		const written = this.write(built.buffer);
-
-		if (written.err) {
-			this.pending.settle(seqNr, { err: written.err });
-
-			return { err: written.err };
-		}
-
-		return response;
-	}
-
-	/** Stops new sends and waits out the ones already issued. */
+	/** Stops new sends and waits out the messages we hold and the requests already issued. */
 	private async drain(signal: AbortSignal | undefined): Promise<VoidResult> {
 		this.reconnectLoop?.stop();
-		this.draining = true;
+		this.outgoing.stopAccepting();
 
-		if (this.closed || this.sock.destroyed) return {};
+		if (this.outgoing.linkDown()) return {};
 
 		const timeout = this.options.shutdownTimeout ?? defaults.shutdownTimeout;
-		const unfinished = await this.window.idle(timeout, signal);
+		const deadline = timeout > 0 ? Date.now() + timeout : 0;
+		// Answering a message can put a receipt on the wire; nothing on the wire produces a message.
+		const messages = await this.incoming.drain(this.answering(timeout), signal);
+		const requests = await this.outgoing.drain(leftOf(deadline), signal);
 
 		// The window empties on a teardown too, which settles everything the link was carrying.
-		if (this.isClosed()) return { err: new Error('The session closed before the drain finished') };
+		if (this.outgoing.linkDown()) {
+			return { err: new Error('The session closed before the drain finished') };
+		}
 
-		if (unfinished === 0) return {};
+		if (!messages.err) return requests;
 
-		this.log.warn('session - shutting down with requests unfinished', { timeout, unfinished });
+		if (!requests.err) return messages;
 
-		return { err: new Error(`Shut down with ${String(unfinished)} request(s) unfinished`) };
+		return { err: new Error(`${messages.err.message}; ${requests.err.message}`) };
 	}
 
-	/** Read through a method: teardown() can land while the drain is awaiting. */
-	private isClosed(): boolean {
-		return this.closed;
+	/** The application half's budget, which may never be "forever": nothing else ends that wait. */
+	private answering(timeout: number): number {
+		if (timeout > 0) return timeout;
+
+		const responseTimeout = this.options.responseTimeout ?? defaults.responseTimeout;
+
+		return responseTimeout > 0 ? responseTimeout : defaults.responseTimeout;
 	}
 
 	/** The session is over now, drained or not. Nothing brings it back. */
@@ -364,79 +334,42 @@ export class Session extends EventEmitter<SessionEvents> {
 		this.reconnectLoop?.stop();
 		this.teardown();
 		this.dlrMerger.clear();
+		this.emitClose();
+	}
+
+	private emitClose(): void {
+		if (this.ended) return;
+
+		this.ended = true;
+		this.outgoing.linkLost(false);
+		this.emit('close');
 	}
 
 	private teardown(): void {
 		if (this.closed) return;
 
 		this.closed = true;
+		this.outgoing.linkLost(this.retrying());
 		this.timers.clear();
-		this.pending.settleAll(new Error('Session closed before a response arrived'));
 		this.incoming.clear();
 		this.sock.destroy();
-		this.emit('close');
+
+		if (this.retrying()) this.emit('disconnected');
+		else this.emitClose();
 	}
 
-	private nextConcatReference(): number {
-		this.concatReference = this.concatReference >= 255 ? 1 : this.concatReference + 1;
-
-		return this.concatReference;
-	}
-
-	private write(pdu: Buffer): VoidResult {
-		if (this.sock.destroyed) {
-			return { err: new Error('Socket is closed') };
-		}
-
-		this.sock.write(pdu);
-
-		return {};
+	private retrying(): boolean {
+		return this.reconnectLoop !== undefined && !this.reconnectLoop.isStopped();
 	}
 
 	private onData(chunk: Buffer): void {
 		this.emit('data', chunk);
 		this.resetTimers();
-		this.framer.push(chunk);
-
-		const framed = this.framer.next();
-
-		if (framed.err) {
-			this.log.warn('session - unusable stream, closing', { message: framed.err.message });
-			this.emit('sessionError', framed.err);
-			this.end();
-
-			return;
-		}
-
-		for (const pdu of framed.pdus) {
-			if (!this.receive(pdu)) return;
-		}
-	}
-
-	/** False means the PDU could not be read and the session has been closed. */
-	private receive(pdu: Buffer): boolean {
-		this.emit('incomingPdu', pdu);
-
-		const parsed = pduToObj(pdu);
-
-		if (parsed.err) {
-			this.log.warn('session - could not parse an incoming PDU, closing', {
-				message: parsed.err.message,
-			});
-			this.emit('sessionError', parsed.err);
-			this.end();
-
-			return false;
-		}
-
-		this.dispatch(parsed.pduObj);
-
-		return true;
 	}
 
 	private dispatch(pduObj: PduObject): void {
 		if (isResp(pduObj)) {
-			if (!this.pending.deliver(pduObj)) {
+			if (!this.outgoing.deliver(pduObj)) {
 				this.log.debug('session - response with no matching request', { seqNr: pduObj.seqNr });
 			}
 

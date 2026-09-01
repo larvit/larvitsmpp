@@ -206,6 +206,40 @@ describe('dlrFromPdu()', () => {
 		assert.equal(dlr.receipt.sub, 1);
 		assert.equal(dlr.receipt.text, 'hello');
 	});
+
+	test('reads the id in the notation the peer writes receipts in', () => {
+		const hex = dlrFromPdu(deliverSm('id:1a2B stat:DELIVRD err:000 text:'), { receipt: 'hex' });
+
+		assert.ok(hex);
+		assert.equal(hex.smsId, '6699');
+		assert.equal(hex.receipt?.id, '1a2B', 'the receipt itself keeps the id as it arrived');
+
+		assert.equal(dlrFromPdu(deliverSm('id:0000123 stat:DELIVRD'), { receipt: 'decimal' })?.smsId, '123');
+	});
+
+	// SMPP 3.4 5.3.2.26 makes the TLV the id the submit_sm_resp carried, not the body's rendering.
+	test('reads the receipted_message_id TLV in the notation the peer answers a submit in', () => {
+		const marked = deliverSm('nothing scrapable here', {
+			receipted_message_id: { tagValue: 'FF' },
+		}, 0);
+
+		assert.equal(dlrFromPdu(marked, { submitResp: 'hex' })?.smsId, '255');
+		assert.equal(dlrFromPdu(marked, { receipt: 'hex' })?.smsId, 'FF');
+	});
+
+	test('leaves an id the notation cannot read as it arrived', () => {
+		assert.equal(dlrFromPdu(deliverSm('id:beef-1 stat:DELIVRD'), { receipt: 'hex' })?.smsId, 'beef-1');
+		assert.equal(dlrFromPdu(deliverSm('id:1a2b stat:DELIVRD'), { receipt: 'decimal' })?.smsId, '1a2b');
+		assert.equal(dlrFromPdu(deliverSm('id:0195f0c7 stat:DELIVRD'))?.smsId, '0195f0c7');
+	});
+
+	// Number() reads 9007199254740993 as ...92, which correlates a receipt to the wrong send.
+	test('reads an id past the safe integer range without losing a digit', () => {
+		assert.equal(
+			dlrFromPdu(deliverSm('id:9007199254740993 stat:DELIVRD'), { receipt: 'decimal' })?.smsId,
+			'9007199254740993',
+		);
+	});
 });
 
 describe('receiptCodes', () => {
