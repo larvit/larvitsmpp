@@ -66,12 +66,13 @@ const patterns = {
 	stat: field('stat'),
 	sub: field('sub'),
 	submitDate: field('submit date'),
-	// The last field, and the only one that may hold a space: it carries the message's own start.
+	// The one field that may hold a space, carrying the message's own start, so it ends at its line.
 	text: /\btext:([^\r\n]*)/i,
 };
 
 function toNumber(value: string | undefined): number | undefined {
-	if (value === undefined) return undefined;
+	// Number('') is 0, which would report a receipt that stated no count as one that stated none sent.
+	if (value === undefined || value === '') return undefined;
 
 	const parsed = Number(value);
 

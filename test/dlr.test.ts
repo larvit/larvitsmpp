@@ -61,7 +61,7 @@ describe('parseReceipt()', () => {
 	});
 
 	test('leaves absent fields undefined rather than guessing', () => {
-		const receipt = parseReceipt('id:abc stat:UNDELIV');
+		const receipt = parseReceipt('id:abc sub: stat:UNDELIV');
 
 		assert.equal(receipt.id, 'abc');
 		assert.equal(receipt.stat, 'UNDELIV');
@@ -94,6 +94,7 @@ describe('dlrFromPdu()', () => {
 		assert.equal(dlr.statusId, 2);
 		assert.equal(dlr.errorCode, '000');
 		assert.equal(dlr.doneDate?.toISOString(), '2025-08-25T14:31:00.000Z');
+		assert.equal(dlrFromPdu(deliverSm('id:beef-1\r\nstat:DELIVRD'))?.smsId, 'beef-1');
 	});
 
 	test('maps every spec status code back to its message state and id', () => {
