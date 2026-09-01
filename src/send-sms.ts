@@ -4,6 +4,7 @@ import type { PduObject, PduObjectInput } from './pdu.ts';
 import type { Result } from './result.ts';
 import type { SmppLog } from './log.ts';
 import type { SmsIdNotation } from './sms-id.ts';
+import { UnansweredError } from './pending-requests.ts';
 import { consts } from './defs/constants.ts';
 import { detect } from './defs/encodings.ts';
 import { normaliseSmsId } from './sms-id.ts';
@@ -28,7 +29,13 @@ export type SendSmsOptions = {
 };
 
 /** Both arrays hold what the peer accepted, so a partial failure names what is already delivered. */
-export type SendSmsResult = { err?: Error; pduObjs: PduObject[]; smsIds: string[] };
+export type SendSmsResult = {
+	err?: Error;
+	pduObjs: PduObject[];
+	smsIds: string[];
+	/** Segments the link dropped under. The peer may have taken them, so sending again may duplicate. */
+	unanswered: number;
+};
 
 /** What sending needs from the session: a concat reference and a way onto the wire. */
 export type SendSmsDeps = {
@@ -107,9 +114,12 @@ function collectSent(
 	const pduObjs: PduObject[] = [];
 	const smsIds: string[] = [];
 	let failure: Error | undefined;
+	let unanswered = 0;
 
 	for (const one of sent) {
 		if (one.err) {
+			if (one.err instanceof UnansweredError) unanswered++;
+
 			failure ??= one.err;
 		} else if (one.pduObj.cmdStatus === 'ESME_ROK') {
 			pduObjs.push(one.pduObj);
@@ -121,7 +131,7 @@ function collectSent(
 		}
 	}
 
-	return failure ? { err: failure, pduObjs, smsIds } : { pduObjs, smsIds };
+	return failure ? { err: failure, pduObjs, smsIds, unanswered } : { pduObjs, smsIds, unanswered };
 }
 
 /** Puts a message on the wire as one submit_sm per segment. */
@@ -131,7 +141,7 @@ export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise
 	const segments = splitMessage(sms.message, { encoding, reference: deps.reference });
 	const refused = checkSegments(allowed, segments.length);
 
-	if (refused) return { err: refused, pduObjs: [], smsIds: [] };
+	if (refused) return { err: refused, pduObjs: [], smsIds: [], unanswered: 0 };
 
 	const multipart = segments.length > 1;
 

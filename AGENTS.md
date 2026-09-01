@@ -45,6 +45,7 @@ src/
 	error-from.ts        errorFrom(): whatever was thrown or rejected, as an Error
 	expiring-groups.ts   ExpiringGroups: the capped, expiring store both of those share
 	incoming-requests.ts Every request the peer sends: messages, receipts, links, unknown commands
+	link-gate.ts         LinkGate: where a request with no link to go out on waits for the next one
 	link-timers.ts       LinkTimers: the enquire_link heartbeat and the idle timeout
 	log.ts               SmppLog, the logger contract, and silentLog — the default
 	message.ts           Encoding detection, splitting, bit counting, SMPP date formatting
@@ -178,8 +179,8 @@ exactly 140.
 - **The published surface is frozen at what `src/index.ts` exports today.** `Session` is exported and
   publicly constructible, which is why `SessionOptions` and `ReconnectOptions` are public too — that
   is correct, not a leak, and it has been raised twice. The collaborators `session.ts` delegates to
-  (`Reassembler`, `PendingRequests`, `SendWindow`, `ReconnectLoop`, `LinkTimers`, `DlrMerger`,
-  `submitSms`) stay unpublished so they can be reshaped.
+  (`Reassembler`, `PendingRequests`, `SendWindow`, `ReconnectLoop`, `LinkTimers`, `LinkGate`,
+  `DlrMerger`, `submitSms`) stay unpublished so they can be reshaped.
 - **The sub-3.4 optional-parameter rule is a predicate, not a chokepoint.** `acceptsOptionalParams()`
   is consulted by the library's own senders; `session.send({ tlvs })` is passed through as written,
   because silently stripping a caller's explicit TLVs off a deliberately public low-level surface
@@ -345,3 +346,17 @@ exactly 140.
   as no number and so reaches `expect()` and `collect()` unchanged. Normalising the base instead
   would break that pair. The option is on `client()` only — a `server()` session generates its own
   ids and writes its own receipts, so both places are already one notation.
+
+- **A send waits for the next link only if it never reached the socket; one that did is counted, not
+  resent.** Maintainer's call, 2026-09-01: re-queueing everything unanswered would resend a
+  `submit_sm` the SMSC accepted and answered into a dead socket, which is delivered and billed
+  twice, while a request that never left this process can be lost for free. `LinkGate` holds a send
+  that has no link and `comeBackUp()` opens it once the rebind is bound, so a send issued between
+  links and a segment still queued behind a full window when the drop hit both go out on the new
+  one. The hold is bounded by `responseTimeout` rather than an option of its own — that is already
+  the answer to how long one request may take — so the worst case is twice it: the hold, then the
+  answer. It happens before `window.acquire()` rather than inside it, because the rebind's own
+  `bind()` goes through `session.send()` and would deadlock behind slots held by waiting sends.
+  `teardown()` settles what was on the wire with `UnansweredError`, which `collectSent()` counts
+  into `SendSmsResult.unanswered`: `smsIds` alone cannot tell a message that never left from one
+  whose every segment the peer took and answered into a socket that was already gone.

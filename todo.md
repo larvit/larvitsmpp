@@ -57,6 +57,7 @@ Rules the API follows:
 | Merged multipart DLRs including across a reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
 | `smsIdFormat`: a peer's `submit_sm_resp` and receipt ids read into one notation before they are compared | `test/dlr.test.ts`, `test/session-extras.test.ts` |
 | A draining `close()` and `unbind()`, bounded by `shutdownTimeout` or an abort | `test/session-extras.test.ts` |
+| A send with no link held for the next one, and one the link dropped under counted as `unanswered` | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
@@ -113,9 +114,6 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
-- [ ] **In-flight sends across a reconnect.** They currently fail with "Session closed before a
-      response arrived" and the caller retries. Re-queueing them automatically would be friendlier
-      but risks duplicate delivery, so it needs a decision before it is built.
 - [ ] **The drain covers only what this end sent.** `close()` and `unbind()` wait on the send window,
       which `sendReturn()` never enters, so a server session tears down without waiting for the
       application to answer the messages it is holding — the duplicate-on-retry outcome again, in
@@ -126,9 +124,12 @@ session message is a change to every call site.
       answered. Surviving one means exposing the merge state for the application to persist and hand
       back, which is a public-surface decision.
 - [ ] **Group the session's collaborators under `src/session/`.** Only `session.ts` imports
-      `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `reconnect-loop`, `pending-requests`
-      and `send-sms`, so the directory would make that boundary visible. `pdu-transport` joined them
-      on 2026-08-31 without the move being made, so it is a move of its own now.
+      `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `link-gate`, `reconnect-loop`,
+      `pending-requests` and `send-sms`, so the directory would make that boundary visible.
+      `pdu-transport` joined them on 2026-08-31 and `link-gate` on 2026-09-01, both without the move
+      being made, so it is a move of its own now. `session.ts` sits within a couple of lines of the
+      350-line cap again; the outgoing request path — `send()`, `refuseSend()`, `attempt()` and the
+      gate and window they drive — is the next thing that would come out of it.
 - [ ] **Does an intermediate delivery notification deserve to be a `dlr`?** `esm_class` message type
       `INTERMEDIATE_DELIVERY` (0x20) is classified as a message today, so a peer that reports
       non-final states with it hands the application a raw `id:… stat:ENROUTE` text as an inbound

@@ -100,7 +100,7 @@ Every one is optional.
 | `tls` | `false` | `true` for defaults, or a `tls.ConnectionOptions` object for a private CA or a client certificate. |
 | `enquireLinkInterval` | `20000` | How often to send `enquire_link` on a quiet link. |
 | `idleTimeout` | `2 × enquireLinkInterval` | Give up on a link the peer has stopped answering, and re-bind unless `reconnect` is `false`. |
-| `responseTimeout` | `30000` | How long to wait for a response before giving up on it; `0` waits forever. |
+| `responseTimeout` | `30000` | How long to wait for a response before giving up on it, and how long a send with no link waits for the next one; `0` waits forever. |
 | `shutdownTimeout` | `5000` | How long `close()` and `unbind()` wait for the requests this end already sent; `0` waits forever. |
 | `maxOutstanding` | `10` | Requests allowed on the wire at once; further sends queue. |
 | `smsIdFormat` | — | The notation the SMSC writes message ids in, per place it writes them: `{ receipt: 'decimal', submitResp: 'hex' }`. Only needed where the two disagree. |
@@ -135,13 +135,16 @@ Messages too long for one SMS are split automatically and sent as a concatenated
 one id per segment:
 
 ```javascript
-const { err, pduObjs, smsIds } = await session.sendSms({ from, message, to });
+const { err, pduObjs, smsIds, unanswered } = await session.sendSms({ from, message, to });
 ```
 
 `err` is set when the SMSC refuses a segment, and it names the status it refused with. Because every
 segment goes on the wire together, `pduObjs` and `smsIds` then hold what the SMSC did accept — enough
 to reconcile against a later receipt, not enough to resend the rest, so treat a partial failure as a
-failed message. A message needing more than 255 segments is refused before anything is sent, since
+failed message. `unanswered` counts the segments the link dropped under: the SMSC may have taken
+each of them and lost only the response, so a message with `unanswered` above zero cannot be sent
+again without risking a duplicate, however empty `smsIds` is. A message needing more than 255
+segments is refused before anything is sent, since
 the concatenation header numbers segments in a single octet. `maxSegments` lowers that ceiling:
 most handsets and SMSCs stop well short of 255, and refusing beats a message only half delivered.
 
@@ -340,6 +343,12 @@ const { err, pduObj } = await session.send({
 	params: { message_id: smsId },
 });
 ```
+
+A send issued while the link is down waits for the reconnect instead of failing, and goes out on the
+new link once it is bound — up to `responseTimeout`, after which it gives up having sent nothing. A
+request already on the wire when the link drops is the other case: the SMSC may have taken it and
+lost only the response, so it fails, and `sendSms()` counts it in `unanswered`. Neither happens with
+`reconnect: false`, where a drop ends the session and every send after it is refused.
 
 `acceptsOptionalParams()` answers whether the peer declared SMPP 3.4 or later, which is the version
 at and above which the spec allows optional parameters to be sent to it; `peerInterfaceVersion` is
