@@ -879,7 +879,7 @@ describe('held message bounds', () => {
 		return [heldPdu(seqNr)];
 	}
 
-	test('drops the message held longest rather than holding every one', async () => {
+	test('drops the message held longest rather than holding every one', () => {
 		const held = new HeldMessages({ log: silentLog, max: 2, timeout: 10_000 });
 		const oldest = message(1);
 
@@ -887,17 +887,25 @@ describe('held message bounds', () => {
 		held.hold(message(2));
 		held.hold(message(3));
 
+		assert.equal(held.size, 2);
 		assert.equal(held.has(oldest), false);
-		assert.equal(await held.idle(1, undefined), 2);
+
+		held.clear();
 	});
 
-	test('gives up on a message the application never answers', async () => {
-		const held = new HeldMessages({ log: silentLog, max: 10, timeout: 20 });
+	test('gives up on a message the application never answers', () => {
+		let now = 0;
+		const held = new HeldMessages({ log: silentLog, max: 10, now: () => now, timeout: 60 });
 
 		held.hold(message(1));
+		now = 61;
 
-		assert.equal(await held.idle(1, undefined), 1);
-		assert.equal(await held.idle(1000, undefined), 0);
+		// The next message sweeps the one that expired, so only the new one is still waited for.
+		held.hold(message(2));
+
+		assert.equal(held.size, 1);
+
+		held.clear();
 	});
 
 	// A receipt cannot be resent wholesale without duplicating the segments that landed, so sendDlr()

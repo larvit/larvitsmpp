@@ -6,6 +6,8 @@ import { IdleWaiters } from './idle-waiters.ts';
 export type HeldMessagesOptions = {
 	log: SmppLog;
 	max: number;
+	/** Injected so expiry can be exercised without a wall clock. */
+	now?: (() => number) | undefined;
 	timeout: number;
 };
 
@@ -26,6 +28,7 @@ export class HeldMessages {
 	constructor(options: HeldMessagesOptions) {
 		this.held = new ExpiringGroups({
 			max: options.max,
+			now: options.now,
 			onSweep: () => { this.sweep(); },
 			timeout: options.timeout,
 		});
@@ -33,11 +36,17 @@ export class HeldMessages {
 		this.max = options.max;
 	}
 
+	get size(): number {
+		return this.held.size;
+	}
+
 	/** An application that answers no message at all may not grow this without end. */
 	hold(pduObjs: PduObject[]): void {
 		const key = keyOf(pduObjs);
 
 		if (key === undefined) return;
+
+		this.sweep();
 
 		if (this.held.get(key)) {
 			this.log.warn('heldMessages - replacing a message on a re-used sequence number', { seqNr: key });
@@ -86,7 +95,8 @@ export class HeldMessages {
 		this.log.warn('heldMessages - buffer full, dropping the oldest message', { max: this.max, seqNr });
 	}
 
-	private sweep(): void {
+	/** Drops every message past its deadline. Runs before each hold and on its own timer. */
+	sweep(): void {
 		const expired = this.held.takeExpired();
 
 		if (expired.length === 0) return;
