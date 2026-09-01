@@ -12,10 +12,10 @@ type Pending = {
 	settle: (result: Result<{ pduObj: PduObject }>) => void;
 };
 
-/** The request went out and the link died before an answer: the peer may have accepted it. */
+/** The request went out and no answer came back: the peer may have accepted it. */
 export class UnansweredError extends Error {
-	constructor() {
-		super('The link dropped after the request went out; the peer may have accepted it');
+	constructor(cause: Error) {
+		super(`No answer came back, so the peer may have accepted it: ${cause.message}`, { cause });
 		this.name = 'UnansweredError';
 	}
 }
@@ -77,10 +77,9 @@ export class PendingRequests {
 		this.pending.get(seqNr)?.settle(result);
 	}
 
-	/** Everything still on the wire when the link died, each one possibly accepted by the peer. */
-	settleAll(): void {
+	settleAll(err: Error): void {
 		for (const [seqNr] of this.pending) {
-			this.settle(seqNr, { err: new UnansweredError() });
+			this.settle(seqNr, { err });
 		}
 	}
 

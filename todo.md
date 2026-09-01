@@ -127,9 +127,19 @@ session message is a change to every call site.
       `reassembly`, `dlr-merger`, `send-window`, `link-timers`, `link-gate`, `reconnect-loop`,
       `pending-requests` and `send-sms`, so the directory would make that boundary visible.
       `pdu-transport` joined them on 2026-08-31 and `link-gate` on 2026-09-01, both without the move
-      being made, so it is a move of its own now. `session.ts` sits within a couple of lines of the
-      350-line cap again; the outgoing request path — `send()`, `refuseSend()`, `attempt()` and the
-      gate and window they drive — is the next thing that would come out of it.
+      being made, so it is a move of its own now. Do it together with the extraction below rather
+      than before it — three reactive splits at whatever boundary fitted under the line cap is what
+      produced the current shape. Raised by review, 2026-09-01.
+- [ ] **An `OutgoingRequests` collaborator, owning `LinkGate`, `SendWindow` and `PendingRequests`.**
+      `session.ts` sits a few lines under its 350-line cap and every split so far has been made to
+      get back under it. The seam that holds: one object owning the gate, the window, the pending
+      map and the retry loop, exposing a gated `request()` and the ungated door `unbind()` and the
+      bind already need, with `Session` calling it when a link comes up or goes down instead of
+      spreading `linkDown()` and `retrying()` across both sides. It would also close two smaller
+      things — `LinkGate.deadline()` and `wait(deadline)` are a two-call protocol whose only failure
+      mode is calling `deadline()` inside the loop, which nothing catches; and `Session.linkDown()`
+      is read from both sides of the seam. Every one of these is unpublished, so it is a two-way
+      door and belongs after 1.0.0. Raised by review, 2026-09-01.
 - [ ] **Does an intermediate delivery notification deserve to be a `dlr`?** `esm_class` message type
       `INTERMEDIATE_DELIVERY` (0x20) is classified as a message today, so a peer that reports
       non-final states with it hands the application a raw `id:… stat:ENROUTE` text as an inbound

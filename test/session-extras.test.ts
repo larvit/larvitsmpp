@@ -12,6 +12,7 @@ import type { SmppLog } from '../src/log.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
+import { LinkGate } from '../src/link-gate.ts';
 import { Reassembler, decodeSegments } from '../src/reassembly.ts';
 import { Session } from '../src/session.ts';
 import { DlrMerger } from '../src/dlr-merger.ts';
@@ -100,10 +101,10 @@ async function sendReceipt(peer: Session, smsId: string, tlvSmsId = smsId): Prom
 	assert.equal(sent.err, undefined);
 }
 
-type Gate = { open: () => void; passed: Promise<true> };
+type Latch = { open: () => void; passed: Promise<true> };
 
 /** A promise the test opens by hand, guarded by once() against waiting on one it never does. */
-function gate(): Gate {
+function latch(): Latch {
 	const opener: { open?: () => void } = {};
 	const passed = once<true>(resolve => { opener.open = () => { resolve(true); }; });
 
@@ -559,8 +560,8 @@ describe('reconnect', () => {
 
 describe('sends across a reconnect', () => {
 	/** Answers every message after the first, which is left to hold the send window open. */
-	function answerAfterTheFirst(smpp: SmppServer, arrived: string[]): Gate {
-		const first = gate();
+	function answerAfterTheFirst(smpp: SmppServer, arrived: string[]): Latch {
+		const first = latch();
 
 		smpp.on('session', peer => {
 			peer.on('sms', async sms => {
@@ -622,6 +623,87 @@ describe('sends across a reconnect', () => {
 		assert.equal(resent.err, undefined, 'a request that never reached the socket is not lost with it');
 		assert.equal(resent.smsIds.length, 1);
 		assert.deepEqual(arrived, ['first', 'second']);
+	});
+
+	test('holds a send issued while the rebind is still binding', async t => {
+		const binding = latch();
+		const release = latch();
+		let binds = 0;
+		const smpp = await startServer(t, {
+			authenticate: async () => {
+				binds++;
+
+				if (binds > 1) {
+					binding.open();
+					await release.passed;
+				}
+
+				return true;
+			},
+		});
+
+		smpp.on('session', peer => { peer.on('sms', async sms => { await sms.sendResp(); }); });
+
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
+
+		assert.ok(session);
+
+		peerOf(smpp).sock.destroy();
+
+		// The fresh socket is attached and the bind is in flight, so the link exists but carries nothing.
+		await binding.passed;
+
+		const sending = session.sendSms({ from: '46701113311', message: 'mid-bind', to: '46709771337' });
+		let settled = false;
+
+		void sending.then(() => { settled = true; });
+		await delay(30);
+
+		assert.equal(settled, false, 'an unbound link must not take a submit_sm that would be refused');
+
+		release.open();
+
+		const sent = await sending;
+
+		assert.equal(sent.err, undefined);
+		assert.equal(sent.smsIds.length, 1);
+	});
+
+	test('counts a segment the peer never answered in time as unanswered', async t => {
+		const smpp = await startServer(t);
+
+		smpp.on('session', peer => { peer.on('sms', () => undefined); });
+
+		const { session } = await connect(t, smpp, { responseTimeout: 60 });
+
+		assert.ok(session);
+
+		const sent = await session.sendSms({ from: '46701113311', message: 'no answer', to: '46709771337' });
+
+		assert.match(sent.err?.message ?? '', /may have accepted/);
+		assert.equal(sent.unanswered, 1, 'a slow SMSC may still have taken it');
+	});
+
+	test('counts a segment aborted after it went out as unanswered', async t => {
+		const smpp = await startServer(t);
+		const arrived = once<Sms>(resolve => { smpp.on('session', peer => peer.on('sms', resolve)); });
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const controller = new AbortController();
+		const sending = session.sendSms(
+			{ from: '46701113311', message: 'aborted mid-flight', to: '46709771337' },
+			{ signal: controller.signal },
+		);
+
+		await arrived;
+		controller.abort();
+
+		const sent = await sending;
+
+		assert.match(sent.err?.message ?? '', /may have accepted/);
+		assert.equal(sent.unanswered, 1, 'the abort is ours; the peer still holds the request');
 	});
 
 	test('reports a segment the link dropped under as unanswered, not as never sent', async t => {
@@ -730,6 +812,32 @@ describe('sends across a reconnect', () => {
 
 		assert.match(sent.err?.message ?? '', /closed/);
 		assert.equal(sent.unanswered, 0);
+	});
+});
+
+describe('LinkGate', () => {
+	test('refuses a hold whose deadline has already passed', async () => {
+		let now = 0;
+		const gate = new LinkGate({ now: () => now, timeout: 100 });
+		const deadline = gate.deadline();
+
+		gate.shut(true);
+		now = 101;
+
+		const held = await gate.wait(deadline, undefined);
+
+		assert.match(held.err?.message ?? '', /did not come back in time/);
+	});
+
+	// addEventListener never fires for a signal that already aborted, so it would wait out the timeout.
+	test('gives up at once on a signal that was already aborted', async () => {
+		const gate = new LinkGate({ timeout: 100 });
+
+		gate.shut(true);
+
+		const held = await gate.wait(gate.deadline(), AbortSignal.abort());
+
+		assert.match(held.err?.message ?? '', /Aborted while waiting for a link/);
 	});
 });
 
@@ -1090,8 +1198,8 @@ describe('graceful shutdown', () => {
 
 		assert.ok(first.sock);
 
-		const rebinding = gate();
-		const release = gate();
+		const rebinding = latch();
+		const release = latch();
 		const session = new Session({
 			reconnect: {
 				connect: open,

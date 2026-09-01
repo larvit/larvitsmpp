@@ -351,12 +351,32 @@ exactly 140.
   resent.** Maintainer's call, 2026-09-01: re-queueing everything unanswered would resend a
   `submit_sm` the SMSC accepted and answered into a dead socket, which is delivered and billed
   twice, while a request that never left this process can be lost for free. `LinkGate` holds a send
-  that has no link and `comeBackUp()` opens it once the rebind is bound, so a send issued between
-  links and a segment still queued behind a full window when the drop hit both go out on the new
-  one. The hold is bounded by `responseTimeout` rather than an option of its own — that is already
-  the answer to how long one request may take — so the worst case is twice it: the hold, then the
-  answer. It happens before `window.acquire()` rather than inside it, because the rebind's own
-  `bind()` goes through `session.send()` and would deadlock behind slots held by waiting sends.
-  `teardown()` settles what was on the wire with `UnansweredError`, which `collectSent()` counts
-  into `SendSmsResult.unanswered`: `smsIds` alone cannot tell a message that never left from one
-  whose every segment the peer took and answered into a socket that was already gone.
+  that has no link, so a send issued between links and a segment still queued behind a full window
+  when the drop hit both go out on the new one. Once a request has been written, every way it can
+  fail — the link dropping under it, `responseTimeout` expiring, the caller's own abort — means the
+  peer may have taken it, so `attempt()` wraps all three in `UnansweredError` and `collectSent()`
+  counts them into `SendSmsResult.unanswered`. Counting only the dropped-link case, as the first cut
+  did, would have called the commonest one safe to resend. A count rather than a boolean because
+  `sendSms()` aggregates segments into one `err` slot, and required rather than optional so every
+  construction site answers. `UnansweredError` stays unexported: `unanswered` is the one spelling on
+  the public surface, and a `send()` error that is neither a build failure nor a pre-write abort
+  means the same thing.
+  The hold is bounded by `responseTimeout` rather than an option of its own — that is already the
+  answer to how long one request may wait. It bounds the hold and the answer separately, and the
+  wait for a `maxOutstanding` slot is bounded by nothing, so `responseTimeout` is not a deadline for
+  the call; `SendOptions.signal` with `AbortSignal.timeout()` is, and both the gate and
+  `pending.wait()` honour it.
+
+- **The gate decides whether a link can carry a request, and a bind is what makes it one.**
+  Maintainer's call, 2026-09-01: `attach()` clears `closed` the moment a socket is handed over, one
+  round trip before the bind is answered, so gating on `closed` let a send arriving in that window
+  go out unbound and come back `ESME_RINVBNDSTS` while a send that arrived a millisecond earlier was
+  held correctly. `LinkGate` owns the answer instead — `shut(returning)` on every teardown,
+  `open()` only once `comeBackUp()` has a bound link — and `Session.linkDown()` reads it rather than
+  `closed`. The bind itself cannot wait for what it creates, so `send()` lets the three bind
+  commands past the gate and the window, the same door `unbind()` takes through `attempt()`. That
+  keeps the exemption a predicate on the command, like the `_resp` guard beside it, rather than a
+  second `send()` on the public surface or a changed `ReconnectOptions.onConnected`.
+  The gate is told what happened and never reads back into the session: a collaborator that has to
+  ask does not own its decision, which is how the first cut ended up answering the same question two
+  different ways at admit and at release.

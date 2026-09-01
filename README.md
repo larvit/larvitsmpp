@@ -141,11 +141,11 @@ const { err, pduObjs, smsIds, unanswered } = await session.sendSms({ from, messa
 `err` is set when the SMSC refuses a segment, and it names the status it refused with. Because every
 segment goes on the wire together, `pduObjs` and `smsIds` then hold what the SMSC did accept — enough
 to reconcile against a later receipt, not enough to resend the rest, so treat a partial failure as a
-failed message. `unanswered` counts the segments the link dropped under: the SMSC may have taken
-each of them and lost only the response, so a message with `unanswered` above zero cannot be sent
-again without risking a duplicate, however empty `smsIds` is. A message needing more than 255
-segments is refused before anything is sent, since
-the concatenation header numbers segments in a single octet. `maxSegments` lowers that ceiling:
+failed message. `unanswered` counts the segments that went out and were never answered: the SMSC may
+have taken each of them and lost only the response, so a message with `unanswered` above zero cannot
+be sent again without risking a duplicate, however empty `smsIds` is. A message needing more than 255
+segments is refused before anything is sent, since the concatenation header numbers segments in a
+single octet. `maxSegments` lowers that ceiling:
 most handsets and SMSCs stop well short of 255, and refusing beats a message only half delivered.
 
 ### Receiving
@@ -344,11 +344,16 @@ const { err, pduObj } = await session.send({
 });
 ```
 
-A send issued while the link is down waits for the reconnect instead of failing, and goes out on the
-new link once it is bound — up to `responseTimeout`, after which it gives up having sent nothing. A
-request already on the wire when the link drops is the other case: the SMSC may have taken it and
-lost only the response, so it fails, and `sendSms()` counts it in `unanswered`. Neither happens with
-`reconnect: false`, where a drop ends the session and every send after it is refused.
+A send issued while the link is down waits for the reconnect instead of failing, and goes out once
+the new link is bound — up to `responseTimeout`, after which it gives up having sent nothing. A
+request already on the wire is the other case: the SMSC may have taken it and lost only the response,
+so it fails, and `sendSms()` counts it in `unanswered`, whether the link dropped under it, the peer
+never answered in time, or you aborted it after it went out. Neither applies with `reconnect: false`,
+where a drop ends the session and every send after it is refused.
+
+`responseTimeout` bounds the wait for a link and the wait for an answer separately, and a send also
+queues for a `maxOutstanding` slot, which nothing bounds — so it is not a deadline for the call.
+Pass `{ signal: AbortSignal.timeout(ms) }` when you need one.
 
 `acceptsOptionalParams()` answers whether the peer declared SMPP 3.4 or later, which is the version
 at and above which the spec allows optional parameters to be sent to it; `peerInterfaceVersion` is
