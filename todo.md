@@ -1,17 +1,16 @@
 # todo.md
 
-Remaining work for the `@larvit/smpp` 1.0.0 rewrite. Read [AGENTS.md](AGENTS.md) first — the hard
-rules there constrain every item below.
+Remaining work for the `@larvit/smpp` 1.0.0 rewrite. Read [AGENTS.md](AGENTS.md) first — the goals
+and hard rules there constrain every item below.
+
+This is a temporary working file: it is deleted when 1.0.0 ships, and until then it sets its own
+rules. The documentation conventions in AGENTS.md do not govern it, and nothing here is a source
+anything else may cite.
 
 ## Status
 
 The rewrite is **feature complete and green**: the suite, lint and typecheck are clean on Node 18,
 20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
-
-```bash
-docker compose run --rm node npm install
-docker compose run --rm node npm test
-```
 
 ## The agreed API
 
@@ -180,13 +179,9 @@ session message is a change to every call site.
 
 ## Declined
 
-- **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** Two reasons, either
-  sufficient. An operator's rate limit is scoped to the account, while the widest thing this library
-  owns is a session: a bucket here cannot see a second process binding the same account, so it is
-  wrong in exactly the case it exists for. And a rate limiter's queue drains at a fixed ceiling
-  rather than at the peer's response rate, so a submit rate sustained above the limit grows it
-  without bound — and a queue holding messages the caller was told were accepted loses them on
-  restart, which is worse than refusing them up front. Pacing an account needs durable shared state
-  this library deliberately has none of. `sendSms()` surfaces `ESME_RTHROTTLED` to the caller
-  instead, and `maxOutstanding` stays: a window slot frees on the peer's next response, which is
-  self-limiting in a way a rate ceiling is not.
+- **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** Declined by AGENTS.md
+  goal 7: an operator's rate limit is scoped to the account, while the widest thing this library owns
+  is a session, so a bucket here cannot see a second process binding the same account and is wrong in
+  exactly the case it exists for. `sendSms()` surfaces `ESME_RTHROTTLED` to the caller instead, and
+  `maxOutstanding` stays — a window slot frees on the peer's next response, which is self-limiting in
+  a way a rate ceiling is not.
