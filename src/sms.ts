@@ -137,6 +137,28 @@ function receiptTlvs(smsId: string, status: MessageState): Record<string, TlvInp
 	};
 }
 
+function collectReceipt(sent: Result<{ pduObj: PduObject }>[]): SendDlrResult {
+	const pduObjs: PduObject[] = [];
+	let failure: Error | undefined;
+	let unanswered = 0;
+
+	for (const one of sent) {
+		if (one.err) {
+			if (one.err instanceof UnansweredError) unanswered++;
+
+			failure ??= one.err;
+		} else if (one.pduObj.cmdStatus === 'ESME_ROK') {
+			pduObjs.push(one.pduObj);
+		} else {
+			const refusal = one.pduObj.cmdStatus ?? String(one.pduObj.cmdStatusId);
+
+			failure ??= new Error(`deliver_sm refused by the peer: ${refusal}`);
+		}
+	}
+
+	return failure ? { err: failure, pduObjs, unanswered } : { pduObjs, unanswered };
+}
+
 async function sendDlr(
 	sms: Sms,
 	send: SmsHandlers['send'],
@@ -166,19 +188,5 @@ async function sendDlr(
 			...(sms.session.acceptsOptionalParams() ? { tlvs: receiptTlvs(smsId, status) } : {}),
 		});
 	}));
-	const pduObjs: PduObject[] = [];
-	let failure: Error | undefined;
-	let unanswered = 0;
-
-	for (const one of sent) {
-		if (!one.err) {
-			pduObjs.push(one.pduObj);
-		} else {
-			if (one.err instanceof UnansweredError) unanswered++;
-
-			failure ??= one.err;
-		}
-	}
-
-	return failure ? { err: failure, pduObjs, unanswered } : { pduObjs, unanswered };
+	return collectReceipt(sent);
 }

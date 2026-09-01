@@ -13,6 +13,8 @@ import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
 import { HeldMessages } from '../src/held-messages.ts';
+import { UnansweredError } from '../src/unanswered-error.ts';
+import { createSms } from '../src/sms.ts';
 import { LinkGate } from '../src/link-gate.ts';
 import { Reassembler, decodeSegments } from '../src/reassembly.ts';
 import { Session } from '../src/session.ts';
@@ -860,8 +862,8 @@ describe('LinkGate', () => {
 
 // Goal 4: an application that answers nothing must not grow this for the life of the link.
 describe('held message bounds', () => {
-	function message(seqNr: number): PduObject[] {
-		return [{
+	function heldPdu(seqNr: number): PduObject {
+		return {
 			cmdId: 0x00000004,
 			cmdLength: 0,
 			cmdName: 'submit_sm',
@@ -870,7 +872,11 @@ describe('held message bounds', () => {
 			params: { destination_addr: '46709771337', short_message: 'held', source_addr: '46701113311' },
 			seqNr,
 			tlvs: {},
-		}];
+		};
+	}
+
+	function message(seqNr: number): PduObject[] {
+		return [heldPdu(seqNr)];
 	}
 
 	test('drops the message held longest rather than holding every one', async () => {
@@ -892,6 +898,37 @@ describe('held message bounds', () => {
 
 		assert.equal(await held.idle(1, undefined), 1);
 		assert.equal(await held.idle(1000, undefined), 0);
+	});
+
+	// A receipt cannot be resent wholesale without duplicating the segments that landed, so sendDlr()
+	// names what the peer took and what it may have, the way sendSms() does.
+	test('a partial receipt names the segments the peer took and the ones it may have', async t => {
+		const session = new Session({ sock: new net.Socket() });
+
+		closeAfter(t, session);
+
+		let call = 0;
+		const sms = createSms({
+			from: '46701113311',
+			message: 'three segments',
+			pduObjs: [heldPdu(1), heldPdu(2), heldPdu(3)],
+			session,
+			to: '46709771337',
+		}, {
+			onAnswered: () => undefined,
+			send: () => {
+				call++;
+
+				return Promise.resolve(call === 2
+					? { err: new UnansweredError(new Error('nothing came back')) }
+					: { pduObj: heldPdu(call) });
+			},
+		});
+		const report = await sms.sendDlr('DELIVERED');
+
+		assert.ok(report.err instanceof Error);
+		assert.equal(report.pduObjs.length, 2);
+		assert.equal(report.unanswered, 1);
 	});
 });
 
@@ -1110,6 +1147,21 @@ describe('graceful shutdown', () => {
 
 		assert.deepEqual((await sent).smsIds, ['answered-while-draining']);
 		assert.deepEqual(await closed, {});
+	});
+
+	// The drain refuses sends; a response was never a send, and saying so is the more useful answer.
+	test('names a response put through send() as the misuse it is, even mid-shutdown', async t => {
+		const { sent, session, sms } = await submitInFlight(t);
+		const closing = session.close();
+		const refused = await session.send({ cmdName: 'submit_sm_resp' });
+
+		assert.ok(refused.err instanceof Error);
+		assert.match(refused.err.message, /Use sendReturn\(\)/);
+
+		await sms.sendResp({ smsId: 'answered-after-the-misuse' });
+
+		assert.deepEqual((await sent).smsIds, ['answered-after-the-misuse']);
+		assert.deepEqual(await closing, {});
 	});
 
 	test('unbind() waits out a submit already on the wire before it unbinds', async t => {

@@ -21,6 +21,7 @@ export class HeldMessages {
 	private readonly held: ExpiringGroups<PduObject[]>;
 	private readonly idleWaiters = new IdleWaiters();
 	private readonly log: SmppLog;
+	private readonly max: number;
 
 	constructor(options: HeldMessagesOptions) {
 		this.held = new ExpiringGroups({
@@ -29,6 +30,7 @@ export class HeldMessages {
 			timeout: options.timeout,
 		});
 		this.log = options.log;
+		this.max = options.max;
 	}
 
 	/** An application that answers no message at all may not grow this without end. */
@@ -37,12 +39,10 @@ export class HeldMessages {
 
 		if (key === undefined) return;
 
-		if (this.held.full) {
-			const evicted = this.held.takeOldest();
-
-			if (evicted) {
-				this.log.warn('heldMessages - dropping the message held longest', { seqNr: evicted[0] });
-			}
+		if (this.held.get(key)) {
+			this.log.warn('heldMessages - replacing a message on a re-used sequence number', { seqNr: key });
+		} else if (this.held.full) {
+			this.dropOldest();
 		}
 
 		this.held.set(key, pduObjs);
@@ -74,6 +74,16 @@ export class HeldMessages {
 	/** Resolves 0 once every message has been answered, or with how many have not. */
 	idle(timeout: number, signal: AbortSignal | undefined): Promise<number> {
 		return this.idleWaiters.wait(() => this.held.size, timeout, signal);
+	}
+
+	private dropOldest(): void {
+		const oldest = this.held.takeOldest();
+
+		if (!oldest) return;
+
+		const [seqNr] = oldest;
+
+		this.log.warn('heldMessages - buffer full, dropping the oldest message', { max: this.max, seqNr });
 	}
 
 	private sweep(): void {

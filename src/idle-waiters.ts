@@ -18,7 +18,7 @@ export class IdleWaiters {
 	 * Resolves 0 once nothing is left, or with what still is when the timeout or the signal cuts the
 	 * wait short. A timeout of 0 waits forever.
 	 */
-	wait(remaining: () => number, timeout: number, signal?: AbortSignal): Promise<number> {
+	wait(remaining: () => number, timeout: number, signal: AbortSignal | undefined): Promise<number> {
 		if (remaining() === 0) return Promise.resolve(0);
 
 		if (signal?.aborted === true) return Promise.resolve(remaining());

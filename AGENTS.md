@@ -350,13 +350,18 @@ Grouped by what each one constrains.
   is one turn late, so a listener that sends its receipt straight after the response is still
   holding when the drain looks; `sendDlr()` is the one send that goes out past the drain's refusal,
   and only while the message is still held — past that it is an ordinary send, because the drain it
-  would slip past is no longer waiting for it. `shutdownTimeout: 0` does not carry over to this
-  half: waiting forever is safe for the peer, whose every request is bounded by `responseTimeout`
-  unless the caller set that to 0 as well,
-  and unsafe for the application, which nothing bounds — `close()` is what you reach for when the
-  application is stuck, so it may not block on the application coming unstuck. That half falls back
-  to `responseTimeout`, the same answer the link gate's hold already takes — and to that option's
-  default where it is 0 as well, since neither option is an answer about the application.
+  would slip past is no longer waiting for it. `shutdownTimeout: 0` does not carry over to this half:
+  waiting forever is safe for the peer, whose every request is bounded by `responseTimeout` unless the
+  caller set that to 0 as well, and unsafe for the application, which nothing bounds — `close()` is
+  what you reach for when the application is stuck, so it may not block on the application coming
+  unstuck. That half falls back to `responseTimeout`, the same answer the link gate's hold already
+  takes — and to that option's default where it is 0 as well, since neither option is an answer about
+  the application. What is held is capped and expiring like every other inbound store, on constants
+  rather than options, because a bound the application cannot raise is the point: an application that
+  answers nothing would otherwise grow it for the life of the link, which goal 4 forbids. A message
+  that falls out of the bound is one the drain stops waiting for, so `close()` can report fewer
+  unanswered than there were — accepted, because the alternative is holding what nothing will answer,
+  and both exits are logged.
 
 - **A reconnect keeps the delivery-receipt merges; everything else the link held is dropped.**
   `onDeliverSm()` answers each receipt before the group it belongs to is complete, and `teardown()`
@@ -400,8 +405,9 @@ Grouped by what each one constrains.
   `unbind()` takes through `now()`. The gate is told what happened and never reads back into the
   session: a collaborator that has to ask does not own its decision, which is how the first cut ended
   up answering the same question two different ways at admit and at release. For the same reason the
-  retry in `pastDrain()` asks `gate.isUp()` rather than `linkDown()`, which also reads the socket — a condition that loops on
-  something the gate does not gate on spins against a gate that admits it straight back.
+  retry in `pastDrain()` asks `gate.isUp()` rather than `linkDown()`, which also reads the socket — a
+  condition that loops on something the gate does not gate on spins against a gate that admits it
+  straight back.
   `LinkGate.returning` is a copy of `retrying()` taken at teardown, and stays true only because
   nothing stops the reconnect loop without `emitClose()` following it: `drain()` and `end()` are the
   only callers of `stop()`. A third caller has to shut the gate itself.

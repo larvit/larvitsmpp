@@ -43,7 +43,7 @@ export class SendWindow {
 	}
 
 	/** Resolves 0 once nothing is left on the wire, or with what still is. */
-	idle(timeout: number, signal?: AbortSignal): Promise<number> {
+	idle(timeout: number, signal: AbortSignal | undefined): Promise<number> {
 		return this.idleWaiters.wait(() => this.unfinished(), timeout, signal);
 	}
 }
