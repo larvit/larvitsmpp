@@ -39,6 +39,7 @@ export class IncomingRequests {
 	private readonly session: Session;
 	private readonly smsIdFormat: SmsIdFormat;
 	private readonly systemId: string;
+	private linkGeneration = 0;
 
 	constructor(options: IncomingRequestsOptions) {
 		this.dlrMerger = options.dlrMerger;
@@ -62,7 +63,16 @@ export class IncomingRequests {
 	}
 
 	async handle(pduObj: PduObject): Promise<void> {
+		const generation = this.linkGeneration;
+
 		if (this.onRequest && await this.onRequest(this.session, pduObj)) return;
+
+		// The link it arrived on went while the hook ran, so nothing we answer now correlates.
+		if (this.linkGeneration !== generation) {
+			this.log.info('session - dropping a request whose link went', { cmdName: pduObj.cmdName });
+
+			return;
+		}
 
 		if (!this.session.bindAllows(pduObj.cmdName)) {
 			this.log.info('session - command the peer\'s bind direction does not carry', {
@@ -96,6 +106,7 @@ export class IncomingRequests {
 
 	/** Drops the segments of every message that never became whole, and of every one still held. */
 	clear(): void {
+		this.linkGeneration++;
 		this.held.clear();
 		this.reassembler.clear();
 	}
@@ -163,6 +174,8 @@ export class IncomingRequests {
 
 		if (!first) return;
 
+		const generation = this.linkGeneration;
+
 		const sms = createSms({
 			from: paramText(first.params.source_addr),
 			message: decodeSegments(pduObjs),
@@ -170,6 +183,7 @@ export class IncomingRequests {
 			session: this.session,
 			to: paramText(first.params.destination_addr),
 		}, {
+			lostLink: () => this.linkGeneration !== generation,
 			// A turn later, so a listener sending its receipt straight after the response still holds.
 			onAnswered: () => { setImmediate(() => { this.held.release(pduObjs); }); },
 			// Past the refusal only while a drain is still waiting for this message; an ordinary send after.

@@ -307,6 +307,11 @@ Grouped by what each one constrains.
   shutdown emits `close`. A retry that opens a socket and then loses it clears `closed` through
   `attach()`, which is why a second drop emits again.
 
+- **An answer belongs to the link the message arrived on; a receipt does not.** Maintainer's call,
+  2026-09-01. Rejected: answering on the new link, which succeeds and reports `{}` for a response
+  that correlates with nothing — goal 2's wrong answer. Accepted: a receipt sent after a refused
+  response names an id the peer has no record of.
+
 - **`reconnect` takes `{ minDelay, maxDelay }` to retune and `false` to turn off**, so absent means
   on and there is one spelling for each. Only `client()` reconnects — a `server()` session is a
   connection the peer opened, and nothing at this end can reopen it. The retry timer is `unref()`'d,

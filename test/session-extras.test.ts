@@ -13,6 +13,7 @@ import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
 import { HeldMessages } from '../src/held-messages.ts';
+import { IncomingRequests } from '../src/incoming-requests.ts';
 import { UnansweredError } from '../src/unanswered-error.ts';
 import { createSms } from '../src/sms.ts';
 import { LinkGate } from '../src/link-gate.ts';
@@ -557,6 +558,88 @@ describe('reconnect', () => {
 		assert.equal(report.segments.length, 3);
 	});
 
+	test('refuses to answer a message whose link went, held or already answered', async t => {
+		const smpp = await startServer(t);
+		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
+
+		assert.ok(session);
+
+		const arrived: Sms[] = [];
+		const both = once<true>(resolve => {
+			session.on('sms', sms => {
+				arrived.push(sms);
+
+				if (arrived.length === 2) resolve(true);
+			});
+		});
+
+		for (const text of ['answered before the drop', 'never answered']) {
+			void peerOf(smpp).send({
+				cmdName: 'deliver_sm',
+				params: {
+					destination_addr: '46701113311',
+					short_message: text,
+					source_addr: '46709771337',
+				},
+			});
+		}
+
+		await both;
+
+		const [answered, held] = arrived;
+
+		assert.ok(answered);
+		assert.ok(held);
+		assert.equal(answered.message, 'answered before the drop');
+		assert.equal((await answered.sendResp()).err, undefined);
+
+		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+
+		await peerOf(smpp).close({ signal: AbortSignal.abort() });
+		await reconnected;
+
+		let taken = 0;
+
+		// A response is dispatched before `incomingPduObj`, so only the raw event sees one arrive.
+		peerOf(smpp).on('incomingPdu', () => { taken++; });
+
+		assert.match((await answered.sendResp()).err?.message ?? '', /link this message arrived on is gone/);
+		assert.match((await held.sendResp()).err?.message ?? '', /link this message arrived on is gone/);
+
+		assert.equal((await held.sendDlr('DELIVERED')).err, undefined);
+		assert.equal(taken, 1, 'a refused response reached the new link');
+	});
+
+	test('drops a message whose link went while onRequest was still running', async t => {
+		const session = new Session({ sock: new net.Socket() });
+
+		closeAfter(t, session);
+		session.boundAs = 'transceiver';
+
+		const incoming = new IncomingRequests({
+			dlrMerger: new DlrMerger({ log: silentLog, max: 10, timeout: 10_000 }),
+			log: silentLog,
+			onRequest: async () => { await delay(10); return false; },
+			sendPastDrain: () => Promise.resolve({ err: new Error('never sent') }),
+			session,
+		});
+		let messages = 0;
+
+		session.on('sms', () => { messages++; });
+
+		const handled = incoming.handle(submitPdu(1));
+
+		incoming.clear();
+
+		await handled;
+
+		assert.equal(messages, 0);
+
+		await incoming.handle(submitPdu(2));
+
+		assert.equal(messages, 1, 'the harness delivers a message whose link stayed');
+	});
+
 	test('does not reconnect after an explicit close', async t => {
 		const smpp = await startServer(t);
 		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 50, minDelay: 10 } });
@@ -944,6 +1027,7 @@ describe('sendDlr()', () => {
 			session,
 			to: '46709771337',
 		}, {
+			lostLink: () => false,
 			onAnswered: () => undefined,
 			send: () => {
 				call++;
