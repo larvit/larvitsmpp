@@ -12,6 +12,7 @@ import type { SmppLog } from '../src/log.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
+import { HeldMessages } from '../src/held-messages.ts';
 import { LinkGate } from '../src/link-gate.ts';
 import { Reassembler, decodeSegments } from '../src/reassembly.ts';
 import { Session } from '../src/session.ts';
@@ -857,6 +858,43 @@ describe('LinkGate', () => {
 	});
 });
 
+// Goal 4: an application that answers nothing must not grow this for the life of the link.
+describe('held message bounds', () => {
+	function message(seqNr: number): PduObject[] {
+		return [{
+			cmdId: 0x00000004,
+			cmdLength: 0,
+			cmdName: 'submit_sm',
+			cmdStatus: 'ESME_ROK',
+			cmdStatusId: 0,
+			params: { destination_addr: '46709771337', short_message: 'held', source_addr: '46701113311' },
+			seqNr,
+			tlvs: {},
+		}];
+	}
+
+	test('drops the message held longest rather than holding every one', async () => {
+		const held = new HeldMessages({ log: silentLog, max: 2, timeout: 10_000 });
+		const oldest = message(1);
+
+		held.hold(oldest);
+		held.hold(message(2));
+		held.hold(message(3));
+
+		assert.equal(held.has(oldest), false);
+		assert.equal(await held.idle(1, undefined), 2);
+	});
+
+	test('gives up on a message the application never answers', async () => {
+		const held = new HeldMessages({ log: silentLog, max: 10, timeout: 20 });
+
+		held.hold(message(1));
+
+		assert.equal(await held.idle(1, undefined), 1);
+		assert.equal(await held.idle(1000, undefined), 0);
+	});
+});
+
 describe('reassembly bounds', () => {
 	function segment(reference: number, part: number, total: number): PduObject {
 		const udh = Buffer.from([0x05, 0x00, 0x03, reference, total, part]);
@@ -1108,10 +1146,36 @@ describe('graceful shutdown', () => {
 		const { smpp } = await submitInFlight(t, {}, { responseTimeout: 200, shutdownTimeout: 0 });
 		const started = Date.now();
 		const closed = await peerOf(smpp).close();
+		const waited = Date.now() - started;
 
 		assert.ok(closed.err instanceof Error);
 		assert.match(closed.err.message, /1 message\(s\) unanswered/);
-		assert.ok(Date.now() - started < 2000);
+		assert.ok(waited >= 190, `waited ${String(waited)} ms, so the fallback was not what bounded it`);
+		assert.ok(waited < 2000);
+	});
+
+	// leftOf() floors what is left at 1 ms: at 0 the request half would read "wait forever" instead.
+	test('still ends when the message half has spent the whole shutdown budget', async t => {
+		const { smpp } = await submitInFlight(t, {}, { shutdownTimeout: 100 });
+		const bound = peerOf(smpp);
+		// The client listens for no 'sms', so this one is never answered and stays in the window.
+		const unanswered = bound.send({
+			cmdName: 'submit_sm',
+			params: {
+				destination_addr: '46701113311',
+				short_message: 'nothing answers this',
+				source_addr: '46709771337',
+			},
+		});
+		const closed = await Promise.race([
+			bound.close(),
+			new Promise<{ err?: Error }>(resolve => {
+				setTimeout(() => { resolve({ err: new Error('close() never returned') }); }, 2000).unref();
+			}),
+		]);
+
+		assert.match(closed.err?.message ?? '', /1 message\(s\) unanswered; .*1 request\(s\) unfinished/);
+		assert.ok((await unanswered).err instanceof Error);
 	});
 
 	// The README's own listener answers and then sends its receipt, one turn later. Multipart, because

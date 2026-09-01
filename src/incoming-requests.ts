@@ -31,7 +31,7 @@ export type IncomingRequestsOptions = {
 /** Everything the peer asks of a session: messages, receipts, links and the answers to them. */
 export class IncomingRequests {
 	private readonly dlrMerger: DlrMerger;
-	private readonly held = new HeldMessages();
+	private readonly held: HeldMessages;
 	private readonly log: SmppLog;
 	private readonly onRequest: OnRequest | undefined;
 	private readonly reassembler: Reassembler;
@@ -42,6 +42,11 @@ export class IncomingRequests {
 
 	constructor(options: IncomingRequestsOptions) {
 		this.dlrMerger = options.dlrMerger;
+		this.held = new HeldMessages({
+			log: options.log,
+			max: defaults.maxHeldMessages,
+			timeout: defaults.heldMessageTimeout,
+		});
 		this.log = options.log;
 		this.onRequest = options.onRequest;
 		this.reassembler = new Reassembler({
@@ -96,7 +101,7 @@ export class IncomingRequests {
 	}
 
 	/** Waits out the messages the application still holds, and says how many it never answered. */
-	async drain(timeout: number, signal?: AbortSignal): Promise<VoidResult> {
+	async drain(timeout: number, signal: AbortSignal | undefined): Promise<VoidResult> {
 		const unanswered = await this.held.idle(timeout, signal);
 
 		if (unanswered === 0) return {};

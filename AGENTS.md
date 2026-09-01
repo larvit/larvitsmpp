@@ -72,7 +72,7 @@ src/
 	dlr-merger.ts        DlrMerger: per-segment receipts counted into one MessageDlr
 	error-from.ts        errorFrom(): whatever was thrown or rejected, as an Error
 	expiring-groups.ts   ExpiringGroups: the capped, expiring store both of those share
-	held-messages.ts     HeldMessages: the messages handed to the application and not yet answered
+	held-messages.ts     HeldMessages: capped, expiring messages the application has not answered
 	idle-waiters.ts      IdleWaiters: waiting for a count to fall to zero, and what is left of a budget
 	incoming-requests.ts Every request the peer sends: messages, receipts, links, unknown commands
 	link-gate.ts         LinkGate: where a request with no link to go out on waits for the next one
@@ -351,7 +351,8 @@ Grouped by what each one constrains.
   holding when the drain looks; `sendDlr()` is the one send that goes out past the drain's refusal,
   and only while the message is still held — past that it is an ordinary send, because the drain it
   would slip past is no longer waiting for it. `shutdownTimeout: 0` does not carry over to this
-  half: waiting forever is safe for the peer, whose every request is bounded by `responseTimeout`,
+  half: waiting forever is safe for the peer, whose every request is bounded by `responseTimeout`
+  unless the caller set that to 0 as well,
   and unsafe for the application, which nothing bounds — `close()` is what you reach for when the
   application is stuck, so it may not block on the application coming unstuck. That half falls back
   to `responseTimeout`, the same answer the link gate's hold already takes — and to that option's
@@ -393,13 +394,13 @@ Grouped by what each one constrains.
   Maintainer's call, 2026-09-01: `attach()` clears `closed` the moment a socket is handed over, one
   round trip before the bind is answered, so gating on `closed` let a send arriving in that window go
   out unbound and come back `ESME_RINVBNDSTS`. `LinkGate` owns the answer instead — `shut(returning)`
-  on every teardown, `open()` only once `comeBackUp()` has a bound link — and `Session.linkDown()`
-  reads it rather than `closed`. The bind itself cannot wait for what it creates, so `send()` lets the
-  three bind commands past the gate and the window, the same door `unbind()` takes through
-  `attempt()`. The gate is told what happened and never reads back into the session: a collaborator
-  that has to ask does not own its decision, which is how the first cut ended up answering the same
-  question two different ways at admit and at release. For the same reason the retry in `send()` asks
-  `gate.isUp()` rather than `linkDown()`, which also reads the socket — a condition that loops on
+  on every teardown, `open()` only once `comeBackUp()` has a bound link — and
+  `OutgoingRequests.linkDown()` reads it rather than `closed`. The bind itself cannot wait for what it
+  creates, so `pastDrain()` lets the three bind commands past the gate and the window, the same door
+  `unbind()` takes through `now()`. The gate is told what happened and never reads back into the
+  session: a collaborator that has to ask does not own its decision, which is how the first cut ended
+  up answering the same question two different ways at admit and at release. For the same reason the
+  retry in `pastDrain()` asks `gate.isUp()` rather than `linkDown()`, which also reads the socket — a condition that loops on
   something the gate does not gate on spins against a gate that admits it straight back.
   `LinkGate.returning` is a copy of `retrying()` taken at teardown, and stays true only because
   nothing stops the reconnect loop without `emitClose()` following it: `drain()` and `end()` are the

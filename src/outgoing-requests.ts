@@ -24,6 +24,13 @@ function abortedBeforeSend(): Error {
 	return new Error('Aborted before the request was sent');
 }
 
+/** A response carries the request's sequence number, which only sendReturn() has. */
+function misuse(input: PduObjectInput): Error | undefined {
+	return input.cmdName.endsWith('_resp')
+		? new Error(`Use sendReturn() for responses, not send(): ${input.cmdName}`)
+		: undefined;
+}
+
 /** Everything this end asks of the peer: which link carries it, how many at once, and the answer. */
 export class OutgoingRequests {
 	private readonly gate: LinkGate;
@@ -67,6 +74,11 @@ export class OutgoingRequests {
 
 	/** Sends a request and resolves with the peer's response. */
 	request(input: PduObjectInput, options: SendOptions): Promise<Result<{ pduObj: PduObject }>> {
+		// Ahead of the drain, so a misuse is named as one rather than blamed on the shutdown.
+		const wrong = misuse(input);
+
+		if (wrong) return Promise.resolve({ err: wrong });
+
 		// A drain on a live link. A link that is down is the gate's answer, which says closed instead.
 		if (this.draining && !this.linkDown()) {
 			return Promise.resolve({ err: new Error('Session is shutting down') });
@@ -123,19 +135,15 @@ export class OutgoingRequests {
 
 		if (unfinished === 0) return {};
 
-		this.log.warn('session - shutting down with requests unfinished', { timeout, unfinished });
+		this.log.warn('outgoingRequests - shutting down with requests unfinished', { timeout, unfinished });
 
 		return { err: new Error(`Shut down with ${String(unfinished)} request(s) unfinished`) };
 	}
 
 	/** Why a request cannot go out at all, as opposed to not yet. */
 	private refuse(input: PduObjectInput, options: SendOptions): Error | undefined {
-		if (input.cmdName.endsWith('_resp')) {
-			return new Error(`Use sendReturn() for responses, not send(): ${input.cmdName}`);
-		}
-
 		// Before the gate and the window, or an aborted call waits for what it will never use.
-		return options.signal?.aborted === true ? abortedBeforeSend() : undefined;
+		return misuse(input) ?? (options.signal?.aborted === true ? abortedBeforeSend() : undefined);
 	}
 
 	private async attempt(input: PduObjectInput, options: SendOptions): Promise<Attempt> {

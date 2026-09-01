@@ -313,14 +313,14 @@ export class Session extends EventEmitter<SessionEvents> {
 			return { err: new Error('The session closed before the drain finished') };
 		}
 
-		return messages.err ? messages : requests;
+		if (!messages.err) return requests;
+
+		if (!requests.err) return messages;
+
+		return { err: new Error(`${messages.err.message}; ${requests.err.message}`) };
 	}
 
-	/**
-	 * How long the drain waits for the application, which is the only thing that can end that wait.
-	 * Neither timeout may hand it "forever": both are answers about a peer, and a peer is not what
-	 * this half is waiting for.
-	 */
+	/** The application half's budget, which may never be "forever": nothing else ends that wait. */
 	private answering(timeout: number): number {
 		if (timeout > 0) return timeout;
 

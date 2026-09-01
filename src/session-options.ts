@@ -101,8 +101,11 @@ export const undeclaredInterfaceVersion = 0x00;
 export const defaults = {
 	/** Receipts of a multipart message can be a working day apart, so the cap does the bounding. */
 	dlrMergeTimeout: 86_400_000,
+	/** The peer gave up on an unanswered message long before this; the bound is against growth. */
+	heldMessageTimeout: 300_000,
 	maxDelay: 30_000,
 	maxDlrMerges: 1000,
+	maxHeldMessages: 1000,
 	maxOutstanding: 10,
 	maxReassembly: 1000,
 	minDelay: 1000,

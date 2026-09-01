@@ -3,10 +3,19 @@ import type { MessageState } from './defs/constants.ts';
 import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
+import { UnansweredError } from './unanswered-error.ts';
 import { consts } from './defs/constants.ts';
 import { receiptCodes } from './dlr.ts';
 import { smppDate } from './message.ts';
 import { uuidv7 } from './uuid.ts';
+
+/** Both fields hold what the peer took, so a partial failure names what is already receipted. */
+export type SendDlrResult = {
+	err?: Error;
+	pduObjs: PduObject[];
+	/** Segments that went out unanswered. The peer may have taken them, so sending again may duplicate. */
+	unanswered: number;
+};
 
 export type SendRespOptions = {
 	/** The id the peer correlates a later delivery receipt by. Defaults to a generated UUID v7. */
@@ -25,7 +34,7 @@ export type Sms = {
 	message: string;
 	pduObjs: PduObject[];
 	/** Sends a delivery report back to the sender. Defaults to DELIVERED. */
-	sendDlr: (status?: MessageState) => Promise<Result<{ pduObjs: PduObject[] }>>;
+	sendDlr: (status?: MessageState) => Promise<SendDlrResult>;
 	/** Answers every segment. Part of the protocol, not optional. Defaults to ESME_ROK. */
 	sendResp: (options?: SendRespOptions) => Promise<VoidResult>;
 	session: Session;
@@ -132,9 +141,13 @@ async function sendDlr(
 	sms: Sms,
 	send: SmsHandlers['send'],
 	status: MessageState = 'DELIVERED',
-): Promise<Result<{ pduObjs: PduObject[] }>> {
+): Promise<SendDlrResult> {
 	if (!sms.session.bindAllows('deliver_sm')) {
-		return { err: new Error('A transmitter-bound session does not carry deliver_sm') };
+		return {
+			err: new Error('A transmitter-bound session does not carry deliver_sm'),
+			pduObjs: [],
+			unanswered: 0,
+		};
 	}
 
 	const total = sms.pduObjs.length;
@@ -154,12 +167,18 @@ async function sendDlr(
 		});
 	}));
 	const pduObjs: PduObject[] = [];
+	let failure: Error | undefined;
+	let unanswered = 0;
 
 	for (const one of sent) {
-		if (one.err) return { err: one.err };
+		if (!one.err) {
+			pduObjs.push(one.pduObj);
+		} else {
+			if (one.err instanceof UnansweredError) unanswered++;
 
-		pduObjs.push(one.pduObj);
+			failure ??= one.err;
+		}
 	}
 
-	return { pduObjs };
+	return failure ? { err: failure, pduObjs, unanswered } : { pduObjs, unanswered };
 }
