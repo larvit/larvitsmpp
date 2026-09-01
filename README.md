@@ -352,8 +352,7 @@ A send issued while the link is down waits for the reconnect instead of failing,
 the new link is bound — up to `responseTimeout`, after which it gives up having sent nothing. A
 request already on the wire is the other case: the SMSC may have taken it and lost only the response,
 so it fails, and `sendSms()` and `sms.sendDlr()` count it in `unanswered`, whether the link dropped
-under it, the peer
-never answered in time, or you aborted it after it went out. Neither applies with `reconnect: false`,
+under it, the peer never answered in time, or you aborted it after it went out. Neither applies with `reconnect: false`,
 where a drop ends the session and every send after it is refused.
 
 `responseTimeout` bounds the wait for a link and the wait for an answer separately, and a send also

@@ -49,7 +49,7 @@ export class HeldMessages {
 		this.sweep();
 
 		if (this.held.get(key)) {
-			this.log.warn('heldMessages - replacing a message on a re-used sequence number', { seqNr: key });
+			this.log.warn('heldMessages - replacing a message on a re-used sequence number', { seqNr: Number(key) });
 		} else if (this.held.full) {
 			this.dropOldest();
 		}
@@ -92,7 +92,10 @@ export class HeldMessages {
 
 		const [seqNr] = oldest;
 
-		this.log.warn('heldMessages - buffer full, dropping the oldest message', { max: this.max, seqNr });
+		this.log.warn('heldMessages - buffer full, dropping the oldest message', {
+			max: this.max,
+			seqNr: Number(seqNr),
+		});
 	}
 
 	/** Drops every message past its deadline. Runs before each hold and on its own timer. */

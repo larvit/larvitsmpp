@@ -407,10 +407,9 @@ Grouped by what each one constrains.
   up answering the same question two different ways at admit and at release. For the same reason the
   retry in `pastDrain()` asks `gate.isUp()` rather than `linkDown()`, which also reads the socket — a
   condition that loops on something the gate does not gate on spins against a gate that admits it
-  straight back.
-  `LinkGate.returning` is a copy of `retrying()` taken at teardown, and stays true only because
-  nothing stops the reconnect loop without `emitClose()` following it: `drain()` and `end()` are the
-  only callers of `stop()`. A third caller has to shut the gate itself.
+  straight back. `LinkGate.returning` is a copy of `retrying()` taken at teardown, and stays true
+  only because nothing stops the reconnect loop without `emitClose()` following it: `drain()` and
+  `end()` are the only callers of `stop()`. A third caller has to shut the gate itself.
 
 ### Internals and tests
 

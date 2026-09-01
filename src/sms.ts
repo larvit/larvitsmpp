@@ -9,7 +9,7 @@ import { receiptCodes } from './dlr.ts';
 import { smppDate } from './message.ts';
 import { uuidv7 } from './uuid.ts';
 
-/** Both fields hold what the peer took, so a partial failure names what is already receipted. */
+/** `pduObjs` holds what the peer took, so a partial failure names what is already receipted. */
 export type SendDlrResult = {
 	err?: Error;
 	pduObjs: PduObject[];

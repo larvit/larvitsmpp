@@ -73,6 +73,19 @@ function delay(ms: number): Promise<void> {
 	return new Promise(resolve => { setTimeout(resolve, ms); });
 }
 
+function submitPdu(seqNr: number, cmdStatus: ErrorName = 'ESME_ROK'): PduObject {
+	return {
+		cmdId: 0x00000004,
+		cmdLength: 0,
+		cmdName: 'submit_sm',
+		cmdStatus,
+		cmdStatusId: 0,
+		params: { destination_addr: '46709771337', short_message: 'held', source_addr: '46701113311' },
+		seqNr,
+		tlvs: {},
+	};
+}
+
 /** A cmd_length below the 16-octet header: a stream no framing can recover from. */
 const unreadablePdu = Buffer.from([0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1]);
 
@@ -862,21 +875,8 @@ describe('LinkGate', () => {
 
 // Goal 4: an application that answers nothing must not grow this for the life of the link.
 describe('held message bounds', () => {
-	function heldPdu(seqNr: number): PduObject {
-		return {
-			cmdId: 0x00000004,
-			cmdLength: 0,
-			cmdName: 'submit_sm',
-			cmdStatus: 'ESME_ROK',
-			cmdStatusId: 0,
-			params: { destination_addr: '46709771337', short_message: 'held', source_addr: '46701113311' },
-			seqNr,
-			tlvs: {},
-		};
-	}
-
 	function message(seqNr: number): PduObject[] {
-		return [heldPdu(seqNr)];
+		return [submitPdu(seqNr)];
 	}
 
 	test('drops the message held longest rather than holding every one', () => {
@@ -885,6 +885,11 @@ describe('held message bounds', () => {
 
 		held.hold(oldest);
 		held.hold(message(2));
+		held.hold(message(2));
+
+		assert.equal(held.size, 2, 'a re-used sequence number replaces rather than evicting');
+		assert.equal(held.has(oldest), true);
+
 		held.hold(message(3));
 
 		assert.equal(held.size, 2);
@@ -908,9 +913,25 @@ describe('held message bounds', () => {
 		held.clear();
 	});
 
-	// A receipt cannot be resent wholesale without duplicating the segments that landed, so sendDlr()
-	// names what the peer took and what it may have, the way sendSms() does.
-	test('a partial receipt names the segments the peer took and the ones it may have', async t => {
+	// Without this the drain sits out its whole budget before returning what a sweep already settled.
+	test('wakes a waiting drain when the last message expires', async () => {
+		let now = 0;
+		const held = new HeldMessages({ log: silentLog, max: 10, now: () => now, timeout: 60 });
+
+		held.hold(message(1));
+
+		const waiting = held.idle(1000, undefined);
+
+		now = 61;
+		held.sweep();
+
+		assert.equal(await waiting, 0);
+	});
+});
+
+describe('sendDlr()', () => {
+	// A receipt cannot be resent wholesale without duplicating the segments that landed.
+	test('names the segments the peer took, refused, and may have taken', async t => {
 		const session = new Session({ sock: new net.Socket() });
 
 		closeAfter(t, session);
@@ -919,7 +940,7 @@ describe('held message bounds', () => {
 		const sms = createSms({
 			from: '46701113311',
 			message: 'three segments',
-			pduObjs: [heldPdu(1), heldPdu(2), heldPdu(3)],
+			pduObjs: [submitPdu(1), submitPdu(2), submitPdu(3)],
 			session,
 			to: '46709771337',
 		}, {
@@ -927,15 +948,20 @@ describe('held message bounds', () => {
 			send: () => {
 				call++;
 
-				return Promise.resolve(call === 2
-					? { err: new UnansweredError(new Error('nothing came back')) }
-					: { pduObj: heldPdu(call) });
+				if (call === 1) return Promise.resolve({ pduObj: submitPdu(1, 'ESME_RX_T_APPN') });
+
+				if (call === 2) {
+					return Promise.resolve({ err: new UnansweredError(new Error('nothing came back')) });
+				}
+
+				return Promise.resolve({ pduObj: submitPdu(3) });
 			},
 		});
 		const report = await sms.sendDlr('DELIVERED');
 
 		assert.ok(report.err instanceof Error);
-		assert.equal(report.pduObjs.length, 2);
+		assert.match(report.err.message, /deliver_sm refused by the peer/);
+		assert.equal(report.pduObjs.length, 1);
 		assert.equal(report.unanswered, 1);
 	});
 });
