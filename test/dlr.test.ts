@@ -5,7 +5,7 @@ import { dlrFromPdu, parseReceipt, receiptCodes } from '../src/dlr.ts';
 import { objToPdu, pduToObj } from '../src/pdu.ts';
 import type { PduObject, TlvInput } from '../src/pdu.ts';
 
-const receiptText = 'id:0195f0c7 sub:001 dlvrd:001 submit date:2508251430 done date:2508251431 stat:DELIVRD err:000 text:hello';
+const receiptText = 'id:0195f0c7 sub:001 dlvrd:001 submit date:2508251430 done date:2508251431 stat:DELIVRD err:000 text:hello there';
 
 function deliverSm(
 	message: Buffer | string,
@@ -44,7 +44,14 @@ describe('parseReceipt()', () => {
 		assert.equal(receipt.doneDate, '2508251431');
 		assert.equal(receipt.stat, 'DELIVRD');
 		assert.equal(receipt.err, '000');
-		assert.equal(receipt.text, 'hello');
+		assert.equal(receipt.text, 'hello there');
+	});
+
+	test('takes any whitespace between the fields, not only a space', () => {
+		const wrapped = 'id:0195f0c7\r\nsub:001\ndlvrd:001\tsubmit date:2508251430\r\ndone date:2508251431'
+			+ '\r\nstat:DELIVRD\r\nerr:000\r\ntext:hello there\r\n';
+
+		assert.deepEqual(parseReceipt(wrapped), parseReceipt(receiptText));
 	});
 
 	test('does not confuse "done date" with "submit date"', () => {
@@ -204,7 +211,7 @@ describe('dlrFromPdu()', () => {
 
 		assert.ok(dlr?.receipt);
 		assert.equal(dlr.receipt.sub, 1);
-		assert.equal(dlr.receipt.text, 'hello');
+		assert.equal(dlr.receipt.text, 'hello there');
 	});
 
 	test('reads the id in the notation the peer writes receipts in', () => {

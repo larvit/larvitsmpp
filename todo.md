@@ -170,11 +170,6 @@ session message is a change to every call site.
 - [ ] **Coverage reporting.** `node --test --experimental-test-coverage` works today; nothing
       publishes the numbers.
 
-- [ ] **A receipt whose fields are separated by anything but a space reads as one field.**
-      `parseReceipt()` takes `id:` as everything up to the next space, so a peer writing CRLF
-      between fields yields an id of `1a2b\r\nstat:DELIVRD` — one nothing correlates and no
-      notation can read. Every field pattern has the same shape. Raised by review, 2026-08-30.
-
 - [ ] **An `onReceipt` hook.** Receipt text is only loosely specified and operators disagree on it,
       but `dlrFromPdu()` is wired into `IncomingRequests` with no seam of its own: an application
       facing a format we do not parse has to take the whole PDU on `onRequest` and reimplement the

@@ -56,17 +56,18 @@ export type Dlr = {
 	statusMsg: MessageState;
 };
 
-const field = (name: string) => new RegExp(`\\b${name}:([^ ]*)`, 'i');
+const field = (name: string) => new RegExp(`\\b${name}:(\\S*)`, 'i');
 
 const patterns = {
 	dlvrd: field('dlvrd'),
-	doneDate: /\bdone date:([^ ]*)/i,
+	doneDate: field('done date'),
 	err: field('err'),
 	id: field('id'),
 	stat: field('stat'),
 	sub: field('sub'),
-	submitDate: /\bsubmit date:([^ ]*)/i,
-	text: /\btext:(.*)$/i,
+	submitDate: field('submit date'),
+	// The last field, and the only one that may hold a space: it carries the message's own start.
+	text: /\btext:([^\r\n]*)/i,
 };
 
 function toNumber(value: string | undefined): number | undefined {
