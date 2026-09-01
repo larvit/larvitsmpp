@@ -68,7 +68,11 @@ export class IncomingRequests {
 		if (this.onRequest && await this.onRequest(this.session, pduObj)) return;
 
 		// The link it arrived on went while the hook ran, so nothing we answer now correlates.
-		if (this.linkGeneration !== generation) return;
+		if (this.linkGeneration !== generation) {
+			this.log.info('session - dropping a request whose link went', { cmdName: pduObj.cmdName });
+
+			return;
+		}
 
 		if (!this.session.bindAllows(pduObj.cmdName)) {
 			this.log.info('session - command the peer\'s bind direction does not carry', {

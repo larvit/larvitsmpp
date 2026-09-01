@@ -603,7 +603,6 @@ describe('reconnect', () => {
 		// A response is dispatched before `incomingPduObj`, so only the raw event sees one arrive.
 		peerOf(smpp).on('incomingPdu', () => { taken++; });
 
-		// The answered one is out of the hold and the held one is not, so neither may reach the answer.
 		assert.match((await answered.sendResp()).err?.message ?? '', /link this message arrived on is gone/);
 		assert.match((await held.sendResp()).err?.message ?? '', /link this message arrived on is gone/);
 
@@ -635,6 +634,10 @@ describe('reconnect', () => {
 		await handled;
 
 		assert.equal(messages, 0);
+
+		await incoming.handle(submitPdu(2));
+
+		assert.equal(messages, 1, 'the harness delivers a message whose link stayed');
 	});
 
 	test('does not reconnect after an explicit close', async t => {

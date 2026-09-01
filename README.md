@@ -356,8 +356,9 @@ under it, the peer never answered in time, or you aborted it after it went out. 
 where a drop ends the session and every send after it is refused.
 
 An answer cannot wait for a link that way, because it carries the sequence number the message arrived
-on: `sms.sendResp()` on a message whose link dropped writes nothing and returns an `err`. Its
-`sms.sendDlr()` still goes out, since a receipt is a request of its own, correlated by the id it names.
+on: `sms.sendResp()` on a message whose link dropped writes nothing and returns an `err`. Where a
+reconnect follows, its `sms.sendDlr()` still goes out on the new link, since a receipt is a request
+of its own, correlated by the id it names.
 
 `responseTimeout` bounds the wait for a link and the wait for an answer separately, and a send also
 queues for a `maxOutstanding` slot, which nothing bounds — so it is not a deadline for the call.
@@ -398,7 +399,8 @@ The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `
 - **`server()` resolves once, when it is listening**, and gives you a handle with `close()`, `port`
   and a `session` event. It no longer calls your callback once per incoming connection.
 - **The id a message is answered with goes to `sendResp({ smsId })`**, and `sms.smsId` is read-only:
-  it reports the id `sendResp()` was given, or the UUID v7 generated instead. Delete any `sms.smsId = …` line — assigning to it
+  it reports the id `sendResp()` was given, or the UUID v7 generated instead. Delete any
+  `sms.smsId = …` line — assigning to it
   throws a `TypeError`, since modules are always strict mode — and pass the id to `sendResp()`.
 - **`checkuserpass` is now `authenticate`**, takes `{ password, session, systemId, systemType }` and
   returns `false` or `{ userData }`.
