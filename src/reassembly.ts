@@ -163,7 +163,7 @@ export class Reassembler {
 	}
 
 	clear(): void {
-		this.groups.takeAll();
+		this.groups.clear();
 		this.octets = 0;
 	}
 

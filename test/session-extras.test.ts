@@ -557,38 +557,56 @@ describe('reconnect', () => {
 		assert.equal(report.segments.length, 3);
 	});
 
-	test('refuses to answer a message whose link went, rather than reporting it delivered', async t => {
+	test('refuses to answer a message whose link went, held or already answered', async t => {
 		const smpp = await startServer(t);
 		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
 
 		assert.ok(session);
 
-		const arrived = once<Sms>(resolve => { session.on('sms', resolve); });
+		const arrived: Sms[] = [];
+		const both = once<true>(resolve => {
+			session.on('sms', sms => {
+				arrived.push(sms);
 
-		void peerOf(smpp).send({
-			cmdName: 'deliver_sm',
-			params: {
-				destination_addr: '46701113311',
-				short_message: 'answered too late',
-				source_addr: '46709771337',
-			},
+				if (arrived.length === 2) resolve(true);
+			});
 		});
 
-		const sms = await arrived;
+		for (const text of ['answered before the drop', 'never answered']) {
+			void peerOf(smpp).send({
+				cmdName: 'deliver_sm',
+				params: {
+					destination_addr: '46701113311',
+					short_message: text,
+					source_addr: '46709771337',
+				},
+			});
+		}
+
+		await both;
+
+		const [answered, held] = arrived;
+
+		assert.ok(answered);
+		assert.ok(held);
+		assert.equal((await answered.sendResp()).err, undefined);
+
 		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
 
 		await peerOf(smpp).close({ signal: AbortSignal.abort() });
 		await reconnected;
 
-		const answered = await sms.sendResp();
+		const taken: string[] = [];
 
-		assert.match(answered.err?.message ?? '', /link this message arrived on is gone/);
+		peerOf(smpp).on('incomingPduObj', pduObj => { taken.push(pduObj.cmdName); });
+
+		// The answered one is out of the hold and the held one is not, so neither may reach the answer.
+		assert.match((await answered.sendResp()).err?.message ?? '', /link this message arrived on is gone/);
+		assert.match((await held.sendResp()).err?.message ?? '', /link this message arrived on is gone/);
 
 		// A receipt is a request of its own, correlated by its id, so the new link carries it.
-		const report = await sms.sendDlr('DELIVERED');
-
-		assert.equal(report.err, undefined);
-		assert.equal(report.pduObjs.length, 1);
+		assert.equal((await held.sendDlr('DELIVERED')).err, undefined);
+		assert.deepEqual(taken, ['deliver_sm'], 'a response reached the new link');
 	});
 
 	test('does not reconnect after an explicit close', async t => {
@@ -945,20 +963,6 @@ describe('held message bounds', () => {
 		assert.equal(held.size, 1);
 
 		held.clear();
-	});
-
-	test('remembers which messages went with the link, and which were answered', () => {
-		const held = new HeldMessages({ log: silentLog, max: 10, timeout: 10_000 });
-		const answered = message(1);
-		const dropped = message(2);
-
-		held.hold(answered);
-		held.hold(dropped);
-		held.release(answered);
-		held.clear();
-
-		assert.equal(held.lostLink(dropped), true);
-		assert.equal(held.lostLink(answered), false);
 	});
 
 	// Without this the drain sits out its whole budget before returning what a sweep already settled.

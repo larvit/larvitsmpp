@@ -54,7 +54,6 @@ export type SmsInput = {
 
 /** What the session's incoming side gives a message so it can be answered and accounted for. */
 export type SmsHandlers = {
-	/** Whether the link this message arrived on is gone, so no answer of ours correlates. */
 	lostLink: () => boolean;
 	onAnswered: () => void;
 	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
@@ -107,12 +106,12 @@ async function sendResp(
 		return { err: new Error('smsId must not be empty') };
 	}
 
+	if (options.smsId !== undefined) answered.smsId = options.smsId;
+
 	// A response carries the sequence number it was asked on, which the next link knows nothing about.
 	if (lostLink()) {
 		return { err: new Error('The link this message arrived on is gone, so nothing would correlate the response') };
 	}
-
-	if (options.smsId !== undefined) answered.smsId = options.smsId;
 
 	const results = await Promise.all(sms.pduObjs.map((pduObj, index) => sms.session.sendReturn(
 		pduObj,

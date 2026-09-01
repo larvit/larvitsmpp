@@ -39,6 +39,8 @@ export class IncomingRequests {
 	private readonly session: Session;
 	private readonly smsIdFormat: SmsIdFormat;
 	private readonly systemId: string;
+	/** Bumped when a link goes, so a message from an earlier one knows its answer cannot correlate. */
+	private linkGeneration = 0;
 
 	constructor(options: IncomingRequestsOptions) {
 		this.dlrMerger = options.dlrMerger;
@@ -96,6 +98,7 @@ export class IncomingRequests {
 
 	/** Drops the segments of every message that never became whole, and of every one still held. */
 	clear(): void {
+		this.linkGeneration++;
 		this.held.clear();
 		this.reassembler.clear();
 	}
@@ -163,6 +166,8 @@ export class IncomingRequests {
 
 		if (!first) return;
 
+		const generation = this.linkGeneration;
+
 		const sms = createSms({
 			from: paramText(first.params.source_addr),
 			message: decodeSegments(pduObjs),
@@ -170,7 +175,7 @@ export class IncomingRequests {
 			session: this.session,
 			to: paramText(first.params.destination_addr),
 		}, {
-			lostLink: () => this.held.lostLink(pduObjs),
+			lostLink: () => this.linkGeneration !== generation,
 			// A turn later, so a listener sending its receipt straight after the response still holds.
 			onAnswered: () => { setImmediate(() => { this.held.release(pduObjs); }); },
 			// Past the refusal only while a drain is still waiting for this message; an ordinary send after.

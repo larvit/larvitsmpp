@@ -20,7 +20,6 @@ function keyOf(pduObjs: PduObject[]): string | undefined {
 
 /** The messages handed to the application that it has not answered yet, held by their segments. */
 export class HeldMessages {
-	private readonly droppedWithLink = new WeakSet<PduObject[]>();
 	private readonly held: ExpiringGroups<PduObject[]>;
 	private readonly idleWaiters = new IdleWaiters();
 	private readonly log: SmppLog;
@@ -65,11 +64,6 @@ export class HeldMessages {
 		return key !== undefined && this.held.get(key) === pduObjs;
 	}
 
-	/** Whether this message's link went before it was answered, so no answer of ours correlates. */
-	lostLink(pduObjs: PduObject[]): boolean {
-		return this.droppedWithLink.has(pduObjs);
-	}
-
 	release(pduObjs: PduObject[]): void {
 		const key = keyOf(pduObjs);
 
@@ -82,10 +76,7 @@ export class HeldMessages {
 
 	/** Drops every message: their segments went with the link, so no answer of ours correlates now. */
 	clear(): void {
-		for (const [, pduObjs] of this.held.takeAll()) {
-			this.droppedWithLink.add(pduObjs);
-		}
-
+		this.held.clear();
 		this.idleWaiters.settle();
 	}
 

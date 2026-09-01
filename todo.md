@@ -141,6 +141,11 @@ session message is a change to every call site.
       until the message expires. Same cost as the `onRequest`-answers-nothing case that was declined,
       but reached by a bug rather than a policy. Raised by review, 2026-09-01.
 
+- [ ] **A refused `sendResp()` releases the hold anyway.** Every early return runs
+      `.finally(onAnswered)`, so `sendResp({ smsId: '' })` refuses and stops the drain waiting for a
+      message the peer was never answered, which `close()` then reports as answered. Raised by
+      review, 2026-09-01.
+
 - [ ] **Does an intermediate delivery notification deserve to be a `dlr`?** `esm_class` message type
       `INTERMEDIATE_DELIVERY` (0x20) is classified as a message today, so a peer that reports
       non-final states with it hands the application a raw `id:… stat:ENROUTE` text as an inbound

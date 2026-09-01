@@ -398,7 +398,7 @@ The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `
 - **`server()` resolves once, when it is listening**, and gives you a handle with `close()`, `port`
   and a `session` event. It no longer calls your callback once per incoming connection.
 - **The id a message is answered with goes to `sendResp({ smsId })`**, and `sms.smsId` is read-only:
-  it reports what the response actually carried. Delete any `sms.smsId = …` line — assigning to it
+  it reports the id `sendResp()` was given, or the UUID v7 generated instead. Delete any `sms.smsId = …` line — assigning to it
   throws a `TypeError`, since modules are always strict mode — and pass the id to `sendResp()`.
 - **`checkuserpass` is now `authenticate`**, takes `{ password, session, systemId, systemType }` and
   returns `false` or `{ userData }`.

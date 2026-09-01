@@ -120,8 +120,8 @@ export class DlrMerger {
 	}
 
 	clear(): void {
-		this.groups.takeAll();
-		this.spent.takeAll();
+		this.groups.clear();
+		this.spent.clear();
 	}
 
 	/** Drops every group past its deadline. Runs before each collect and on its own timer. */
