@@ -1456,7 +1456,6 @@ describe('graceful shutdown', () => {
 		assert.ok((await sent).err instanceof Error);
 	});
 
-	// A rejection leaves the other listeners running, unlike a throw, which stops emit() where it is.
 	test('waits for the listener still working when another one rejected', async t => {
 		const smpp = await startServer(t, { shutdownTimeout: 30_000 });
 		const failed = once<Error>(resolve => {
