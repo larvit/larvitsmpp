@@ -118,10 +118,6 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
-- [ ] **Merge state does not survive a process restart.** A drop no longer discards it, but a restart
-      loses every incomplete group, and a peer has no reason to resend a receipt it already had
-      answered. Surviving one means exposing the merge state for the application to persist and hand
-      back, which is a public-surface decision.
 - [ ] **Group the session's collaborators under `src/session/`.** `session.ts` imports
       `dlr-merger`, `incoming-requests`, `link-timers`, `outgoing-requests`, `pdu-transport`,
       `reconnect-loop` and `send-sms`, and nothing else does, so the directory would make that
@@ -167,6 +163,13 @@ session message is a change to every call site.
       to the built-in parser.
 
 ## Declined
+
+- **Merge state surviving a process restart.** Declined by AGENTS.md goal 7, maintainer's call,
+  2026-09-02. A restart loses every incomplete receipt group and a peer has no reason to resend one it
+  already had answered, so the loss is real — but surviving it means handing the application the merge
+  state to persist, which the scope floor covers as squarely as holding the state here would, and
+  which publishes the shape of `DlrMerger`'s groups against goal 6. Nothing is foreclosed: the seam
+  can still be added after 1.0.0 as a minor.
 
 - **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** Declined by AGENTS.md
   goal 7: an operator's rate limit is scoped to the account, while the widest thing this library owns

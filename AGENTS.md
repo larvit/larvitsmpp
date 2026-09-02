@@ -34,8 +34,10 @@ one wins. They do not override the hard rules below.
    promise this library can verify. The low-level surface is a passthrough: policy binds what the
    library composes, never what the caller wrote.
 7. **Nothing that needs state wider than one session.** No throughput throttling, no persistence
-   across a restart, no coordination between processes. This is the scope floor, and it is why an
-   otherwise reasonable feature is declined without a fresh argument each time.
+   across a restart, no coordination between processes — and no seam handing the application state to
+   persist for one of those either, which commits to the same scope through the back door and
+   publishes an internal shape to do it. This is the scope floor, and it is why an otherwise
+   reasonable feature is declined without a fresh argument each time.
 8. **It builds, tests and runs the same everywhere.** Container-only toolchain, no runtime
    dependencies, the Node 18 floor verified in CI rather than asserted, every README example executed
    by the suite.
