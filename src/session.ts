@@ -93,10 +93,12 @@ export class Session extends EventEmitter<SessionEvents> {
 		reason: unknown,
 		...args: [event: keyof SessionEvents, ...rest: unknown[]]
 	): void {
-		const [event] = args;
+		const [event, ...rest] = args;
 		const error = errorFrom(reason);
 
 		this.log.error('session - a listener rejected', { event, message: error.message });
+
+		if (event === 'sms') this.incoming.listenerRejected(rest[0]);
 
 		if (event !== 'sessionError') this.emit('sessionError', error);
 	}

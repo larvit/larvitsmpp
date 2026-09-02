@@ -61,6 +61,7 @@ Rules the API follows:
 | Held messages capped and expiring, so an application that answers nothing cannot grow them | `test/session-extras.test.ts` |
 | A send with no link held for the next one, and one the link dropped under counted as `unanswered` | `test/session-extras.test.ts` |
 | A message whose link dropped refused an answer, with its receipt still allowed out | `test/session-extras.test.ts` |
+| The hold released exactly when the peer was answered: a refused `sendResp()` keeps it, a listener that rejected drops it | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
@@ -133,18 +134,6 @@ session message is a change to every call site.
       Neither is reachable from the other, so nothing can disagree today, but a reader who learns one
       and applies it to the other is wrong. A budget type both take would close it. Raised by review,
       2026-09-01.
-
-- [ ] **An `sms` listener that rejects before answering costs a whole `shutdownTimeout`.**
-      One that *throws* is fine: `emit()` catches it, returns false, and `emitSms()` releases the
-      hold. A rejecting `async` one reaches `sessionError` through `captureRejections`, which hands
-      the handler an `unknown[]` the `Sms` cannot be read out of without a cast, so nothing releases
-      until the message expires. Same cost as the `onRequest`-answers-nothing case that was declined,
-      but reached by a bug rather than a policy. Raised by review, 2026-09-01.
-
-- [ ] **A refused `sendResp()` releases the hold anyway.** Every early return runs
-      `.finally(onAnswered)`, so `sendResp({ smsId: '' })` refuses and stops the drain waiting for a
-      message the peer was never answered, which `close()` then reports as answered. Raised by
-      review, 2026-09-01.
 
 - [ ] **Does an intermediate delivery notification deserve to be a `dlr`?** `esm_class` message type
       `INTERMEDIATE_DELIVERY` (0x20) is classified as a message today, so a peer that reports

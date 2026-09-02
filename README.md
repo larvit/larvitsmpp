@@ -332,7 +332,7 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 `sendSms()`, `send()`, `sendReturn()`, `unbind()` and `close()`. Both `close()` and `unbind()`
 refuse further sends, wait out the requests this end already sent for up to `shutdownTimeout`, and
 then tear down whatever is left, resolving to an `err` that says what was lost. They also wait for
-every `sms` the application has not called `sendResp()` on, so a peer whose `submit_sm` is still
+every `sms` that `sendResp()` has not answered, so a peer whose `submit_sm` is still
 being handled is answered rather than left to re-send it — answering its PDUs through `sendReturn()`
 instead leaves that wait running until it gives up. `sendDlr()` is the one send the refusal lets
 past, and it catches the wait when issued straight after `sendResp()`; await anything in between and

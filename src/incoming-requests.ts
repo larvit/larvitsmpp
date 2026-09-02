@@ -39,6 +39,8 @@ export class IncomingRequests {
 	private readonly session: Session;
 	private readonly smsIdFormat: SmsIdFormat;
 	private readonly systemId: string;
+	/** Identity, not a type guard: the rejected event carries the Sms back as an `unknown`. */
+	private readonly emitted = new WeakMap<object, () => void>();
 	private linkGeneration = 0;
 
 	constructor(options: IncomingRequestsOptions) {
@@ -109,6 +111,13 @@ export class IncomingRequests {
 		this.linkGeneration++;
 		this.held.clear();
 		this.reassembler.clear();
+	}
+
+	/** A listener that rejected answered nothing and never will, so a shutdown may not wait for it. */
+	listenerRejected(sms: unknown): void {
+		if (typeof sms !== 'object' || sms === null) return;
+
+		this.emitted.get(sms)?.();
 	}
 
 	/** Waits out the messages the application still holds, and says how many it never answered. */
@@ -191,6 +200,7 @@ export class IncomingRequests {
 		});
 
 		this.held.hold(pduObjs);
+		this.emitted.set(sms, () => { this.held.release(pduObjs); });
 
 		// A message nobody took is not work a shutdown can wait for.
 		if (!this.session.emit('sms', sms)) this.held.release(pduObjs);
