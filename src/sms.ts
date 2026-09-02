@@ -93,7 +93,7 @@ async function sendResp(
 	sms: Sms,
 	answered: { smsId: string },
 	options: SendRespOptions,
-	handlers: SmsHandlers,
+	handlers: Pick<SmsHandlers, 'lostLink' | 'onAnswered'>,
 ): Promise<VoidResult> {
 	const total = sms.pduObjs.length;
 
@@ -118,10 +118,11 @@ async function sendResp(
 		{ message_id: segmentId(answered.smsId, index, total) },
 	)));
 
-	// Only here: a refusal above put nothing on the wire, so the peer is still owed its response.
-	handlers.onAnswered();
+	const failure = results.find(result => result.err);
 
-	return results.find(result => result.err) ?? {};
+	if (!failure) handlers.onAnswered();
+
+	return failure ?? {};
 }
 
 /** The receipt as text, which is all of it a peer below SMPP 3.4 is allowed to be sent. */

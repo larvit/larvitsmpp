@@ -1012,6 +1012,33 @@ describe('held message bounds', () => {
 	});
 });
 
+describe('sendResp()', () => {
+	// A response the wire never carried leaves the peer owed one, so nothing may count it answered.
+	test('does not count a response that never reached the wire as an answer', async t => {
+		const sock = new net.Socket();
+		const session = new Session({ sock });
+
+		closeAfter(t, session);
+		sock.destroy();
+
+		let answered = 0;
+		const sms = createSms({
+			from: '46701113311',
+			message: 'never answered',
+			pduObjs: [submitPdu(1)],
+			session,
+			to: '46709771337',
+		}, {
+			lostLink: () => false,
+			onAnswered: () => { answered++; },
+			send: () => Promise.resolve({ err: new Error('never sent') }),
+		});
+
+		assert.match((await sms.sendResp()).err?.message ?? '', /Socket is closed/);
+		assert.equal(answered, 0);
+	});
+});
+
 describe('sendDlr()', () => {
 	// A receipt cannot be resent wholesale without duplicating the segments that landed.
 	test('names the segments the peer took, refused, and may have taken', async t => {
@@ -1427,6 +1454,34 @@ describe('graceful shutdown', () => {
 		assert.deepEqual(await peerOf(smpp).close(), {});
 		assert.ok(Date.now() - started < 1000);
 		assert.ok((await sent).err instanceof Error);
+	});
+
+	// A rejection leaves the other listeners running, unlike a throw, which stops emit() where it is.
+	test('waits for the listener still working when another one rejected', async t => {
+		const smpp = await startServer(t, { shutdownTimeout: 30_000 });
+		const failed = once<Error>(resolve => {
+			smpp.on('session', bound => {
+				bound.on('sessionError', resolve);
+				bound.on('sms', async sms => {
+					await delay(100);
+					await sms.sendResp({ smsId: 'answered-after-the-other-gave-up' });
+				});
+				bound.on('sms', () => Promise.reject(new Error('the audit listener gave up')));
+			});
+		});
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const sent = session.sendSms({
+			from: '46701113311',
+			message: 'two listeners, one gives up',
+			to: '46709771337',
+		});
+
+		assert.equal((await failed).message, 'the audit listener gave up');
+		assert.deepEqual(await peerOf(smpp).close(), {});
+		assert.deepEqual((await sent).smsIds, ['answered-after-the-other-gave-up']);
 	});
 
 	// Nothing reached the peer, so a drain counting this answered would report an outcome that never was.

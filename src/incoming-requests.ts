@@ -31,6 +31,8 @@ export type IncomingRequestsOptions = {
 /** Everything the peer asks of a session: messages, receipts, links and the answers to them. */
 export class IncomingRequests {
 	private readonly dlrMerger: DlrMerger;
+	/** The rejection handler is handed the Sms back as an `unknown`, so its hold is found by identity. */
+	private readonly emitted = new WeakMap<object, () => void>();
 	private readonly held: HeldMessages;
 	private readonly log: SmppLog;
 	private readonly onRequest: OnRequest | undefined;
@@ -39,8 +41,6 @@ export class IncomingRequests {
 	private readonly session: Session;
 	private readonly smsIdFormat: SmsIdFormat;
 	private readonly systemId: string;
-	/** Identity, not a type guard: the rejected event carries the Sms back as an `unknown`. */
-	private readonly emitted = new WeakMap<object, () => void>();
 	private linkGeneration = 0;
 
 	constructor(options: IncomingRequestsOptions) {
@@ -113,7 +113,7 @@ export class IncomingRequests {
 		this.reassembler.clear();
 	}
 
-	/** A listener that rejected answered nothing and never will, so a shutdown may not wait for it. */
+	/** One `sms` listener gave up on a message; the last one to do so is what releases the hold. */
 	listenerRejected(sms: unknown): void {
 		if (typeof sms !== 'object' || sms === null) return;
 
@@ -184,6 +184,8 @@ export class IncomingRequests {
 		if (!first) return;
 
 		const generation = this.linkGeneration;
+		// A turn later, so a listener sending its receipt straight after the response still holds.
+		const release = (): void => { setImmediate(() => { this.held.release(pduObjs); }); };
 
 		const sms = createSms({
 			from: paramText(first.params.source_addr),
@@ -193,14 +195,20 @@ export class IncomingRequests {
 			to: paramText(first.params.destination_addr),
 		}, {
 			lostLink: () => this.linkGeneration !== generation,
-			// A turn later, so a listener sending its receipt straight after the response still holds.
-			onAnswered: () => { setImmediate(() => { this.held.release(pduObjs); }); },
+			onAnswered: release,
 			// Past the refusal only while a drain is still waiting for this message; an ordinary send after.
 			send: input => (this.held.has(pduObjs) ? this.sendPastDrain(input) : this.session.send(input)),
 		});
 
+		// A rejection leaves the other listeners running, so only the last one to fail gives the message up.
+		let working = this.session.listenerCount('sms');
+
 		this.held.hold(pduObjs);
-		this.emitted.set(sms, () => { this.held.release(pduObjs); });
+		this.emitted.set(sms, () => {
+			working--;
+
+			if (working <= 0) release();
+		});
 
 		// A message nobody took is not work a shutdown can wait for.
 		if (!this.session.emit('sms', sms)) this.held.release(pduObjs);
