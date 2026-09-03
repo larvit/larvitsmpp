@@ -297,6 +297,9 @@ Grouped by what each one constrains.
   withheld. Both spellings resolve into `Dlr.intermediate` at the boundary rather than being read a
   second time in `DlrMerger`, so the library cannot answer the application one way and conclude the
   other. `sendDlr('ENROUTE')` writes 0x04, so the state test is what the marker test cannot replace.
+  `message_state` 0 is 5.0's `SCHEDULED` and undefined in 3.4; a peer that writes it is read as
+  transient rather than as saying nothing, maintainer's call, 2026-09-03, since the codec refuses a
+  zero-length integer TLV and so an absent one cannot land there.
 
 - **`smsIdFormat` names a notation per place, and normalisation never reaches inside a `<base>-<n>`
   id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's `id:` in decimal, so one
