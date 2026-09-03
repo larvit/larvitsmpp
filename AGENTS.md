@@ -296,8 +296,9 @@ Grouped by what each one constrains.
   library cannot read with no `messageDlr` at all — goal 2 wants that reported as undetermined, not
   withheld. Both spellings resolve into `Dlr.intermediate` at the boundary rather than being read a
   second time in `DlrMerger`, so the library cannot answer the application one way and conclude the
-  other. `sendDlr('ENROUTE')` writes 0x04, so the state test is what the marker test cannot replace.
-  `message_state` 0 is 5.0's `SCHEDULED` and undefined in 3.4; a peer that writes it is read as
+  other. Not every peer marks a transient report 0x20 — an ordinary receipt carrying `stat:ENROUTE`
+  is common — so the state test is what the marker test cannot replace. `message_state` 0 is 5.0's
+  `SCHEDULED` and undefined in 3.4; a peer that writes it is read as
   transient rather than as saying nothing, maintainer's call, 2026-09-03, since the codec refuses a
   zero-length integer TLV and so an absent one cannot land there.
 

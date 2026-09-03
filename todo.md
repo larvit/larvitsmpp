@@ -132,6 +132,13 @@ session message is a change to every call site.
       and applies it to the other is wrong. A budget type both take would close it. Raised by review,
       2026-09-01.
 
+- [ ] **Write a transient state as an intermediate delivery notification.** `sendDlr()` marks every
+      receipt `esm_class` 0x04, so `sendDlr('ENROUTE')` announces a non-final state with the marker
+      SMPP 3.4 Appendix B reserves for the final one — the two disagreeing spellings of finality the
+      reading side was taught to reconcile on 2026-09-03. Decided the same day: fix it, off
+      `transientStates` in `dlr.ts` so the writer and the reader cannot drift, in a PR of its own.
+      Costs a bullet in README's "Behaviour that changed on the wire".
+
 - [ ] **`once()` is copied into four test files, and two copies never give up.**
       `session-extras.test.ts` and `readme.test.ts` reject after 5000 ms; `session.test.ts` and
       `tls.test.ts` wait forever, so an event that never fires still hangs the run the way an
