@@ -168,6 +168,45 @@ describe('merged delivery reports', () => {
 		assert.deepEqual(perSegment, ['merge-me-1', 'merge-me-2', 'merge-me-3']);
 	});
 
+	test('reports once, on the final receipts, when the peer reports en route first', async t => {
+		const smpp = await startServer(t);
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', session => session.on('sms', resolve));
+		});
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const merged = once<MessageDlr>(resolve => { session.on('messageDlr', resolve); });
+		const perSegment: boolean[] = [];
+
+		session.on('dlr', dlr => perSegment.push(dlr.intermediate));
+
+		const [sms] = await Promise.all([
+			incoming.then(async received => {
+				await received.sendResp({ smsId: 'en-route' });
+
+				return received;
+			}),
+			session.sendSms({
+				dlr: true,
+				from: '46701113311',
+				message: 'x'.repeat(400),
+				to: '46709771337',
+			}),
+		]);
+
+		await sms.sendDlr('ENROUTE');
+		await sms.sendDlr('DELIVERED');
+
+		const report = await merged;
+
+		assert.equal(report.smsId, 'en-route');
+		assert.equal(report.statusMsg, 'DELIVERED');
+		assert.equal(report.segments.length, 3);
+		assert.deepEqual(perSegment, [true, true, true, false, false, false]);
+	});
+
 	test('reports the worst status across the segments', async t => {
 		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {

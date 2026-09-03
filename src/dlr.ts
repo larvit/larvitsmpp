@@ -130,6 +130,9 @@ export function parseReceipt(message: string): Receipt {
 
 type MessageType = 'intermediate' | 'other' | 'receipt' | 'unmarked';
 
+/** SMPP 3.4 Appendix B lists every other receipt state as final. */
+const transientStates: MessageState[] = ['ENROUTE', 'SCHEDULED'];
+
 /** Written by the far-end SME, not by the MC reporting on a message we submitted. */
 const smeMessageTypes: number[] = [
 	consts.ESM_CLASS.CONVERSATION_ABORT,
@@ -212,13 +215,15 @@ export function dlrFromPdu(pduObj: PduObject, format: SmsIdFormat = {}): Dlr | u
 
 	if (type === 'unmarked' && (smsId === undefined || statusMsg === undefined)) return undefined;
 
+	const state = statusMsg ?? 'UNKNOWN';
+
 	return {
 		doneDate: receiptDate(receipt?.doneDate),
 		errorCode: receipt?.err,
-		intermediate: type === 'intermediate',
+		intermediate: type === 'intermediate' || transientStates.includes(state),
 		receipt,
 		smsId,
 		statusId,
-		statusMsg: statusMsg ?? 'UNKNOWN',
+		statusMsg: state,
 	};
 }

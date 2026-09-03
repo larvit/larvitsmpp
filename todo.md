@@ -64,7 +64,7 @@ Rules the API follows:
 | The hold released exactly when the peer was answered: a refused `sendResp()` keeps it, a listener that rejected drops it | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
-| An intermediate delivery notification read as a report marked `intermediate`, and never counted into a merge | `test/dlr.test.ts`, `test/session.test.ts`, `test/session-extras.test.ts` |
+| An intermediate delivery notification read as a report marked `intermediate`, as is a receipt reporting `ENROUTE` or `SCHEDULED`, and never counted into a merge | `test/dlr.test.ts`, `test/session.test.ts`, `test/session-extras.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
 | Cross-checked against node-smpp both ways and over a live session | `test/interop.test.ts` |
 | CI on Node 18/20/22/24, Renovate, tag-triggered publish | `.github/workflows/` |
