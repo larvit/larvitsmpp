@@ -285,9 +285,9 @@ Grouped by what each one constrains.
   reserved keeps the scrape, and a non-empty `receipted_message_id` TLV marks a report on the same
   footing. A report this library recognises never reaches the reassembler, so an SMSC that splits one
   across segments gets a `dlr` per segment rather than one merged report. The `message_state` TLV is
-  authoritative only where it names a state in the table — SMPP reserves
-  0x80-0xFF for MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves
-  `statusMsg` to the body.
+  authoritative only where it names a state in the table — SMPP reserves 0x80-0xFF for
+  MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves `statusMsg` to
+  the body.
 
 - **A report is final unless its `esm_class` or its state says otherwise, and only `ENROUTE` and
   `SCHEDULED` say otherwise.** SMPP 3.4 Appendix B lists every other receipt state as final,
@@ -296,8 +296,7 @@ Grouped by what each one constrains.
   library cannot read with no `messageDlr` at all — goal 2 wants that reported as undetermined, not
   withheld. Both spellings resolve into `Dlr.intermediate` at the boundary rather than being read a
   second time in `DlrMerger`, so the library cannot answer the application one way and conclude the
-  other; this library's own `sendDlr('ENROUTE')` goes out as an ordinary receipt, which is where the
-  two would first disagree.
+  other. `sendDlr('ENROUTE')` writes 0x04, so the state test is what the marker test cannot replace.
 
 - **`smsIdFormat` names a notation per place, and normalisation never reaches inside a `<base>-<n>`
   id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's `id:` in decimal, so one
