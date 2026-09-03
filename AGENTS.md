@@ -284,8 +284,8 @@ Grouped by what each one constrains.
   is the handset's word about a message, not the network's. A message type of 0 or one of the ten
   reserved keeps the scrape, and a non-empty `receipted_message_id` TLV marks a report on the same
   footing. A report this library recognises never reaches the reassembler, so an SMSC that splits one
-  across segments gets a `dlr` per segment rather than one merged report. The
-  `message_state` TLV is authoritative only where it names a state in the table — SMPP reserves
+  across segments gets a `dlr` per segment rather than one merged report. The `message_state` TLV is
+  authoritative only where it names a state in the table — SMPP reserves
   0x80-0xFF for MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves
   `statusMsg` to the body.
 

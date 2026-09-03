@@ -215,8 +215,6 @@ describe('merging segment statuses', () => {
 		};
 	}
 
-	// Filling every slot with a non-final report merges early and spends the base, so the receipts
-	// that say what actually happened would report nothing.
 	test('never counts an intermediate report toward a merge', () => {
 		const merger = new DlrMerger({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
 

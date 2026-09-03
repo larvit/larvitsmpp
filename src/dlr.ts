@@ -130,7 +130,7 @@ export function parseReceipt(message: string): Receipt {
 
 type MessageType = 'intermediate' | 'other' | 'receipt' | 'unmarked';
 
-/** The types the far-end SME writes, rather than the MC reporting. The spec reserves the remaining ten. */
+/** Written by the far-end SME, not by the MC reporting on a message we submitted. */
 const smeMessageTypes: number[] = [
 	consts.ESM_CLASS.CONVERSATION_ABORT,
 	consts.ESM_CLASS.DELIVERY_ACKNOWLEDGEMENT,
