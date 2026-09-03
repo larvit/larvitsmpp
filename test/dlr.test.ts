@@ -145,6 +145,7 @@ describe('dlrFromPdu()', () => {
 		assert.equal(dlr.smsId, undefined);
 		assert.equal(dlr.statusMsg, 'UNKNOWN');
 		assert.equal(dlr.statusId, 7);
+		assert.equal(dlr.intermediate, false);
 	});
 
 	// pduToObj leaves a UDH-carrying short_message a buffer, so the body needs decoding before it
@@ -196,15 +197,29 @@ describe('dlrFromPdu()', () => {
 		assert.equal(dlr.statusMsg, 'DELIVERED');
 	});
 
-	test('leaves a message the peer marked as another type to arrive as an SMS', () => {
+	test('leaves a message the far-end SME marked as another type to arrive as an SMS', () => {
 		for (const esmClass of [
 			consts.ESM_CLASS.CONVERSATION_ABORT,
 			consts.ESM_CLASS.DELIVERY_ACKNOWLEDGEMENT,
-			consts.ESM_CLASS.INTERMEDIATE_DELIVERY,
 			consts.ESM_CLASS.USER_ACKNOWLEDGEMENT,
 		]) {
 			assert.equal(dlrFromPdu(deliverSm(receiptText, undefined, esmClass)), undefined);
 		}
+	});
+
+	test('reads an intermediate delivery notification as a report, marked as one', () => {
+		const enroute = 'id:0195f0c7 sub:001 dlvrd:000 submit date:2508251430 done date:2508251431 stat:ENROUTE err:000 text:';
+		const dlr = dlrFromPdu(deliverSm(enroute, undefined, consts.ESM_CLASS.INTERMEDIATE_DELIVERY));
+
+		assert.ok(dlr);
+		assert.equal(dlr.smsId, '0195f0c7');
+		assert.equal(dlr.statusMsg, 'ENROUTE');
+		assert.equal(dlr.intermediate, true);
+
+		const unreadable = dlrFromPdu(deliverSm('no fields here', undefined, consts.ESM_CLASS.INTERMEDIATE_DELIVERY));
+
+		assert.ok(unreadable, 'the marker makes it a report whatever the body parses to');
+		assert.equal(unreadable.intermediate, true);
 	});
 
 	test('exposes the raw receipt alongside the resolved fields', () => {

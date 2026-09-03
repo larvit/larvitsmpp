@@ -685,7 +685,7 @@ describe('receiving', () => {
 		assert.equal(answered.pduObj.params.message_id, 'inbound-id');
 	});
 
-	test('hands a client a receipt it cannot read as a dlr rather than as an sms', async t => {
+	test('hands a client a report as a dlr rather than as an sms', async t => {
 		const { peer, session } = await inbound(t);
 		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
 		let messages = 0;
@@ -711,6 +711,28 @@ describe('receiving', () => {
 
 		assert.ok(answered.pduObj);
 		assert.equal(answered.pduObj.cmdName, 'deliver_sm_resp');
+
+		const notified = once<Dlr>(resolve => { session.on('dlr', resolve); });
+		const notification = peer.send({
+			cmdName: 'deliver_sm',
+			params: {
+				destination_addr: '46709771337',
+				esm_class: consts.ESM_CLASS.INTERMEDIATE_DELIVERY,
+				short_message: 'id:0195f0c7 stat:ENROUTE err:000 text:',
+				source_addr: '46701113311',
+			},
+		});
+		const report = await raceWithin(2000, notified);
+
+		assert.ok(report, 'an intermediate notification is the MC reporting on our send, not an inbound SMS');
+		assert.equal(report.intermediate, true);
+		assert.equal(report.statusMsg, 'ENROUTE');
+		assert.equal(messages, 0);
+
+		const answeredNotification = await notification;
+
+		assert.ok(answeredNotification.pduObj);
+		assert.equal(answeredNotification.pduObj.cmdName, 'deliver_sm_resp');
 	});
 
 	test('reassembles a multipart inbound SMS before the sms event', async t => {
@@ -1494,6 +1516,7 @@ describe('merged delivery report bounds', () => {
 		return {
 			doneDate: undefined,
 			errorCode: undefined,
+			intermediate: false,
 			receipt: undefined,
 			smsId,
 			statusId: 2,

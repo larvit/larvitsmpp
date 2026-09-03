@@ -41,7 +41,8 @@ const severity: Record<MessageState, number> = {
  * Merges the per-segment receipts of a multipart message into one report, but only when the peer
  * numbered its ids `<base>-<n>` off one base — the convention this library's own server follows. An
  * SMSC that hands out unrelated ids per segment cannot be merged, so nothing is reported for it.
- * A base is merged at most once: a reused id cannot be told apart from a straggler.
+ * A base is merged at most once: a reused id cannot be told apart from a straggler, and a report the
+ * peer marked intermediate is never counted — it would fill a slot before the real receipt arrives.
  */
 export class DlrMerger {
 	private readonly groups: ExpiringGroups<Group>;
@@ -95,7 +96,7 @@ export class DlrMerger {
 	collect(dlr: Dlr): MessageDlr | undefined {
 		this.sweep();
 
-		if (dlr.smsId === undefined) return undefined;
+		if (dlr.intermediate || dlr.smsId === undefined) return undefined;
 
 		const match = numbered.exec(dlr.smsId);
 		const base = match?.[1];

@@ -50,6 +50,7 @@ export type Receipt = {
 export type Dlr = {
 	doneDate: Date | undefined;
 	errorCode: string | undefined;
+	intermediate: boolean;
 	receipt: Receipt | undefined;
 	smsId: string | undefined;
 	statusId: number;
@@ -127,13 +128,12 @@ export function parseReceipt(message: string): Receipt {
 	};
 }
 
-type MessageType = 'other' | 'receipt' | 'unmarked';
+type MessageType = 'intermediate' | 'other' | 'receipt' | 'unmarked';
 
-/** The message types the spec names that are not receipts. It reserves the remaining ten. */
-const notReceiptTypes: number[] = [
+/** The types the far-end SME writes, rather than the MC reporting. The spec reserves the remaining ten. */
+const smeMessageTypes: number[] = [
 	consts.ESM_CLASS.CONVERSATION_ABORT,
 	consts.ESM_CLASS.DELIVERY_ACKNOWLEDGEMENT,
-	consts.ESM_CLASS.INTERMEDIATE_DELIVERY,
 	consts.ESM_CLASS.USER_ACKNOWLEDGEMENT,
 ];
 
@@ -145,7 +145,8 @@ function messageType(pduObj: PduObject): MessageType {
 	const type = messageTypeOf(paramNumber(pduObj.params.esm_class, 0));
 
 	if (type === consts.ESM_CLASS.MC_DELIVERY_RECEIPT) return 'receipt';
-	if (notReceiptTypes.includes(type)) return 'other';
+	if (type === consts.ESM_CLASS.INTERMEDIATE_DELIVERY) return 'intermediate';
+	if (smeMessageTypes.includes(type)) return 'other';
 
 	return nonEmptyText(pduObj.tlvs.receipted_message_id?.tagValue) === undefined ? 'unmarked' : 'receipt';
 }
@@ -214,6 +215,7 @@ export function dlrFromPdu(pduObj: PduObject, format: SmsIdFormat = {}): Dlr | u
 	return {
 		doneDate: receiptDate(receipt?.doneDate),
 		errorCode: receipt?.err,
+		intermediate: type === 'intermediate',
 		receipt,
 		smsId,
 		statusId,

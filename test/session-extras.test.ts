@@ -203,16 +203,35 @@ describe('merged delivery reports', () => {
 });
 
 describe('merging segment statuses', () => {
-	function receipt(smsId: string, statusMsg: MessageState): Dlr {
+	function receipt(smsId: string, statusMsg: MessageState, intermediate = false): Dlr {
 		return {
 			doneDate: undefined,
 			errorCode: undefined,
+			intermediate,
 			receipt: undefined,
 			smsId,
 			statusId: consts.MESSAGE_STATE[statusMsg],
 			statusMsg,
 		};
 	}
+
+	// Filling every slot with a non-final report merges early and spends the base, so the receipts
+	// that say what actually happened would report nothing.
+	test('never counts an intermediate report toward a merge', () => {
+		const merger = new DlrMerger({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+
+		merger.expect(['msg-1', 'msg-2']);
+
+		assert.equal(merger.collect(receipt('msg-1', 'ENROUTE', true)), undefined);
+		assert.equal(merger.collect(receipt('msg-2', 'ENROUTE', true)), undefined);
+		assert.equal(merger.collect(receipt('msg-1', 'DELIVERED')), undefined);
+
+		const merged = merger.collect(receipt('msg-2', 'DELIVERED'));
+
+		assert.ok(merged);
+		assert.equal(merged.statusMsg, 'DELIVERED');
+		assert.equal(merged.segments.length, 2);
+	});
 
 	// MESSAGE_STATE is a flat enum: ACCEPTED is 6 where UNDELIVERABLE is 5, so reducing on the
 	// wire value called a part-failed message delivered.

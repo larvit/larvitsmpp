@@ -163,7 +163,9 @@ session.on('sms', async sms => {
 Delivery receipts travel on the same SMPP command but reach you as `dlr`, so nothing you write has
 to tell the two apart. `esm_class` is what tells them apart; where it names no message type a
 `receipted_message_id` TLV does, and failing both the message body is read for the standard
-`id:` and `stat:` receipt fields.
+`id:` and `stat:` receipt fields. An intermediate delivery notification is the SMSC reporting too,
+and arrives with `dlr.intermediate` true: nothing about the message is settled, and a later receipt
+says how it ended.
 
 Matching a receipt to a send means comparing `dlr.smsId` against the `smsIds` that `sendSms()`
 returned. Some SMSCs write the two in different notations — a hex `message_id` on the
@@ -317,8 +319,8 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 | Event | Fires when |
 | --- | --- |
 | `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and its `smsId`. |
-| `dlr` | A delivery report arrives, one per segment. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. `statusMsg` names `statusId` unless the peer sent a `message_state` this library cannot name — then `statusId` is that raw value and `statusMsg` is whatever the body said, or `UNKNOWN`. |
-| `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. A base is merged once: a later message the SMSC gives the same ids is reported on through `dlr` alone, and an earlier one still collecting loses its merged report as well. |
+| `dlr` | A delivery report arrives, one per segment. `intermediate` is true where the SMSC marked it a report it will follow with a final receipt. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. `statusMsg` names `statusId` unless the peer sent a `message_state` this library cannot name — then `statusId` is that raw value and `statusMsg` is whatever the body said, or `UNKNOWN`. |
+| `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. An intermediate report never counts towards it. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. A base is merged once: a later message the SMSC gives the same ids is reported on through `dlr` alone, and an earlier one still collecting loses its merged report as well. |
 | `close` | The session is over, because nothing will bring the link back. Fires once, whether you closed it or the link failed for good. |
 | `disconnected` | The link dropped and the reconnect loop will retry it. Do not open a replacement client here — the session you hold comes back on its own, and `reconnected` says when. Fires again for each attempt that reconnects and then fails, so it is not one-to-one with `reconnected`. |
 | `reconnected` | The client re-bound after a drop. |
