@@ -1548,6 +1548,22 @@ describe('merged delivery report bounds', () => {
 		assert.equal(dlrMerger.size, 0);
 	});
 
+	// A receipt for whole-3 would otherwise fill the slot whole-2 was registered for, truncating the report.
+	test('ignores a receipt for a part the send never registered', () => {
+		const dlrMerger = merger();
+
+		dlrMerger.expect(['whole-1', 'whole-2']);
+
+		assert.equal(dlrMerger.collect(receipt('whole-1')), undefined);
+		assert.equal(dlrMerger.collect(receipt('whole-3')), undefined);
+		assert.equal(dlrMerger.size, 1);
+
+		const merged = dlrMerger.collect(receipt('whole-2'));
+
+		assert.ok(merged);
+		assert.deepEqual(merged.segments.map(one => one.smsId), ['whole-1', 'whole-2']);
+	});
+
 	// Every multipart send registered a group, and only a complete set of receipts ever removed it.
 	test('drops the oldest group once the cap is reached', () => {
 		const dlrMerger = merger({ max: 2 });

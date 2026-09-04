@@ -14,7 +14,7 @@ export type DlrMergerOptions = {
 };
 
 type Group = {
-	expected: number;
+	expected: Set<number>;
 	parts: Map<number, Dlr>;
 };
 
@@ -36,6 +36,30 @@ const severity: Record<MessageState, number> = {
 	REJECTED: 8,
 	UNDELIVERABLE: 9,
 };
+
+/** The base and the part numbers one send's ids carry, or nothing when they do not spell out one message. */
+function idNumbering(smsIds: string[]): { base: string; parts: Set<number> } | undefined {
+	const bases = new Set<string>();
+	const parts = new Set<number>();
+
+	for (const smsId of smsIds) {
+		const match = numbered.exec(smsId);
+		const base = match?.[1];
+		const part = match?.[2];
+
+		if (base === undefined || part === undefined) return undefined;
+
+		bases.add(base);
+		parts.add(Number(part));
+	}
+
+	const [base] = bases;
+
+	// A repeated id leaves a part no receipt can fill, so the group would complete on a short set.
+	if (!base || bases.size !== 1 || parts.size !== smsIds.length) return undefined;
+
+	return { base, parts };
+}
 
 /**
  * Merges the per-segment receipts of a multipart message into one report, but only when the peer
@@ -75,21 +99,9 @@ export class DlrMerger {
 	expect(smsIds: string[]): void {
 		if (smsIds.length < 2) return;
 
-		const bases = new Set<string>();
+		const numbering = idNumbering(smsIds);
 
-		for (const smsId of smsIds) {
-			const base = numbered.exec(smsId)?.[1];
-
-			if (base === undefined || base === '') return;
-
-			bases.add(base);
-		}
-
-		if (bases.size !== 1) return;
-
-		for (const base of bases) {
-			this.open(base, smsIds.length);
-		}
+		if (numbering) this.open(numbering.base, numbering.parts);
 	}
 
 	/** The whole message's report, on the receipt that completes it. */
@@ -108,9 +120,13 @@ export class DlrMerger {
 
 		if (!group) return undefined;
 
-		group.parts.set(Number(part), dlr);
+		const number = Number(part);
 
-		if (group.parts.size < group.expected) return undefined;
+		if (!group.expected.has(number)) return undefined;
+
+		group.parts.set(number, dlr);
+
+		if (group.parts.size < group.expected.size) return undefined;
 
 		this.close(base);
 
@@ -129,11 +145,11 @@ export class DlrMerger {
 	sweep(): void {
 		for (const [base, group] of this.groups.takeExpired()) {
 			this.close(base);
-			this.log.info('dlrMerger - incomplete receipts expired', { base, expected: group.expected });
+			this.log.info('dlrMerger - incomplete receipts expired', { base, expected: group.expected.size });
 		}
 	}
 
-	private open(base: string, expected: number): void {
+	private open(base: string, expected: Set<number>): void {
 		this.spent.takeExpired();
 
 		if (this.groups.get(base) !== undefined || this.spent.get(base) === true) {
