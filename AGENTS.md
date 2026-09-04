@@ -298,19 +298,20 @@ Grouped by what each one constrains.
   second time in `DlrMerger`, so the library cannot answer the application one way and conclude the
   other. Not every peer marks a transient report 0x20 — an ordinary receipt carrying `stat:ENROUTE`
   is common — so the state test is what the marker test cannot replace. `message_state` 0 is 5.0's
-  `SCHEDULED` and undefined in 3.4; a peer that writes it is read as
-  transient rather than as saying nothing, maintainer's call, 2026-09-03, since the codec refuses a
-  zero-length integer TLV and so an absent one cannot land there.
+  `SCHEDULED` and undefined in 3.4; a peer that writes it is read as transient rather than as saying
+  nothing, maintainer's call, 2026-09-03, since the codec refuses a zero-length integer TLV and so an
+  absent one cannot land there.
 
 - **A transient state goes out as an intermediate delivery notification (0x20), every other state as
   a delivery receipt (0x04).** Appendix B makes a receipt's `stat` the message's final status, so
   0x04 over `ENROUTE` emits the two disagreeing spellings of finality the reading side above has to
   reconcile, and goal 3 has our own senders write the marker 3.4 defines. `sendDlr()` takes the list
   from `transientStates` in `dlr.ts`, the same one the reader uses, so the two cannot drift.
-  Rejected: 0x04 for every state, for the sake of a peer keyed to that marker alone — such a peer
-  then reads a transient report as a final one, which is goal 2's wrong answer handed to the peer
-  instead of to the application. A 0.4.0 client is unaffected either way: its bind declares 0x00, so
-  it is sent no TLVs and refuses the receipt regardless.
+  Rejected: 0x04 for every state, for the sake of a peer that classifies on the marker — the cost
+  accepted here is that such a peer stops recognising a transient report as a report at all and hands
+  its application receipt text as an inbound message, where under 0x04 it would have read the state
+  from `stat:` and been right. A transient state also carries `err:000`, since a message still on its
+  way has not failed.
 
 - **`smsIdFormat` names a notation per place, and normalisation never reaches inside a `<base>-<n>`
   id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's `id:` in decimal, so one

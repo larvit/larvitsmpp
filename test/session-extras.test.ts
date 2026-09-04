@@ -178,11 +178,11 @@ describe('merged delivery reports', () => {
 		assert.ok(session);
 
 		const merged = once<MessageDlr>(resolve => { session.on('messageDlr', resolve); });
-		const perSegment: boolean[] = [];
+		const reports: Dlr[] = [];
 		const markers: (number | undefined)[] = [];
 
 		session.on('dlr', (dlr, pduObj) => {
-			perSegment.push(dlr.intermediate);
+			reports.push(dlr);
 			markers.push(paramNumber(pduObj.params.esm_class, 0));
 		});
 
@@ -208,14 +208,19 @@ describe('merged delivery reports', () => {
 		assert.equal(report.smsId, 'en-route');
 		assert.equal(report.statusMsg, 'DELIVERED');
 		assert.equal(report.segments.length, 3);
-		assert.deepEqual(perSegment, [true, true, true, false, false, false]);
 		const notification = consts.ESM_CLASS.INTERMEDIATE_DELIVERY;
 		const receipt = consts.ESM_CLASS.MC_DELIVERY_RECEIPT;
 
+		assert.deepEqual(reports.map(one => one.intermediate), [true, true, true, false, false, false]);
 		assert.deepEqual(
 			markers,
 			[notification, notification, notification, receipt, receipt, receipt],
 			'a transient state goes out under the marker the spec gives it',
+		);
+		assert.deepEqual(
+			reports.map(one => one.errorCode),
+			['000', '000', '000', '000', '000', '000'],
+			'a message still on its way has not failed',
 		);
 	});
 

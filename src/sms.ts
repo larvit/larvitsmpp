@@ -128,6 +128,7 @@ async function sendResp(
 /** The receipt as text, which is all of it a peer below SMPP 3.4 is allowed to be sent. */
 function receiptText(sms: Sms, smsId: string, status: MessageState): string {
 	const delivered = status === 'DELIVERED';
+	const failed = !delivered && !transientStates.includes(status);
 
 	return [
 		`id:${smsId}`,
@@ -136,7 +137,7 @@ function receiptText(sms: Sms, smsId: string, status: MessageState): string {
 		`submit date:${smppDate(sms.submitTime)}`,
 		`done date:${smppDate(new Date())}`,
 		`stat:${receiptCodes[status]}`,
-		`err:${delivered ? '000' : '001'}`,
+		`err:${failed ? '001' : '000'}`,
 		'text:',
 	].join(' ');
 }

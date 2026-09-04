@@ -133,6 +133,12 @@ session message is a change to every call site.
       and applies it to the other is wrong. A budget type both take would close it. Raised by review,
       2026-09-01.
 
+- [ ] **`err:` on a receipt for a state that neither delivered nor failed.** `receiptText()` now
+      writes `err:000` for `DELIVERED` and for the two transient states, and `err:001` for every
+      other — so `ACCEPTED`, `SKIPPED`, `UNKNOWN` and `DELETED` still announce an error code the SMSC
+      never had. Which of those are failures is the open half. Raised by review, 2026-09-03; needs a
+      decision.
+
 - [ ] **`once()` is copied into four test files, and two copies never give up.**
       `session-extras.test.ts` and `readme.test.ts` reject after 5000 ms; `session.test.ts` and
       `tls.test.ts` wait forever, so an event that never fires still hangs the run the way an
