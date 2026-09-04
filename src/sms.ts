@@ -77,8 +77,7 @@ export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 		message: input.message,
 		pduObjs: input.pduObjs,
 		sendDlr: status => sendDlr(sms, handlers.send, status),
-		sendResp: options => sendResp(sms, answered, options ?? {}, handlers.lostLink)
-			.finally(handlers.onAnswered),
+		sendResp: options => sendResp(sms, answered, options ?? {}, handlers),
 		session: input.session,
 		get smsId(): string {
 			return answered.smsId;
@@ -94,7 +93,7 @@ async function sendResp(
 	sms: Sms,
 	answered: { smsId: string },
 	options: SendRespOptions,
-	lostLink: () => boolean,
+	handlers: Pick<SmsHandlers, 'lostLink' | 'onAnswered'>,
 ): Promise<VoidResult> {
 	const total = sms.pduObjs.length;
 
@@ -109,7 +108,7 @@ async function sendResp(
 	if (options.smsId !== undefined) answered.smsId = options.smsId;
 
 	// A response carries the sequence number it was asked on, which the next link knows nothing about.
-	if (lostLink()) {
+	if (handlers.lostLink()) {
 		return { err: new Error('The link this message arrived on is gone, so nothing would correlate the response') };
 	}
 
@@ -119,7 +118,11 @@ async function sendResp(
 		{ message_id: segmentId(answered.smsId, index, total) },
 	)));
 
-	return results.find(result => result.err) ?? {};
+	const failure = results.find(result => result.err);
+
+	if (!failure) handlers.onAnswered();
+
+	return failure ?? {};
 }
 
 /** The receipt as text, which is all of it a peer below SMPP 3.4 is allowed to be sent. */

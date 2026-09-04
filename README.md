@@ -332,12 +332,13 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 `sendSms()`, `send()`, `sendReturn()`, `unbind()` and `close()`. Both `close()` and `unbind()`
 refuse further sends, wait out the requests this end already sent for up to `shutdownTimeout`, and
 then tear down whatever is left, resolving to an `err` that says what was lost. They also wait for
-every `sms` the application has not called `sendResp()` on, so a peer whose `submit_sm` is still
-being handled is answered rather than left to re-send it — answering its PDUs through `sendReturn()`
-instead leaves that wait running until it gives up. `sendDlr()` is the one send the refusal lets
-past, and it catches the wait when issued straight after `sendResp()`; await anything in between and
-it races the shutdown like any other send. `close({ signal })` takes an
-`AbortSignal` that cuts the wait short; `unbind()` takes none, and waits a further
+every `sms` still in the application's hands, so a peer whose `submit_sm` is being handled is
+answered rather than left to re-send it. That wait ends when `sendResp()` puts the response on the
+wire, or when every listener that took the message has failed; answering its PDUs through
+`sendReturn()` instead leaves the wait running until it gives up. `sendDlr()` is the one send the
+refusal lets past, and it catches the wait when issued straight after `sendResp()`; await anything in
+between and it races the shutdown like any other send. `close({ signal })` takes an `AbortSignal`
+that cuts the wait short; `unbind()` takes none, and waits a further
 `responseTimeout` for its own response. `send()` reaches any of the 33 SMPP commands the codec
 knows, not just the four the session handles natively:
 

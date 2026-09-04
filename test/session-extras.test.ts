@@ -1012,6 +1012,33 @@ describe('held message bounds', () => {
 	});
 });
 
+describe('sendResp()', () => {
+	// A response the wire never carried leaves the peer owed one, so nothing may count it answered.
+	test('does not count a response that never reached the wire as an answer', async t => {
+		const sock = new net.Socket();
+		const session = new Session({ sock });
+
+		closeAfter(t, session);
+		sock.destroy();
+
+		let answered = 0;
+		const sms = createSms({
+			from: '46701113311',
+			message: 'never answered',
+			pduObjs: [submitPdu(1)],
+			session,
+			to: '46709771337',
+		}, {
+			lostLink: () => false,
+			onAnswered: () => { answered++; },
+			send: () => Promise.resolve({ err: new Error('never sent') }),
+		});
+
+		assert.match((await sms.sendResp()).err?.message ?? '', /Socket is closed/);
+		assert.equal(answered, 0);
+	});
+});
+
 describe('sendDlr()', () => {
 	// A receipt cannot be resent wholesale without duplicating the segments that landed.
 	test('names the segments the peer took, refused, and may have taken', async t => {
@@ -1399,6 +1426,72 @@ describe('graceful shutdown', () => {
 		assert.deepEqual(await bound.close(), {});
 		assert.ok(Date.now() - started < 1000);
 		assert.ok((await sent).err instanceof Error);
+	});
+
+	// emit() releases the hold of a listener that throws; one that rejects may cost no more than that.
+	test('a listener that rejected before answering does not hold the shutdown up', async t => {
+		const smpp = await startServer(t, { shutdownTimeout: 30_000 });
+		const failed = once<Error>(resolve => {
+			smpp.on('session', bound => {
+				bound.on('sessionError', resolve);
+				bound.on('sms', () => Promise.reject(new Error('the listener gave up')));
+			});
+		});
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const sent = session.sendSms({
+			from: '46701113311',
+			message: 'the listener rejects',
+			to: '46709771337',
+		});
+
+		assert.equal((await failed).message, 'the listener gave up');
+
+		const started = Date.now();
+
+		assert.deepEqual(await peerOf(smpp).close(), {});
+		assert.ok(Date.now() - started < 1000);
+		assert.ok((await sent).err instanceof Error);
+	});
+
+	test('waits for the listener still working when another one rejected', async t => {
+		const smpp = await startServer(t, { shutdownTimeout: 30_000 });
+		const failed = once<Error>(resolve => {
+			smpp.on('session', bound => {
+				bound.on('sessionError', resolve);
+				bound.on('sms', async sms => {
+					await delay(100);
+					await sms.sendResp({ smsId: 'answered-after-the-other-gave-up' });
+				});
+				bound.on('sms', () => Promise.reject(new Error('the audit listener gave up')));
+			});
+		});
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const sent = session.sendSms({
+			from: '46701113311',
+			message: 'two listeners, one gives up',
+			to: '46709771337',
+		});
+
+		assert.equal((await failed).message, 'the audit listener gave up');
+		assert.deepEqual(await peerOf(smpp).close(), {});
+		assert.deepEqual((await sent).smsIds, ['answered-after-the-other-gave-up']);
+	});
+
+	// Nothing reached the peer, so a drain counting this answered would report an outcome that never was.
+	test('leaves a message the library refused to answer unanswered', async t => {
+		const { sms, smpp } = await submitInFlight(t, {}, { shutdownTimeout: 50 });
+		const refused = await sms.sendResp({ smsId: '' });
+		const closed = await peerOf(smpp).close();
+
+		assert.match(refused.err?.message ?? '', /smsId must not be empty/);
+		assert.ok(closed.err instanceof Error);
+		assert.match(closed.err.message, /1 message\(s\) unanswered/);
 	});
 
 	test('gives up on a request that outlasts shutdownTimeout', async t => {
