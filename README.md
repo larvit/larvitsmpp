@@ -2,32 +2,6 @@
 
 A simplified implementation of the SMPP protocol, in TypeScript. ESM only, types included.
 
-Successor to [larvitsmpp](https://www.npmjs.com/package/larvitsmpp) 0.4.0. The API is the same shape
-it has always been — connect, send an SMS, listen for delivery reports — with callbacks replaced by
-promises and the rough edges taken off.
-
-> **Not published yet.** The implementation is complete and tested, but 1.0.0 has not been released
-> to npm. Until it is, use `larvitsmpp` 0.4.0. Remaining release steps are in [todo.md](todo.md).
-
-## Beyond the PDU codec
-
-Encoding and decoding PDUs is the easy half of SMPP. The session layer is the half usually written
-by hand on top of a library; it is built in here.
-
-| | |
-| --- | --- |
-| **Keepalive** | `enquire_link` every 20 s on a quiet link, and a peer that stops answering is dropped. |
-| **Reconnect with backoff** | A dropped client link reopens the socket and re-binds by default, 1 s doubling to 30 s. |
-| **Submit window** | `maxOutstanding` holds requests in flight at 10; further sends queue instead of overrunning the SMSC. |
-| **Delivery receipts** | Correlated by `receipted_message_id`/`message_state` where the SMSC sends them, falling back to parsing the receipt text — what Kannel and several others send. |
-| **Multipart** | Long messages split on send; concatenated `deliver_sm` reassembled into one `sms`. |
-| **Graceful shutdown** | `close()` and `unbind()` wait out the requests this end already sent and the messages the application has not answered yet, so neither end has to guess whether a message got through. |
-| **Never throws** | Everything fallible resolves to `{ err?, … }`, the codec included. |
-
-Throughput throttling is deliberately absent: an operator's rate limit is scoped to the account, and
-enforcing it needs state shared across every process bound to that account, which a library holding
-everything in memory cannot provide.
-
 ## Requirements
 
 Node 18 or later. No runtime dependencies.
@@ -375,6 +349,25 @@ the version it declared, `0x00` if it declared none. The library's own senders c
 `bindAllows(cmdName)` answers the same question for the bind direction, and `boundAs` is the role
 the ESME bound with — see [Bind direction](#bind-direction).
 
+## Beyond the PDU codec
+
+Encoding and decoding PDUs is the easy half of SMPP. The session layer is the half usually written
+by hand on top of a library; it is built in here.
+
+| | |
+| --- | --- |
+| **Keepalive** | `enquire_link` every 20 s on a quiet link, and a peer that stops answering is dropped. |
+| **Reconnect with backoff** | A dropped client link reopens the socket and re-binds by default, 1 s doubling to 30 s. |
+| **Submit window** | `maxOutstanding` holds requests in flight at 10; further sends queue instead of overrunning the SMSC. |
+| **Delivery receipts** | Correlated by `receipted_message_id`/`message_state` where the SMSC sends them, falling back to parsing the receipt text — what Kannel and several others send. |
+| **Multipart** | Long messages split on send; concatenated `deliver_sm` reassembled into one `sms`. |
+| **Graceful shutdown** | `close()` and `unbind()` wait out the requests this end already sent and the messages the application has not answered yet, so neither end has to guess whether a message got through. |
+| **Never throws** | Everything fallible resolves to `{ err?, … }`, the codec included. |
+
+Throughput throttling is deliberately absent: an operator's rate limit is scoped to the account, and
+enforcing it needs state shared across every process bound to that account, which a library holding
+everything in memory cannot provide.
+
 ## Working with PDUs directly
 
 The codec is exported, synchronous, and never throws — handy for inspecting captured traffic:
@@ -394,6 +387,10 @@ The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `
 `types`, and the matching `*ById` maps) and grouped as `defs`.
 
 ## Migrating from larvitsmpp 0.4.0
+
+Successor to [larvitsmpp](https://www.npmjs.com/package/larvitsmpp) 0.4.0. The API is the same shape
+it has always been — connect, send an SMS, listen for delivery reports — with callbacks replaced by
+promises and the rough edges taken off.
 
 - **The package is now `@larvit/smpp`** and is ESM only. `require()` no longer works.
 - **Callbacks are gone.** `client`, `server`, `sendSms`, `sendResp`, `sendDlr`, `unbind` and
