@@ -26,7 +26,7 @@ import { closeAfter, closeListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
 import { errors } from '../src/defs/errors.ts';
 import { objToPdu } from '../src/pdu.ts';
-import { paramText } from '../src/defs/types.ts';
+import { paramNumber, paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
 import { submitSms } from '../src/send-sms.ts';
@@ -168,6 +168,62 @@ describe('merged delivery reports', () => {
 		assert.deepEqual(perSegment, ['merge-me-1', 'merge-me-2', 'merge-me-3']);
 	});
 
+	test('reports once, on the final receipts, when the peer reports en route first', async t => {
+		const smpp = await startServer(t);
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', session => session.on('sms', resolve));
+		});
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const merged = once<MessageDlr>(resolve => { session.on('messageDlr', resolve); });
+		const reports: Dlr[] = [];
+		const markers: (number | undefined)[] = [];
+
+		session.on('dlr', (dlr, pduObj) => {
+			reports.push(dlr);
+			markers.push(paramNumber(pduObj.params.esm_class, 0));
+		});
+
+		const [sms] = await Promise.all([
+			incoming.then(async received => {
+				await received.sendResp({ smsId: 'en-route' });
+
+				return received;
+			}),
+			session.sendSms({
+				dlr: true,
+				from: '46701113311',
+				message: 'x'.repeat(400),
+				to: '46709771337',
+			}),
+		]);
+
+		await sms.sendDlr('ENROUTE');
+		await sms.sendDlr('DELIVERED');
+
+		const report = await merged;
+
+		assert.equal(report.smsId, 'en-route');
+		assert.equal(report.statusMsg, 'DELIVERED');
+		assert.equal(report.segments.length, 3);
+		const notification = consts.ESM_CLASS.INTERMEDIATE_DELIVERY;
+		const receipt = consts.ESM_CLASS.MC_DELIVERY_RECEIPT;
+
+		assert.deepEqual(reports.map(one => one.intermediate), [true, true, true, false, false, false]);
+		assert.deepEqual(
+			markers,
+			[notification, notification, notification, receipt, receipt, receipt],
+			'a transient state goes out under the marker the spec gives it',
+		);
+		assert.deepEqual(
+			reports.map(one => one.errorCode),
+			['000', '000', '000', '000', '000', '000'],
+			'a message still on its way has not failed',
+		);
+	});
+
 	test('reports the worst status across the segments', async t => {
 		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => {
@@ -203,16 +259,33 @@ describe('merged delivery reports', () => {
 });
 
 describe('merging segment statuses', () => {
-	function receipt(smsId: string, statusMsg: MessageState): Dlr {
+	function receipt(smsId: string, statusMsg: MessageState, intermediate = false): Dlr {
 		return {
 			doneDate: undefined,
 			errorCode: undefined,
+			intermediate,
 			receipt: undefined,
 			smsId,
 			statusId: consts.MESSAGE_STATE[statusMsg],
 			statusMsg,
 		};
 	}
+
+	test('never counts an intermediate report toward a merge', () => {
+		const merger = new DlrMerger({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+
+		merger.expect(['msg-1', 'msg-2']);
+
+		assert.equal(merger.collect(receipt('msg-1', 'ENROUTE', true)), undefined);
+		assert.equal(merger.collect(receipt('msg-2', 'ENROUTE', true)), undefined);
+		assert.equal(merger.collect(receipt('msg-1', 'DELIVERED')), undefined);
+
+		const merged = merger.collect(receipt('msg-2', 'DELIVERED'));
+
+		assert.ok(merged);
+		assert.equal(merged.statusMsg, 'DELIVERED');
+		assert.equal(merged.segments.length, 2);
+	});
 
 	// MESSAGE_STATE is a flat enum: ACCEPTED is 6 where UNDELIVERABLE is 5, so reducing on the
 	// wire value called a part-failed message delivered.

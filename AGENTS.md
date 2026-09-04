@@ -18,16 +18,19 @@ one wins. They do not override the hard rules below.
 1. **Correct on the wire.** SMPP 3.4 as SMSCs actually run it. Every other goal yields to this one;
    the defect table below is what the alternative costs.
 2. **Never give the application a wrong answer about what happened.** An outcome we cannot determine
-   is reported as undetermined rather than guessed; a request the peer may already have taken is
-   never re-sent on the library's own initiative; work the peer has no reason to send again is not
-   dropped.
+   is reported as undetermined rather than guessed; a report the peer marked as not final settles
+   nothing, so nothing the library concludes may rest on one; a request the peer may already have
+   taken is never re-sent on the library's own initiative; work the peer has no reason to send again
+   is not dropped.
 3. **Strict in what we send, generous in what we read.** The library's own senders follow 3.4, and
    the codec parses whatever arrives. Where the letter of the spec would discard traffic a real SMSC
    sends, keep the traffic.
 4. **A peer an operator never has to complain about.** No bind flooding, nothing a bind direction
    forbids, no optional parameters to a peer that declared none, nothing held without a bound.
 5. **The session layer is in here, and its defaults are what most applications should run.**
-   Keepalive, reconnect, the send window, reassembly and receipt correlation. An option retunes a
+   Keepalive, reconnect, the send window, reassembly and receipt correlation. What the network says
+   about a message the application sent reaches it as a report rather than as an inbound message, and
+   says whether it is final, so nothing has to read the PDU to tell those apart. An option retunes a
    default or opts out of it; an option does not switch on the thing the caller obviously wanted.
 6. **A small, stable public surface over reshapeable internals.** Only what `src/index.ts` exports is
    published. A new option has to beat "the application can do this itself", and has to keep a
@@ -273,15 +276,42 @@ Grouped by what each one constrains.
   and sent no optional parameters, which is how the spec reads an absent `sc_interface_version`.
 
 - **`esm_class` decides what a `deliver_sm` is, and the body is read only when it names nothing.**
-  `MC_DELIVERY_RECEIPT` (0x04) makes it a receipt whatever the body parses to, so a receipt in a
-  format `dlrFromPdu()` cannot read reaches `dlr` with `smsId` undefined instead of arriving as an
-  inbound SMS. Any other named type is not a receipt and its body is not scraped; a message type of 0
-  or one of the ten reserved keeps the scrape, and a non-empty `receipted_message_id` TLV marks a
-  receipt on the same footing. A receipt this library recognises never reaches the reassembler, so an
-  SMSC that splits one across segments gets a `dlr` per segment rather than one merged report. The
-  `message_state` TLV is authoritative only where it names a state in the table — SMPP reserves
-  0x80-0xFF for MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves
-  `statusMsg` to the body.
+  The two types the MC writes about a message we submitted — `MC_DELIVERY_RECEIPT` (0x04) and
+  `INTERMEDIATE_DELIVERY` (0x20) — are reports whatever the body parses to, so one in a format
+  `dlrFromPdu()` cannot read reaches `dlr` with `smsId` undefined instead of arriving as an inbound
+  SMS. The three the far-end SME writes (0x08, 0x10, 0x18) are messages and their bodies are not
+  scraped: Kannel reads 0x08 as report-bearing and this does not, because a delivery acknowledgement
+  is the handset's word about a message, not the network's. A message type of 0 or one of the ten
+  reserved keeps the scrape, and a non-empty `receipted_message_id` TLV marks a report on the same
+  footing. A report this library recognises never reaches the reassembler, so an SMSC that splits one
+  across segments gets a `dlr` per segment rather than one merged report. The `message_state` TLV is
+  authoritative only where it names a state in the table — SMPP reserves 0x80-0xFF for
+  MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves `statusMsg` to
+  the body.
+
+- **A report is final unless its `esm_class` or its state says otherwise, and only `ENROUTE` and
+  `SCHEDULED` say otherwise.** SMPP 3.4 Appendix B lists every other receipt state as final,
+  `UNKNOWN` and `ACCEPTED` included, so a peer writing `ACCEPTD` for a carrier-accepted step is taken
+  at its word. Rejected: reading `UNKNOWN` as non-final, which leaves a peer whose receipt body this
+  library cannot read with no `messageDlr` at all — goal 2 wants that reported as undetermined, not
+  withheld. Both spellings resolve into `Dlr.intermediate` at the boundary rather than being read a
+  second time in `DlrMerger`, so the library cannot answer the application one way and conclude the
+  other. Not every peer marks a transient report 0x20 — an ordinary receipt carrying `stat:ENROUTE`
+  is common — so the state test is what the marker test cannot replace. `message_state` 0 is 5.0's
+  `SCHEDULED` and undefined in 3.4; a peer that writes it is read as transient rather than as saying
+  nothing, maintainer's call, 2026-09-03, since the codec refuses a zero-length integer TLV and so an
+  absent one cannot land there.
+
+- **A transient state goes out as an intermediate delivery notification (0x20), every other state as
+  a delivery receipt (0x04).** Appendix B makes a receipt's `stat` the message's final status, so
+  0x04 over `ENROUTE` emits the two disagreeing spellings of finality the reading side above has to
+  reconcile, and goal 3 has our own senders write the marker 3.4 defines. `sendDlr()` takes the list
+  from `transientStates` in `dlr.ts`, the same one the reader uses, so the two cannot drift.
+  Rejected: 0x04 for every state, for the sake of a peer that classifies on the marker — the cost
+  accepted here is that such a peer stops recognising a transient report as a report at all and hands
+  its application receipt text as an inbound message, where under 0x04 it would have read the state
+  from `stat:` and been right. A transient state also carries `err:000`, since a message still on its
+  way has not failed.
 
 - **`smsIdFormat` names a notation per place, and normalisation never reaches inside a `<base>-<n>`
   id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's `id:` in decimal, so one

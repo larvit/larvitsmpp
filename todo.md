@@ -64,6 +64,8 @@ Rules the API follows:
 | The hold released exactly when the peer was answered: a refused `sendResp()` keeps it, a listener that rejected drops it | `test/session-extras.test.ts` |
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
+| An intermediate delivery notification read as a report marked `intermediate`, as is a receipt reporting `ENROUTE` or `SCHEDULED`, and never counted into a merge | `test/dlr.test.ts`, `test/session.test.ts`, `test/session-extras.test.ts` |
+| A transient state sent under the marker the spec gives it, off the same list the reader uses | `test/session-extras.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
 | Cross-checked against node-smpp both ways and over a live session | `test/interop.test.ts` |
 | CI on Node 18/20/22/24, Renovate, tag-triggered publish | `.github/workflows/` |
@@ -131,12 +133,11 @@ session message is a change to every call site.
       and applies it to the other is wrong. A budget type both take would close it. Raised by review,
       2026-09-01.
 
-- [ ] **Does an intermediate delivery notification deserve to be a `dlr`?** `esm_class` message type
-      `INTERMEDIATE_DELIVERY` (0x20) is classified as a message today, so a peer that reports
-      non-final states with it hands the application a raw `id:… stat:ENROUTE` text as an inbound
-      SMS. Kannel treats 0x04, 0x08 and 0x20 alike as report-bearing. Against it: a non-final report
-      would take a segment's slot in `DlrMerger` and complete the group early. Raised by review,
-      2026-08-27; needs a decision.
+- [ ] **`err:` on a receipt for a state that neither delivered nor failed.** `receiptText()` now
+      writes `err:000` for `DELIVERED` and for the two transient states, and `err:001` for every
+      other — so `ACCEPTED`, `SKIPPED`, `UNKNOWN` and `DELETED` still announce an error code the SMSC
+      never had. Which of those are failures is the open half. Raised by review, 2026-09-03; needs a
+      decision.
 
 - [ ] **`once()` is copied into four test files, and two copies never give up.**
       `session-extras.test.ts` and `readme.test.ts` reject after 5000 ms; `session.test.ts` and

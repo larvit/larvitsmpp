@@ -5,7 +5,7 @@ import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
 import { UnansweredError } from './unanswered-error.ts';
 import { consts } from './defs/constants.ts';
-import { receiptCodes } from './dlr.ts';
+import { receiptCodes, transientStates } from './dlr.ts';
 import { smppDate } from './message.ts';
 import { uuidv7 } from './uuid.ts';
 
@@ -128,6 +128,7 @@ async function sendResp(
 /** The receipt as text, which is all of it a peer below SMPP 3.4 is allowed to be sent. */
 function receiptText(sms: Sms, smsId: string, status: MessageState): string {
 	const delivered = status === 'DELIVERED';
+	const failed = !delivered && !transientStates.includes(status);
 
 	return [
 		`id:${smsId}`,
@@ -136,7 +137,7 @@ function receiptText(sms: Sms, smsId: string, status: MessageState): string {
 		`submit date:${smppDate(sms.submitTime)}`,
 		`done date:${smppDate(new Date())}`,
 		`stat:${receiptCodes[status]}`,
-		`err:${delivered ? '000' : '001'}`,
+		`err:${failed ? '001' : '000'}`,
 		'text:',
 	].join(' ');
 }
@@ -192,7 +193,9 @@ async function sendDlr(
 			cmdName: 'deliver_sm',
 			params: {
 				destination_addr: sms.from,
-				esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+				esm_class: transientStates.includes(status)
+					? consts.ESM_CLASS.INTERMEDIATE_DELIVERY
+					: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
 				short_message: receiptText(sms, smsId, status),
 				source_addr: sms.to,
 			},

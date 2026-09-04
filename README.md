@@ -163,7 +163,8 @@ session.on('sms', async sms => {
 Delivery receipts travel on the same SMPP command but reach you as `dlr`, so nothing you write has
 to tell the two apart. `esm_class` is what tells them apart; where it names no message type a
 `receipted_message_id` TLV does, and failing both the message body is read for the standard
-`id:` and `stat:` receipt fields.
+`id:` and `stat:` receipt fields. An intermediate delivery notification is the SMSC reporting as
+well, not an inbound message.
 
 Matching a receipt to a send means comparing `dlr.smsId` against the `smsIds` that `sendSms()`
 returned. Some SMSCs write the two in different notations — a hex `message_id` on the
@@ -231,7 +232,8 @@ await smpp.close();      // stop listening, then drain and close every live sess
 ```
 
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
-`ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`.
+`ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`. `SCHEDULED` and `ENROUTE` go out as intermediate
+delivery notifications (`esm_class` 0x20), the rest as delivery receipts (0x04).
 
 A message whose `data_coding` says 8-bit binary arrives as Latin-1, so `Buffer.from(sms.message,
 'latin1')` gives you back the original octets.
@@ -317,8 +319,8 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 | Event | Fires when |
 | --- | --- |
 | `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and its `smsId`. |
-| `dlr` | A delivery report arrives, one per segment. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. `statusMsg` names `statusId` unless the peer sent a `message_state` this library cannot name — then `statusId` is that raw value and `statusMsg` is whatever the body said, or `UNKNOWN`. |
-| `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. A base is merged once: a later message the SMSC gives the same ids is reported on through `dlr` alone, and an earlier one still collecting loses its merged report as well. |
+| `dlr` | A delivery report arrives, one per segment. `intermediate` is true where the report is not final: the SMSC either marked it an intermediate notification, or reported `ENROUTE` or `SCHEDULED`. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. `statusMsg` names `statusId` unless the peer sent a `message_state` this library cannot name — then `statusId` is that raw value and `statusMsg` is whatever the body said, or `UNKNOWN`. |
+| `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. A report carrying `intermediate` never counts towards it. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. A base is merged once: a later message the SMSC gives the same ids is reported on through `dlr` alone, and an earlier one still collecting loses its merged report as well. |
 | `close` | The session is over, because nothing will bring the link back. Fires once, whether you closed it or the link failed for good. |
 | `disconnected` | The link dropped and the reconnect loop will retry it. Do not open a replacement client here — the session you hold comes back on its own, and `reconnected` says when. Fires again for each attempt that reconnects and then fails, so it is not one-to-one with `reconnected`. |
 | `reconnected` | The client re-bound after a drop. |
@@ -428,6 +430,9 @@ have worked around any of these, remove the workaround:
 - LATIN1 (`data_coding` 0x03) was silently decoded as ASCII, corrupting the message.
 - Delivery receipt dates were a month off, and the status field read `UNDELIVERABLE` where the spec
   defines the 7-character `UNDELIV`.
+- Every receipt went out as `esm_class` 0x04, which SMPP 3.4 defines as the report of a message's
+  final state. A receipt for a transient state — `sendDlr('ENROUTE')` — is now marked 0x20, the
+  intermediate delivery notification.
 - `flash: true` discarded UCS2, mangling flash messages containing non-GSM characters.
 - The multipart reference counter was shared by every session in the process.
 - `tls: true` never performed a handshake, so the connection was not actually encrypted.
