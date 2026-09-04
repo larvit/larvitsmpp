@@ -131,7 +131,7 @@ export function parseReceipt(message: string): Receipt {
 type MessageType = 'intermediate' | 'other' | 'receipt' | 'unmarked';
 
 /** SMPP 3.4 Appendix B lists every other receipt state as final. */
-const transientStates: MessageState[] = ['ENROUTE', 'SCHEDULED'];
+export const transientStates: MessageState[] = ['ENROUTE', 'SCHEDULED'];
 
 /** Written by the far-end SME, not by the MC reporting on a message we submitted. */
 const smeMessageTypes: number[] = [

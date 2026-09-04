@@ -232,7 +232,8 @@ await smpp.close();      // stop listening, then drain and close every live sess
 ```
 
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
-`ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`.
+`ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`. `SCHEDULED` and `ENROUTE` go out as intermediate
+delivery notifications (`esm_class` 0x20), the rest as delivery receipts (0x04).
 
 A message whose `data_coding` says 8-bit binary arrives as Latin-1, so `Buffer.from(sms.message,
 'latin1')` gives you back the original octets.
@@ -429,6 +430,9 @@ have worked around any of these, remove the workaround:
 - LATIN1 (`data_coding` 0x03) was silently decoded as ASCII, corrupting the message.
 - Delivery receipt dates were a month off, and the status field read `UNDELIVERABLE` where the spec
   defines the 7-character `UNDELIV`.
+- Every receipt went out as `esm_class` 0x04, which SMPP 3.4 defines as the report of a message's
+  final state. A receipt for a transient state — `sendDlr('ENROUTE')` — is now marked 0x20, the
+  intermediate delivery notification.
 - `flash: true` discarded UCS2, mangling flash messages containing non-GSM characters.
 - The multipart reference counter was shared by every session in the process.
 - `tls: true` never performed a handshake, so the connection was not actually encrypted.

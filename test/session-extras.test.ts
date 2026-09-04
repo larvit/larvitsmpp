@@ -26,7 +26,7 @@ import { closeAfter, closeListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
 import { errors } from '../src/defs/errors.ts';
 import { objToPdu } from '../src/pdu.ts';
-import { paramText } from '../src/defs/types.ts';
+import { paramNumber, paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
 import { submitSms } from '../src/send-sms.ts';
@@ -179,8 +179,12 @@ describe('merged delivery reports', () => {
 
 		const merged = once<MessageDlr>(resolve => { session.on('messageDlr', resolve); });
 		const perSegment: boolean[] = [];
+		const markers: (number | undefined)[] = [];
 
-		session.on('dlr', dlr => perSegment.push(dlr.intermediate));
+		session.on('dlr', (dlr, pduObj) => {
+			perSegment.push(dlr.intermediate);
+			markers.push(paramNumber(pduObj.params.esm_class, 0));
+		});
 
 		const [sms] = await Promise.all([
 			incoming.then(async received => {
@@ -205,6 +209,14 @@ describe('merged delivery reports', () => {
 		assert.equal(report.statusMsg, 'DELIVERED');
 		assert.equal(report.segments.length, 3);
 		assert.deepEqual(perSegment, [true, true, true, false, false, false]);
+		const notification = consts.ESM_CLASS.INTERMEDIATE_DELIVERY;
+		const receipt = consts.ESM_CLASS.MC_DELIVERY_RECEIPT;
+
+		assert.deepEqual(
+			markers,
+			[notification, notification, notification, receipt, receipt, receipt],
+			'a transient state goes out under the marker the spec gives it',
+		);
 	});
 
 	test('reports the worst status across the segments', async t => {

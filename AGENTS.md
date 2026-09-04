@@ -302,6 +302,16 @@ Grouped by what each one constrains.
   transient rather than as saying nothing, maintainer's call, 2026-09-03, since the codec refuses a
   zero-length integer TLV and so an absent one cannot land there.
 
+- **A transient state goes out as an intermediate delivery notification (0x20), every other state as
+  a delivery receipt (0x04).** Appendix B makes a receipt's `stat` the message's final status, so
+  0x04 over `ENROUTE` emits the two disagreeing spellings of finality the reading side above has to
+  reconcile, and goal 3 has our own senders write the marker 3.4 defines. `sendDlr()` takes the list
+  from `transientStates` in `dlr.ts`, the same one the reader uses, so the two cannot drift.
+  Rejected: 0x04 for every state, for the sake of a peer keyed to that marker alone — such a peer
+  then reads a transient report as a final one, which is goal 2's wrong answer handed to the peer
+  instead of to the application. A 0.4.0 client is unaffected either way: its bind declares 0x00, so
+  it is sent no TLVs and refuses the receipt regardless.
+
 - **`smsIdFormat` names a notation per place, and normalisation never reaches inside a `<base>-<n>`
   id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's `id:` in decimal, so one
   transform over both sides cannot make them equal. `submitResp` covers the `receipted_message_id`

@@ -65,6 +65,7 @@ Rules the API follows:
 | Every runnable README example | `test/readme.test.ts` |
 | Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
 | An intermediate delivery notification read as a report marked `intermediate`, as is a receipt reporting `ENROUTE` or `SCHEDULED`, and never counted into a merge | `test/dlr.test.ts`, `test/session.test.ts`, `test/session-extras.test.ts` |
+| A transient state sent under the marker the spec gives it, off the same list the reader uses | `test/session-extras.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
 | Cross-checked against node-smpp both ways and over a live session | `test/interop.test.ts` |
 | CI on Node 18/20/22/24, Renovate, tag-triggered publish | `.github/workflows/` |
@@ -131,13 +132,6 @@ session message is a change to every call site.
       Neither is reachable from the other, so nothing can disagree today, but a reader who learns one
       and applies it to the other is wrong. A budget type both take would close it. Raised by review,
       2026-09-01.
-
-- [ ] **Write a transient state as an intermediate delivery notification.** `sendDlr()` marks every
-      receipt `esm_class` 0x04, so `sendDlr('ENROUTE')` announces a non-final state with the marker
-      SMPP 3.4 Appendix B reserves for the final one — the two disagreeing spellings of finality the
-      reading side was taught to reconcile on 2026-09-03. Decided the same day: fix it, off
-      `transientStates` in `dlr.ts` so the writer and the reader cannot drift, in a PR of its own.
-      Costs a bullet in README's "Behaviour that changed on the wire".
 
 - [ ] **`once()` is copied into four test files, and two copies never give up.**
       `session-extras.test.ts` and `readme.test.ts` reject after 5000 ms; `session.test.ts` and
