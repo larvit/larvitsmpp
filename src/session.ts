@@ -19,7 +19,7 @@ import { errorFrom } from './error-from.ts';
 import { optionalParamsMinVersion } from './defs/constants.ts';
 import { bindCarries, bindCommands, defaultSystemId, defaults } from './session-options.ts';
 import { isResp, pduReturn } from './pdu.ts';
-import { silentLog } from './log.ts';
+import { guardedLog } from './log.ts';
 import { submitSms, unsent } from './send-sms.ts';
 import { ConcatReference } from './udh.ts';
 
@@ -106,7 +106,7 @@ export class Session extends EventEmitter<SessionEvents> {
 	constructor(options: SessionOptions) {
 		super({ captureRejections: true });
 
-		this.log = options.log ?? silentLog;
+		this.log = guardedLog(options.log);
 		this.options = options;
 		this.dlrMerger = new DlrMerger({
 			log: this.log,

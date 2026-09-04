@@ -12,7 +12,7 @@ import { createServer as createTlsServer } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
 import { errorFrom } from './error-from.ts';
 import { paramText } from './defs/types.ts';
-import { silentLog } from './log.ts';
+import { guardedLog } from './log.ts';
 
 export type AuthenticateResult = { userData?: unknown } | boolean;
 
@@ -185,7 +185,7 @@ async function acceptBind(
 }
 
 async function onBind(session: Session, pduObj: PduObject, options: ServerOptions): Promise<void> {
-	const log = options.log ?? silentLog;
+	const log = guardedLog(options.log);
 	const identity = { system_id: options.systemId ?? defaults.systemId };
 	const systemId = paramText(pduObj.params.system_id);
 
@@ -212,7 +212,7 @@ async function onRequest(
 	if (session.loggedIn || pduObj.cmdName === 'unbind') return false;
 
 	if (!bindCommands.includes(pduObj.cmdName)) {
-		const log = options.log ?? silentLog;
+		const log = guardedLog(options.log);
 
 		log.debug('server - command before bind', { cmdName: pduObj.cmdName });
 		await session.sendReturn(pduObj, 'ESME_RINVBNDSTS');
@@ -226,7 +226,7 @@ async function onRequest(
 }
 
 function onConnection(sock: Socket, options: ServerOptions, server: SmppServer): void {
-	const log = options.log ?? silentLog;
+	const log = guardedLog(options.log);
 	const session = new Session({
 		idleTimeout: options.idleTimeout ?? defaults.idleTimeout,
 		log,
@@ -304,7 +304,7 @@ function createListener(
 }
 
 function onListening(listener: NetServer, smpp: SmppServer, options: ServerOptions): void {
-	const log = options.log ?? silentLog;
+	const log = guardedLog(options.log);
 
 	// Past startup, a listener error is a runtime event, not a failed start.
 	listener.on('error', (err: Error) => {
@@ -321,7 +321,7 @@ function onListening(listener: NetServer, smpp: SmppServer, options: ServerOptio
 
 /** Starts listening for SMPP connections. Resolves once the socket is bound. */
 export function server(options: ServerOptions = {}): Promise<Result<{ server: SmppServer }>> {
-	const log = options.log ?? silentLog;
+	const log = guardedLog(options.log);
 	const port = options.port ?? defaults.port;
 	const created = createListener(options, log, port);
 

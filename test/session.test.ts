@@ -1329,6 +1329,24 @@ describe('application hooks that throw or reject', () => {
 		assert.equal(smpp.sessions.size, 0);
 	});
 
+	test('sends on through an application logger that throws', async t => {
+		const thrower = (): void => { throw new Error('the logger exploded'); };
+		const log: SmppLog = { debug: thrower, error: thrower, info: thrower, verbose: thrower, warn: thrower };
+		const smpp = await startServer(t, { log });
+
+		smpp.on('session', session => {
+			session.on('sms', sms => { void sms.sendResp(); });
+		});
+
+		const { session } = await connect(t, smpp, { log });
+
+		assert.ok(session);
+
+		const sent = await session.sendSms({ from: '46701113311', message: 'logged', to: '46709771337' });
+
+		assert.equal(sent.err, undefined);
+	});
+
 	test('refuses a send window that can never free a slot', async t => {
 		const smpp = await startServer(t);
 		const { err, session } = await connect(t, smpp, { maxOutstanding: 0 });

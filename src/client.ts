@@ -11,7 +11,7 @@ import { checkSessionOptions, undeclaredInterfaceVersion } from './session-optio
 import { connect as netConnect } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
-import { silentLog } from './log.ts';
+import { guardedLog } from './log.ts';
 
 export type ClientOptions = {
 	addressRange?: string;
@@ -194,7 +194,7 @@ async function connect(options: ClientOptions, log: SmppLog): Promise<Result<{ s
 
 /** Connects to an SMSC and binds. */
 export async function client(options: ClientOptions = {}): Promise<Result<{ session: Session }>> {
-	const log = options.log ?? silentLog;
+	const log = guardedLog(options.log);
 	const opened = await connect(options, log);
 
 	if (opened.err) return { err: opened.err };
