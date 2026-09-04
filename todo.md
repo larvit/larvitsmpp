@@ -72,10 +72,10 @@ Rules the API follows:
 
 Every defect listed in the AGENTS.md table has a regression test naming the behaviour.
 
-## The GitHub backlog, once this branch is `master`
+## The GitHub backlog, once this branch is `main`
 
-Nothing below is closed while `master` is still 0.4.0 — declining a security bump on a live default
-branch is worse than leaving it open. Work through this immediately after the merge.
+Nothing below is closed while the default branch is still 0.4.0 — declining a security bump on a live
+default branch is worse than leaving it open. Work through this immediately after the rename.
 
 **Close as fixed by 1.0.0**, naming the replacement in the comment:
 
@@ -116,7 +116,16 @@ session message is a change to every call site.
 - [ ] Tag `v1.0.0` to publish.
 - [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.
-- [ ] Decide what happens to `master`: this branch is an orphan, so merging it is a deliberate act.
+- [ ] **Rename the branches, once everything above is done.** Maintainer's call, 2026-09-04:
+      `master` becomes `v0.4.0`, `typescript` becomes `main`, and `main` is the repository's default
+      branch. Renaming rather than merging is what the orphan commit leaves available — the two
+      histories share no ancestor, so a merge refuses them outright.
+      - [ ] Rename `master` to `v0.4.0`.
+      - [ ] Rename `typescript` to `main`, and make it the default branch.
+      - [ ] Retarget what still points at an old name: [#71](https://github.com/larvit/larvitsmpp/pull/71),
+            and the open PRs based on `master`, which a rename carries over rather than closes.
+      - [ ] Delete `rewrite-base` once [#71](https://github.com/larvit/larvitsmpp/pull/71) is
+            resolved; it exists only to give that PR a reviewable diff.
 
 ## Worth doing, not blocking
 
