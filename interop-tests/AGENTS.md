@@ -45,6 +45,8 @@ Both counts must be zero for a phase to pass.
    everything tried, and stop.
 5. `down -v` at the end of every run. Locally built images are kept, and their tag goes in the
    findings.
+   `run.py` runs in the foreground with a long timeout; an agent that backgrounds it is never woken
+   when it ends.
 6. Scratch files live outside the repo, in the directory the orchestrator names.
 7. A finding says what happened, what the spec or the peer's docs say, and how to reproduce it.
    Wording is neutral: a mismatch is a mismatch until a reader decides whose it is.
