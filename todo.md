@@ -113,6 +113,8 @@ session message is a change to every call site.
 
 - [ ] Create the `@larvit/smpp` package on npm and add `NPM_TOKEN` to the repository secrets, which
       `.github/workflows/release.yaml` needs.
+- [ ] Run the interoperability plan, [interop-tests/PLAN.md](interop-tests/PLAN.md), and fix or
+      document what it finds.
 - [ ] Tag `v1.0.0` to publish.
 - [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.
