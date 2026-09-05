@@ -13,16 +13,7 @@ const receipt = {
 };
 
 function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
-	return new Promise<T>((resolve, reject) => {
-		const timer = setTimeout(() => {
-			reject(new Error('waited 5000 ms for an event that never fired'));
-		}, 5000);
-
-		register(value => {
-			clearTimeout(timer);
-			resolve(value);
-		});
-	});
+	return new Promise<T>(resolve => { register(resolve); });
 }
 
 function delay(ms: number): Promise<void> {
@@ -60,7 +51,11 @@ async function linked(t: TestContext, options: Parameters<typeof client>[0] = {}
 	assert.ok(session);
 	closeAfter(t, session);
 
-	return { peer: await accepted, session };
+	const peer = await raceWithin(2000, accepted);
+
+	assert.ok(peer, 'the server never accepted a session');
+
+	return { peer, session };
 }
 
 describe('telling a refused PDU from a failed session', () => {
@@ -70,7 +65,7 @@ describe('telling a refused PDU from a failed session', () => {
 
 		peer.sock.write(truncatedTlv({ cmdName: 'deliver_sm', params: receipt, seqNr: 5 }));
 
-		const reported = await failed;
+		const reported = await raceWithin(2000, failed);
 
 		assert.ok(reported instanceof PduRefusedError, 'a refusal narrows without a cast');
 
@@ -106,8 +101,9 @@ describe('telling a refused PDU from a failed session', () => {
 
 		await session.sendSms({ from: '46701113311', message: 'blows the listener up', to: '46709771337' });
 
-		const reported = await failed;
+		const reported = await raceWithin(2000, failed);
 
+		assert.ok(reported, 'the listener that threw never reached the session');
 		assert.ok(!(reported instanceof PduRefusedError), 'a session failure is not a refused PDU');
 		assert.equal(reported.message, 'listener exploded');
 	});
@@ -118,37 +114,9 @@ describe('telling a refused PDU from a failed session', () => {
 
 		peer.sock.resetAndDestroy();
 
-		const reported = await failed;
+		const reported = await raceWithin(2000, failed);
 
+		assert.ok(reported, 'a reset socket never reached the session');
 		assert.ok(!(reported instanceof PduRefusedError), 'a dead socket is not a refused PDU');
-	});
-
-	// Both, deliberately: the call is the only place the send's outcome fits, the event the only
-	// place a peer that answers unreadably is visible at all.
-	test('settles the awaiting call and reports the event when a response is refused', async t => {
-		const { peer, session } = await linked(t, { responseTimeout: 60000 });
-		const failed = once<Error>(resolve => { session.on('sessionError', resolve); });
-
-		peer.on('incomingPduObj', pduObj => {
-			if (pduObj.cmdName !== 'submit_sm') return;
-
-			peer.sock.write(truncatedTlv({
-				cmdName: 'submit_sm_resp',
-				params: { message_id: '01a07342-a1d2-7ee9-a9a4-9489ef33f4c0' },
-				seqNr: pduObj.seqNr,
-			}));
-		});
-
-		const sending = session.sendSms({ from: '46701113311', message: 'hi', to: '46709771337' });
-		const sent = await raceWithin(2000, sending);
-
-		assert.ok(sent, 'the send settles on the refusal rather than on the response timeout');
-		assert.ok(sent.err instanceof Error);
-		assert.equal(sent.unanswered, 1);
-
-		const reported = await failed;
-
-		assert.ok(reported instanceof PduRefusedError, 'and the refusal reaches the event as well');
-		assert.equal(reported.header.cmdName, 'submit_sm_resp');
 	});
 });

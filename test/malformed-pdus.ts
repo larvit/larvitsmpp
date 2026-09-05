@@ -10,7 +10,7 @@ function built(input: PduObjectInput): Buffer {
 	return buffer;
 }
 
-/** The octets objToPdu built, wearing a sequence number it would refuse to write itself. */
+/** The octets objToPdu built, wearing a different sequence number, above its own range or not. */
 export function withSeqNr(input: PduObjectInput, seqNr: number): Buffer {
 	const buffer = built(input);
 
@@ -30,7 +30,8 @@ export function withUnknownCmdId(input: PduObjectInput): Buffer {
 
 /** command_length honoured, so the stream stays in sync, with the declared body cut short. */
 export function shortened(input: PduObjectInput, octets: number): Buffer {
-	const cut = built(input).subarray(0, -octets);
+	const buffer = built(input);
+	const cut = buffer.subarray(0, buffer.length - octets);
 
 	cut.writeUInt32BE(cut.length, 0);
 

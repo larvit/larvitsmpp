@@ -6,9 +6,9 @@ import type { Sms } from '../src/sms.ts';
 import type { SmppLog } from '../src/log.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
+import { PduRefusedError, objToPdu } from '../src/pdu.ts';
 import { client } from '../src/client.ts';
 import { closeAfter } from './teardown.ts';
-import { objToPdu, PduRefusedError } from '../src/pdu.ts';
 import { server } from '../src/server.ts';
 
 function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {

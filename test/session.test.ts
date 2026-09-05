@@ -15,7 +15,7 @@ import { Session, bindCommands } from '../src/session.ts';
 import { client } from '../src/client.ts';
 import { closeAfter, closeListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
-import { isCommand, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
+import { PduRefusedError, isCommand, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
 import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
 import { shortened, truncatedTlv, withSeqNr, withUnknownCmdId } from './malformed-pdus.ts';
@@ -1333,8 +1333,9 @@ describe('a PDU the codec cannot read', () => {
 		assert.equal(answered.seqNr, 6);
 	});
 
-	test('settles the request a response it could not read was answering', async t => {
+	test('settles the request a response it could not read was answering, and reports it', async t => {
 		const { peer, session } = await bound(t, { responseTimeout: 60000 });
+		const failed = once<Error>(resolve => { session.on('sessionError', resolve); });
 		const sending = session.sendSms({ from: '46701113311', message: 'hi', to: '46709771337' });
 		const submitted = await answerTo(peer);
 
@@ -1350,6 +1351,13 @@ describe('a PDU the codec cannot read', () => {
 		assert.ok(sent, 'the request settles on the refusal rather than on the response timeout');
 		assert.ok(sent.err instanceof Error);
 		assert.equal(sent.unanswered, 1);
+
+		// Both channels on purpose: the call says what became of this send, the event that the peer
+		// answers unreadably at all.
+		const reported = await raceWithin(2000, failed);
+
+		assert.ok(reported instanceof PduRefusedError);
+		assert.equal(reported.header.cmdName, 'submit_sm_resp');
 
 		// Nothing goes back: a response carries a sequence number of ours, not one of the peer's.
 		peer.writeRaw(withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 77));
