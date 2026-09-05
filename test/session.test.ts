@@ -15,9 +15,11 @@ import { Session, bindCommands } from '../src/session.ts';
 import { client } from '../src/client.ts';
 import { closeAfter, closeListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
+import { PduRefusedError } from '../src/pdu-refusal.ts';
 import { isCommand, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
 import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
+import { pduBytes, shortened, truncatedTlv, withUnknownCmdId } from './raw-pdus.ts';
 import { silentLog } from '../src/log.ts';
 import { splitMessage } from '../src/message.ts';
 
@@ -1241,42 +1243,6 @@ describe('a PDU the codec cannot read', () => {
 		source_addr: '46701113311',
 	};
 
-	/** The octets objToPdu built, wearing a sequence number it would refuse to write itself. */
-	function withSeqNr(input: PduObjectInput, seqNr: number): Buffer {
-		const { buffer } = objToPdu(input);
-
-		assert.ok(buffer);
-		buffer.writeUInt32BE(seqNr, 12);
-
-		return buffer;
-	}
-
-	/** command_length honoured, so the stream stays in sync, with the declared body cut short. */
-	function shortened(input: PduObjectInput, octets: number): Buffer {
-		const { buffer } = objToPdu(input);
-
-		assert.ok(buffer);
-
-		const cut = buffer.subarray(0, buffer.length - octets);
-
-		cut.writeUInt32BE(cut.length, 0);
-
-		return cut;
-	}
-
-	/** The same, with a message_state TLV declaring four octets of value and carrying one. */
-	function truncatedTlv(input: PduObjectInput): Buffer {
-		const { buffer } = objToPdu(input);
-
-		assert.ok(buffer);
-
-		const appended = Buffer.concat([buffer, Buffer.from('0427000401', 'hex')]);
-
-		appended.writeUInt32BE(appended.length, 0);
-
-		return appended;
-	}
-
 	/** The peer's next PDU within a budget: a dropped link must fail the test, not hang it. */
 	async function answerTo(peer: Peer): Promise<PduObject> {
 		const pduObj = await raceWithin(2000, peer.next());
@@ -1302,7 +1268,7 @@ describe('a PDU the codec cannot read', () => {
 		const { peer, session } = await bound(t);
 		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
 
-		peer.writeRaw(withSeqNr({ cmdName: 'deliver_sm', params: receipt, seqNr: 1 }, 0x80000001));
+		peer.writeRaw(pduBytes({ cmdName: 'deliver_sm', params: receipt, seqNr: 0x80000001 }));
 
 		const answered = await answerTo(peer);
 
@@ -1315,7 +1281,7 @@ describe('a PDU the codec cannot read', () => {
 		assert.ok(dlr, 'the receipt is a report, not a reason to drop the link');
 		assert.equal(dlr.statusMsg, 'DELIVERED');
 
-		peer.writeRaw(withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 0xFFFFFFFF));
+		peer.writeRaw(pduBytes({ cmdName: 'enquire_link', seqNr: 0xFFFFFFFF }));
 
 		const pinged = await answerTo(peer);
 
@@ -1326,10 +1292,8 @@ describe('a PDU the codec cannot read', () => {
 	test('answers an unknown command id with generic_nack ESME_RINVCMDID', async t => {
 		const { peer, session } = await bound(t);
 		const failed = once<Error>(resolve => { session.on('sessionError', resolve); });
-		const vendorSpecific = withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 9);
 
-		vendorSpecific.writeUInt32BE(0x00010001, 4);
-		peer.writeRaw(vendorSpecific);
+		peer.writeRaw(withUnknownCmdId({ cmdName: 'enquire_link', seqNr: 9 }));
 
 		const answered = await answerTo(peer);
 
@@ -1354,7 +1318,7 @@ describe('a PDU the codec cannot read', () => {
 		assert.equal(reports, 0, 'a refused PDU is not a report');
 
 		// The regression this fixes: the link, and the stream's sync, outlive the refused PDU.
-		peer.writeRaw(withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 78));
+		peer.writeRaw(pduBytes({ cmdName: 'enquire_link', seqNr: 78 }));
 		assert.equal((await answerTo(peer)).cmdName, 'enquire_link_resp');
 	});
 
@@ -1370,8 +1334,9 @@ describe('a PDU the codec cannot read', () => {
 		assert.equal(answered.seqNr, 6);
 	});
 
-	test('settles the request a response it could not read was answering', async t => {
+	test('settles the request a response it could not read was answering, and reports it', async t => {
 		const { peer, session } = await bound(t, { responseTimeout: 60000 });
+		const failed = once<Error>(resolve => { session.on('sessionError', resolve); });
 		const sending = session.sendSms({ from: '46701113311', message: 'hi', to: '46709771337' });
 		const submitted = await answerTo(peer);
 
@@ -1388,8 +1353,13 @@ describe('a PDU the codec cannot read', () => {
 		assert.ok(sent.err instanceof Error);
 		assert.equal(sent.unanswered, 1);
 
+		const reported = await raceWithin(2000, failed);
+
+		assert.ok(reported instanceof PduRefusedError);
+		assert.equal(reported.header.cmdName, 'submit_sm_resp');
+
 		// Nothing goes back: a response carries a sequence number of ours, not one of the peer's.
-		peer.writeRaw(withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 77));
+		peer.writeRaw(pduBytes({ cmdName: 'enquire_link', seqNr: 77 }));
 		assert.equal((await answerTo(peer)).cmdName, 'enquire_link_resp');
 	});
 

@@ -6,6 +6,8 @@ import type { Sms } from '../src/sms.ts';
 import type { SmppLog } from '../src/log.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
+import { PduRefusedError } from '../src/pdu-refusal.ts';
+import { objToPdu } from '../src/pdu.ts';
 import { client } from '../src/client.ts';
 import { closeAfter } from './teardown.ts';
 import { server } from '../src/server.ts';
@@ -257,5 +259,53 @@ describe('README: Errors', () => {
 
 		assert.ok(err instanceof Error);
 		assert.equal(session, undefined);
+	});
+
+	test('telling a refused PDU from a session that failed', async t => {
+		const smpp = await answeringServer(t);
+		const bound = once<Session>(resolve => { smpp.on('session', resolve); });
+		const { err, session } = await client();
+		if (err) throw err;
+
+		closeAfter(t, session);
+
+		const warned: Record<string, boolean | number | string>[] = [];
+		const log: SmppLog = {
+			debug: () => undefined,
+			error: () => undefined,
+			info: () => undefined,
+			verbose: () => undefined,
+			warn: (msg, metadata) => { warned.push({ msg, ...metadata }); },
+		};
+
+		session.on('sessionError', err => {
+			if (err instanceof PduRefusedError) {
+				log.warn('the peer sent a PDU that could not be read', {
+					cmdName: err.header.cmdName ?? err.header.cmdId,
+					reason: err.reason,
+				});
+
+				return;
+			}
+
+			log.error('the session failed', { message: err.message });
+		});
+
+		const reported = once<Error>(resolve => { session.on('sessionError', resolve); });
+		const peer = await bound;
+		const { buffer } = objToPdu({ cmdName: 'enquire_link', seqNr: 5 });
+
+		assert.ok(buffer);
+		// A command id no command is defined for: refused on its own, with the link untouched.
+		buffer.writeUInt32BE(0x00010001, 4);
+		peer.sock.write(buffer);
+
+		await reported;
+
+		assert.deepEqual(warned, [{
+			cmdName: 0x00010001,
+			msg: 'the peer sent a PDU that could not be read',
+			reason: 'command',
+		}]);
 	});
 });

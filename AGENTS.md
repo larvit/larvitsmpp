@@ -195,6 +195,10 @@ exactly 140.
 - Comments are the exception, not the default — see the root `CLAUDE.md` rules. Do not write file
   preambles or restate what the code says.
 - Test data uses real randomised UUID v7 values, never `aaaa-0000` placeholders.
+- Fixtures that encode the wire are shared so no two files can drift on it: `test/raw-pdus.ts` builds
+  the octets a test writes straight to a socket, the PDUs `objToPdu()` refuses to build included. The
+  waiting helpers each file carries are copies, tolerated because a wrong one fails that file's own
+  tests and nothing else.
 - `message_id` values the library generates are UUID v7.
 - A test that needs a dummy peer must `resume()` its sockets. An unread socket never processes the
   peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
@@ -264,6 +268,26 @@ Grouped by what each one constrains.
   own promise would be the better completion signal, and reaching it needs `listeners()`, which
   cannot be re-declared the same way — Node types it invariantly enough that widening `void` to
   `unknown` is `TS2416`. Re-probed 2026-09-01; `sendResp()` stays the signal.
+
+- **`PduRefusedError` is exported, and `sessionError` names it in the event's type.** Maintainer's
+  call, 2026-09-05, from a product review: one event carries both a PDU the peer malformed and the
+  session's own failure, and `instanceof` is the only way to separate them that hard rule 4 allows —
+  without the class as a value an application is left string-matching `err.message`. Goal 6 is paid by
+  exporting the discriminant and the struct it carries and nothing else: `PduHeader` is named because
+  an application that logs or forwards a header wants a name for it, `PduRefusalReason` is not
+  because `reason` is compared against string literals, and an accessor
+  (`PduRefusedError['header']`) names either one where a signature wants it. The payload union
+  enforces nothing — a subclass narrows out of `Error` either way — and is there so the event's own
+  type names what to narrow to, which is also what makes it a half-truth if a second `Error` subclass
+  ever reaches this event without joining it. Rejected: a `SessionError` alias for that union, a
+  third name for a type that is structurally `Error`. Rejected: a separate `pduRefused` event, which
+  splits the failure channel so an application that wants every failure listens twice and an existing
+  listener silently stops seeing refusals. Rejected: coalescing or rate-limiting them, which re-opens
+  the standing decision that `sessionError` carries every failure, never coalesced or suppressed —
+  the filtering belongs where the application is, since only it knows which peer is routinely sloppy.
+  Rejected: an error code on a plain `Error`, which reads back off an `unknown` property only through
+  a cast and types nothing it carries. Accepted: a second copy of the package installed alongside
+  this one defeats `instanceof`, where `err.name` still reads `PduRefusedError`.
 
 ### The wire
 
