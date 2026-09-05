@@ -2,11 +2,16 @@ import type { Result, VoidResult } from './result.ts';
 import type { SmppLog } from './log.ts';
 import type { Socket } from 'node:net';
 
+export const backoffDefaults = {
+	maxDelay: 30_000,
+	minDelay: 1000,
+};
+
 export type ReconnectLoopOptions = {
 	connect: () => Promise<Result<{ sock: Socket }>>;
 	log: SmppLog;
-	maxDelay: number;
-	minDelay: number;
+	maxDelay?: number | undefined;
+	minDelay?: number | undefined;
 	now?: (() => number) | undefined;
 	/** Brings the owner back up on a freshly opened socket. An err means try again. */
 	onConnected: (sock: Socket) => Promise<VoidResult>;
@@ -16,6 +21,8 @@ export type ReconnectLoopOptions = {
 
 /** Reopens a dropped connection, backing off between attempts until it is told to stop. */
 export class ReconnectLoop {
+	private readonly maxDelay: number;
+	private readonly minDelay: number;
 	private readonly now: () => number;
 	private readonly options: ReconnectLoopOptions;
 	private attempting = false;
@@ -25,9 +32,11 @@ export class ReconnectLoop {
 	private upAt: number | undefined;
 
 	constructor(options: ReconnectLoopOptions) {
+		this.maxDelay = options.maxDelay ?? backoffDefaults.maxDelay;
+		this.minDelay = options.minDelay ?? backoffDefaults.minDelay;
 		this.now = options.now ?? Date.now;
 		this.options = options;
-		this.delay = options.minDelay;
+		this.delay = this.minDelay;
 	}
 
 	/** Read through a method: stop() can land while an attempt is awaiting. */
@@ -39,8 +48,8 @@ export class ReconnectLoop {
 		if (this.timer || this.attempting || this.isStopped()) return;
 
 		// Coming up is not proof: a stream we cannot read is only found once the link is bound.
-		if (this.upAt !== undefined && this.now() - this.upAt >= this.options.maxDelay) {
-			this.delay = this.options.minDelay;
+		if (this.upAt !== undefined && this.now() - this.upAt >= this.maxDelay) {
+			this.delay = this.minDelay;
 		}
 
 		this.upAt = undefined;
@@ -54,9 +63,9 @@ export class ReconnectLoop {
 			void this.run();
 		}, delay);
 
-		if (this.options.unref !== false) this.timer.unref();
+		if (this.options.unref ?? true) this.timer.unref();
 
-		this.delay = Math.min(delay * 2, this.options.maxDelay);
+		this.delay = Math.min(delay * 2, this.maxDelay);
 	}
 
 	stop(): void {

@@ -7,6 +7,7 @@ import type { SmppLog } from './log.ts';
 import type { SmsIdFormat } from './sms-id.ts';
 import type { Sms } from './sms.ts';
 import type { Socket } from 'node:net';
+import { backoffDefaults } from './reconnect-loop.ts';
 import { isSmsIdNotation, smsIdNotations, smsIdPlaces } from './sms-id.ts';
 
 export type SessionEvents = {
@@ -103,12 +104,10 @@ export const defaults = {
 	dlrMergeTimeout: 86_400_000,
 	/** The peer gave up on an unanswered message long before this; the bound is against growth. */
 	heldMessageTimeout: 300_000,
-	maxDelay: 30_000,
 	maxDlrMerges: 1000,
 	maxHeldMessages: 1000,
 	maxOutstanding: 10,
 	maxReassembly: 1000,
-	minDelay: 1000,
 	reassemblyTimeout: 300_000,
 	responseTimeout: 30_000,
 	shutdownTimeout: 5000,
@@ -169,8 +168,8 @@ function checkReconnect(reconnect: unknown): VoidResult {
 		return { err: new Error(`reconnect.fromStart must be true or false, got ${typeof reconnect.fromStart}`) };
 	}
 
-	const maxDelay = delayOr(reconnect.maxDelay, defaults.maxDelay);
-	const minDelay = delayOr(reconnect.minDelay, defaults.minDelay);
+	const maxDelay = delayOr(reconnect.maxDelay, backoffDefaults.maxDelay);
+	const minDelay = delayOr(reconnect.minDelay, backoffDefaults.minDelay);
 	// A delay of 0 never doubles, so the backoff never starts and every retry lands at once.
 	const checked = checkLimits([['maxDelay', maxDelay, 1], ['minDelay', minDelay, 1]]);
 
