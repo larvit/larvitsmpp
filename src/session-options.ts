@@ -7,6 +7,7 @@ import type { SmppLog } from './log.ts';
 import type { SmsIdFormat } from './sms-id.ts';
 import type { Sms } from './sms.ts';
 import type { Socket } from 'node:net';
+import { backoffDefaults } from './reconnect-loop.ts';
 import { isSmsIdNotation, smsIdNotations, smsIdPlaces } from './sms-id.ts';
 
 export type SessionEvents = {
@@ -103,12 +104,10 @@ export const defaults = {
 	dlrMergeTimeout: 86_400_000,
 	/** The peer gave up on an unanswered message long before this; the bound is against growth. */
 	heldMessageTimeout: 300_000,
-	maxDelay: 30_000,
 	maxDlrMerges: 1000,
 	maxHeldMessages: 1000,
 	maxOutstanding: 10,
 	maxReassembly: 1000,
-	minDelay: 1000,
 	reassemblyTimeout: 300_000,
 	responseTimeout: 30_000,
 	shutdownTimeout: 5000,
@@ -120,6 +119,10 @@ export const defaults = {
  * queued behind a slot that is never freed, so the call never settles at all.
  */
 export function checkSessionOptions(options: CheckableOptions): VoidResult {
+	if (options.fromStart !== undefined) {
+		return { err: new Error('fromStart is part of the reconnect policy, spell it reconnect: { fromStart: true }') };
+	}
+
 	const checked = checkLimits([
 		['idleTimeout', options.idleTimeout ?? 0, 0],
 		['maxOutstanding', options.maxOutstanding ?? defaults.maxOutstanding, 1],
@@ -146,23 +149,27 @@ function checkLimits(limits: [string, number, number][]): VoidResult {
 	return {};
 }
 
-const backoffDelays: readonly string[] = ['maxDelay', 'minDelay'];
+const reconnectKeys: readonly string[] = ['fromStart', 'maxDelay', 'minDelay'];
 
 function checkReconnect(reconnect: unknown): VoidResult {
 	if (reconnect === undefined || reconnect === false) return {};
 
 	if (!isRecord(reconnect)) {
-		return { err: new Error('reconnect takes { maxDelay, minDelay }, or false to turn it off') };
+		return { err: new Error('reconnect takes { fromStart, maxDelay, minDelay }, or false to turn it off') };
 	}
 
 	for (const key of Object.keys(reconnect)) {
-		if (!backoffDelays.includes(key)) {
-			return { err: new Error(`reconnect has no ${key}, name ${backoffDelays.join(' or ')}`) };
+		if (!reconnectKeys.includes(key)) {
+			return { err: new Error(`reconnect has no ${key}, name ${reconnectKeys.join(', ')}`) };
 		}
 	}
 
-	const maxDelay = delayOr(reconnect.maxDelay, defaults.maxDelay);
-	const minDelay = delayOr(reconnect.minDelay, defaults.minDelay);
+	if (reconnect.fromStart !== undefined && typeof reconnect.fromStart !== 'boolean') {
+		return { err: new Error(`reconnect.fromStart must be true or false, got ${typeof reconnect.fromStart}`) };
+	}
+
+	const maxDelay = delayOr(reconnect.maxDelay, backoffDefaults.maxDelay);
+	const minDelay = delayOr(reconnect.minDelay, backoffDefaults.minDelay);
 	// A delay of 0 never doubles, so the backoff never starts and every retry lands at once.
 	const checked = checkLimits([['maxDelay', maxDelay, 1], ['minDelay', minDelay, 1]]);
 
@@ -211,6 +218,8 @@ function checkSmsIdFormat(smsIdFormat: unknown): VoidResult {
 
 /** What the checker reads, as it arrives: a caller without types can put anything in it. */
 export type CheckableOptions = {
+	/** Not an option: the one spelling is inside reconnect, and this is where the other is refused. */
+	fromStart?: unknown;
 	idleTimeout?: number | undefined;
 	maxOutstanding?: number | undefined;
 	maxReassembly?: number | undefined;
