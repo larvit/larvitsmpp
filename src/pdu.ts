@@ -11,11 +11,23 @@ import { errorNameById, errors, isErrorName } from './defs/errors.ts';
 import { paramNumber } from './defs/types.ts';
 import { tlvDefault, tlvs, tlvsById } from './defs/tlvs.ts';
 
-/** Sequence numbers are a 31-bit field; 0x7fffffff is reserved. */
+/** The highest sequence number this library hands out; SMPP 3.4 4.7.1 reserves 0x7fffffff. */
 export const maxSeqNr = 2147483646;
+
+/** What the field holds. Read and echoed in full, because peers do write above the spec's range. */
+const maxWireSeqNr = 0xFFFFFFFF;
 
 /** A hostile peer must not be able to make us allocate arbitrarily. */
 export const maxPduLength = 1024 * 1024;
+
+/** Why a command_length cannot frame a stream: past it nothing can say where the next PDU starts. */
+export function framingRefusal(cmdLength: number): Error | undefined {
+	if (cmdLength < 16 || cmdLength > maxPduLength) {
+		return new Error(`Refusing a cmd_length of ${String(cmdLength)}`);
+	}
+
+	return undefined;
+}
 
 export type TlvInput = {
 	/** Resolved from the record key; pass it for a tag the TLV table does not define. */
@@ -45,6 +57,57 @@ export type PduObject = {
 	seqNr: number;
 	tlvs: Record<string, Tlv>;
 };
+
+/** The 16 octets a framed PDU always has, whatever its body turns out to be. */
+export type PduHeader = {
+	cmdId: number;
+	cmdLength: number;
+	cmdName: CommandName | undefined;
+	cmdStatusId: number;
+	seqNr: number;
+};
+
+/** Which part of a PDU the codec could not read. */
+export type PduRefusalReason = 'body' | 'command' | 'tlvs';
+
+/** A PDU refused with the stream still in sync, so only this one PDU is lost. */
+export class PduRefusedError extends Error {
+	readonly header: PduHeader;
+	readonly reason: PduRefusalReason;
+
+	constructor(header: PduHeader, reason: PduRefusalReason, cause: Error) {
+		const named = header.cmdName ?? `command id ${String(header.cmdId)}`;
+
+		super(`Refused ${named} with seqNr ${String(header.seqNr)}: ${cause.message}`, { cause });
+		this.header = header;
+		this.name = 'PduRefusedError';
+		this.reason = reason;
+	}
+}
+
+// ESME_RINVTLVSTREAM is SMPP 5.0's name for 0xC0, which SMPP 3.4 spells ESME_RINVOPTPARSTREAM.
+const refusalStatus = {
+	body: 'ESME_RINVCMDLEN',
+	command: 'ESME_RINVCMDID',
+	tlvs: 'ESME_RINVTLVSTREAM',
+} as const satisfies Record<PduRefusalReason, ErrorName>;
+
+/** The response SMPP pairs with a request command, where it has one. */
+function respNameFor(cmdName: CommandName | undefined): CommandName | undefined {
+	if (cmdName === undefined) return undefined;
+
+	const respName = `${cmdName}_resp`;
+
+	return isCommandName(respName) ? respName : undefined;
+}
+
+/** SMPP 3.4 4.3: a PDU whose command has no response of its own is refused with generic_nack. */
+export function refusalAnswer(refused: PduRefusedError): { cmdName: CommandName; cmdStatus: ErrorName } {
+	return {
+		cmdName: respNameFor(refused.header.cmdName) ?? 'generic_nack',
+		cmdStatus: refusalStatus[refused.reason],
+	};
+}
 
 const respBit = 0x80000000;
 
@@ -209,7 +272,7 @@ function buildPdu(
 		return { err: new Error(`Invalid cmdStatus: ${JSON.stringify(cmdStatus)}`) };
 	}
 
-	if (!Number.isInteger(seqNr) || seqNr < 0 || seqNr > maxSeqNr) {
+	if (!Number.isInteger(seqNr) || seqNr < 0 || seqNr > maxWireSeqNr) {
 		return { err: new Error(`Invalid seqNr: ${JSON.stringify(seqNr)}`) };
 	}
 
@@ -295,20 +358,24 @@ function readParams(
 	return { offset, params };
 }
 
-function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolean; pduObj: PduObject }> {
-	const cmdLength = pdu.readUInt32BE(0);
+function headerOf(pdu: Buffer): PduHeader {
 	const cmdId = pdu.readUInt32BE(4);
-	const cmdName = commandNameById(cmdId);
+
+	return {
+		cmdId,
+		cmdLength: pdu.readUInt32BE(0),
+		cmdName: commandNameById(cmdId),
+		cmdStatusId: pdu.readUInt32BE(8),
+		seqNr: pdu.readUInt32BE(12),
+	};
+}
+
+function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolean; pduObj: PduObject }> {
+	const header = headerOf(pdu);
+	const { cmdId, cmdLength, cmdName, cmdStatusId, seqNr } = header;
 
 	if (!cmdName) {
-		return { err: new Error(`Unknown PDU command id: ${String(cmdId)}`) };
-	}
-
-	const cmdStatusId = pdu.readUInt32BE(8);
-	const seqNr = pdu.readUInt32BE(12);
-
-	if (seqNr > maxSeqNr) {
-		return { err: new Error(`Invalid seqNr, exceeds ${String(maxSeqNr)}: ${String(seqNr)}`) };
+		return { err: new PduRefusedError(header, 'command', new Error('Unknown PDU command id')) };
 	}
 
 	// SMPP 3.4 4.4.2 and friends: a response with a non-zero status carries no body at all.
@@ -316,11 +383,11 @@ function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolea
 		? { offset: 16, params: {} }
 		: readParams(cmdName, pdu, trailingNull);
 
-	if (read.err) return { err: read.err };
+	if (read.err) return { err: new PduRefusedError(header, 'body', read.err) };
 
 	const parsed = parseTlvs(pdu, read.offset, cmdLength);
 
-	if (parsed.err) return { err: parsed.err };
+	if (parsed.err) return { err: new PduRefusedError(header, 'tlvs', parsed.err) };
 
 	const params = read.params;
 	const message = params.short_message;
@@ -352,10 +419,9 @@ function checkFraming(pdu: Buffer): VoidResult {
 	}
 
 	const cmdLength = pdu.readUInt32BE(0);
+	const unframable = framingRefusal(cmdLength);
 
-	if (cmdLength < 16 || cmdLength > maxPduLength) {
-		return { err: new Error(`Refusing a cmd_length of ${String(cmdLength)}`) };
-	}
+	if (unframable) return { err: unframable };
 
 	if (cmdLength > pdu.length) {
 		return { err: new Error(`cmd_length ${String(cmdLength)} exceeds the ${String(pdu.length)} octets given`) };
@@ -417,9 +483,9 @@ export function pduReturn(
 		return parsed.err ? { err: parsed.err } : pduReturn(parsed.pduObj, status, params, tlvs);
 	}
 
-	const respName = `${pdu.cmdName}_resp`;
+	const respName = respNameFor(pdu.cmdName);
 
-	if (!isCommandName(respName)) {
+	if (!respName) {
 		return { err: new Error(`"${pdu.cmdName}" has no response command`) };
 	}
 

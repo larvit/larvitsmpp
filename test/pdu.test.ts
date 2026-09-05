@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { isCommand, isResp, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
+import { PduRefusedError, isCommand, isResp, objToPdu, pduReturn, pduToObj, refusalAnswer } from '../src/pdu.ts';
 
 function encode(...args: Parameters<typeof objToPdu>): Buffer {
 	const { buffer, err } = objToPdu(...args);
@@ -44,8 +44,11 @@ describe('header', () => {
 		assert.ok(isResp(pduObj));
 	});
 
-	test('rejects an unknown command and an out-of-range sequence number', () => {
-		assert.ok(objToPdu({ cmdName: 'submit_sm', seqNr: 2147483647 }).err instanceof Error);
+	// SMPP 3.4 4.7.1 stops the range at 0x7FFFFFFF, but peers write the field as a plain uint32.
+	test('carries any 32-bit sequence number, and refuses one the field cannot hold', () => {
+		assert.equal(decode(encode({ cmdName: 'enquire_link', seqNr: 0x80000001 })).seqNr, 0x80000001);
+		assert.equal(decode(encode({ cmdName: 'enquire_link', seqNr: 0xFFFFFFFF })).seqNr, 0xFFFFFFFF);
+		assert.ok(objToPdu({ cmdName: 'submit_sm', seqNr: 0x100000000 }).err instanceof Error);
 	});
 });
 
@@ -436,6 +439,74 @@ describe('malformed input', () => {
 
 	test('refuses an absurd command length instead of allocating for it', () => {
 		assert.ok(pduToObj(Buffer.from('ffffffff0000000400000000000000ff', 'hex')).err instanceof Error);
+	});
+
+	test('reads the header of a PDU it cannot parse, and names which part it choked on', () => {
+		const unknown = encode({ cmdName: 'enquire_link', seqNr: 9 });
+
+		unknown.writeUInt32BE(0x00010001, 4);
+
+		const refusedCommand = pduToObj(unknown).err;
+
+		assert.ok(refusedCommand instanceof PduRefusedError);
+		assert.equal(refusedCommand.reason, 'command');
+		assert.equal(refusedCommand.header.cmdName, undefined);
+		assert.equal(refusedCommand.header.cmdId, 0x00010001);
+		assert.equal(refusedCommand.header.seqNr, 9);
+		assert.deepEqual(refusalAnswer(refusedCommand), {
+			cmdName: 'generic_nack',
+			cmdStatus: 'ESME_RINVCMDID',
+		});
+
+		const whole = encode({
+			cmdName: 'deliver_sm',
+			params: { destination_addr: '46709771337', short_message: 'hello', source_addr: '46701113311' },
+			seqNr: 10,
+		});
+		// sm_length still declares five octets of short_message; three of them never arrived.
+		const short = whole.subarray(0, whole.length - 3);
+
+		short.writeUInt32BE(short.length, 0);
+
+		const refusedBody = pduToObj(short).err;
+
+		assert.ok(refusedBody instanceof PduRefusedError);
+		assert.equal(refusedBody.reason, 'body');
+		assert.equal(refusedBody.header.cmdName, 'deliver_sm');
+		assert.deepEqual(refusalAnswer(refusedBody), {
+			cmdName: 'deliver_sm_resp',
+			cmdStatus: 'ESME_RINVCMDLEN',
+		});
+
+		// message_state, declaring four octets of value with one of them on the wire.
+		const truncatedTlv = Buffer.concat([
+			encode({ cmdName: 'deliver_sm', params: { short_message: 'hello' }, seqNr: 11 }),
+			Buffer.from('0427000401', 'hex'),
+		]);
+
+		truncatedTlv.writeUInt32BE(truncatedTlv.length, 0);
+
+		const refusedTlvs = pduToObj(truncatedTlv).err;
+
+		assert.ok(refusedTlvs instanceof PduRefusedError);
+		assert.equal(refusedTlvs.reason, 'tlvs');
+		assert.deepEqual(refusalAnswer(refusedTlvs), {
+			cmdName: 'deliver_sm_resp',
+			cmdStatus: 'ESME_RINVTLVSTREAM',
+		});
+	});
+
+	test('answers a command with no response of its own with generic_nack', () => {
+		const outbind = encode({ cmdName: 'outbind', params: { system_id: 'smsc' }, seqNr: 12 });
+		// Both C-Octet Strings lose their terminator, so system_id runs off the end of the PDU.
+		const short = outbind.subarray(0, outbind.length - 2);
+
+		short.writeUInt32BE(short.length, 0);
+
+		const refused = pduToObj(short).err;
+
+		assert.ok(refused instanceof PduRefusedError);
+		assert.equal(refusalAnswer(refused).cmdName, 'generic_nack');
 	});
 });
 

@@ -313,6 +313,20 @@ Grouped by what each one constrains.
   from `stat:` and been right. A transient state also carries `err:000`, since a message still on its
   way has not failed.
 
+- **A refused PDU is answered from its header, and any 32-bit `sequence_number` is echoed as it
+  arrived.** Maintainer's call, 2026-09-05 via the interop plan. The header of a framed PDU always
+  parses, so it carries the answer SMPP 3.4 4.3 asks for, with the status 3.4 names for the part
+  that would not parse. Rejected: nacking a refused *response*, whose sequence number is one of
+  ours — the `generic_nack` would land in the peer's own numbering and nack a request of the peer's
+  we never saw, so a refused response is written back nothing and settles the request it names
+  instead. An unknown command id with the response bit set takes that branch too: a peer echoing a
+  sequence number of ours is answering something, and settling it reaches the undetermined outcome
+  `responseTimeout` would have reached anyway, sooner. Rejected: clamping a sequence number outside 4.7.1's 0x00000001–0x7FFFFFFF into range
+  before answering, which correlates with nothing at the peer — stacks write the field as a plain
+  uint32 (ukarim/smscsim signs every unprompted `deliver_sm` with a raw `rand.Int()`), so goal 3
+  keeps that traffic and `PendingRequests.nextSeqNr()`, the only thing that invents one, is what
+  holds our own sends inside the spec.
+
 - **`smsIdFormat` names a notation per place, and normalisation never reaches inside a `<base>-<n>`
   id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's `id:` in decimal, so one
   transform over both sides cannot make them equal. `submitResp` covers the `receipted_message_id`
@@ -354,11 +368,15 @@ Grouped by what each one constrains.
   on arrival a fresh `minDelay` every cycle — one TCP connect and bind per second, forever. A drop
   after a healthy link still retries at `minDelay`.
 
-- **A stream this library cannot read is a dead link, not a dead session.** Maintainer's call,
-  2026-08-31: a framing or codec error tears the link down through `teardown()`, so the reconnect
-  loop retries it on a fresh socket with a fresh framer — which is what a desynced stream needs, and
-  the common cause. `sessionError` still carries every failure, so a peer that only ever sends
-  garbage is visible in the log rather than silent.
+- **A stream this library cannot frame is a dead link; one PDU it cannot parse is not.**
+  Maintainer's call, 2026-08-31, narrowed 2026-09-05 via the interop plan: a `command_length` below
+  16 or above `maxPduLength` leaves nothing that can say where the next PDU starts, so it tears the
+  link down through `teardown()` and the reconnect loop retries it on a fresh socket with a fresh
+  framer. Every other codec failure honoured `command_length`, so the stream is still in sync and
+  the next PDU starts where it says — tearing the link down there cost one peer half its receipts
+  and its MO to a reconnect loop (`interop-tests/findings/01-smscsim.md`), and left the peer waiting
+  for answers it was owed. `sessionError` carries every failure of either kind, never coalesced or
+  suppressed, so a peer that only ever sends garbage is visible in the log rather than silent.
 
 - **A deliberate shutdown drains; an unusable link and an abort do not.** `close()` and `unbind()`
   wait on the send window rather than the pending map — the map misses a segment still queued behind

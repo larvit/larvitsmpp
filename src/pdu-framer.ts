@@ -1,5 +1,5 @@
 import type { Result } from './result.ts';
-import { maxPduLength } from './pdu.ts';
+import { framingRefusal } from './pdu.ts';
 
 /**
  * Cuts a byte stream into whole PDUs.
@@ -31,10 +31,9 @@ export class PduFramer {
 
 		while (this.length >= 16) {
 			const cmdLength = this.join(16).readUInt32BE(0);
+			const unframable = framingRefusal(cmdLength);
 
-			if (cmdLength < 16 || cmdLength > maxPduLength) {
-				return { err: new Error(`Refusing a cmd_length of ${String(cmdLength)}`) };
-			}
+			if (unframable) return { err: unframable };
 
 			if (this.length < cmdLength) break;
 

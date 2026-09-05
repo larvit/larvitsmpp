@@ -3,7 +3,7 @@ import type { SmppLog } from './log.ts';
 import type { Socket } from 'node:net';
 import type { VoidResult } from './result.ts';
 import { PduFramer } from './pdu-framer.ts';
-import { pduToObj } from './pdu.ts';
+import { PduRefusedError, pduToObj } from './pdu.ts';
 
 export type PduTransportOptions = {
 	log: SmppLog;
@@ -14,6 +14,8 @@ export type PduTransportOptions = {
 	/** A complete PDU, before it is parsed. */
 	onFramed: (pdu: Buffer) => void;
 	onPdu: (pduObj: PduObject) => void;
+	/** A framed PDU the codec could not read. The stream is still in sync, so the link is not lost. */
+	onRefused: (refused: PduRefusedError) => void;
 	/** Nothing further can be read off this stream, whatever the socket does next. */
 	onUnreadable: (err: Error) => void;
 };
@@ -79,6 +81,17 @@ export class PduTransport {
 
 			const parsed = pduToObj(pdu);
 
+			if (parsed.err instanceof PduRefusedError) {
+				this.options.log.warn('transport - refusing a PDU it could not read', {
+					message: parsed.err.message,
+					reason: parsed.err.reason,
+				});
+				this.options.onRefused(parsed.err);
+
+				continue;
+			}
+
+			// The framer applies framingRefusal() first, so only a caller that skips it lands here.
 			if (parsed.err) {
 				this.options.log.warn('transport - could not parse an incoming PDU', {
 					message: parsed.err.message,
