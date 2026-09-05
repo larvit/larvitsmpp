@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 import { PduRefusedError, isCommand, isResp, objToPdu, pduReturn, pduToObj, refusalAnswer } from '../src/pdu.ts';
+import { paramText } from '../src/defs/types.ts';
 
 function encode(...args: Parameters<typeof objToPdu>): Buffer {
 	const { buffer, err } = objToPdu(...args);
@@ -203,6 +204,40 @@ describe('encoding submit_sm', () => {
 
 		assert.equal(pduObj.params.short_message, 'hej 一');
 		assert.equal(pduObj.params.sm_length, 10);
+	});
+});
+
+describe('decoding short_message', () => {
+	function deliverSm(dataCoding: number, message: Buffer | string) {
+		return decode(encode({
+			cmdName: 'deliver_sm',
+			params: {
+				data_coding: dataCoding,
+				destination_addr: '46709771337',
+				short_message: message,
+				source_addr: '46701113311',
+			},
+			seqNr: 3,
+		}));
+	}
+
+	test('reads an inbound message with the data_coding the PDU declares', () => {
+		const binary = Buffer.from([0x00, 0x1B, 0x60, 0x80, 0xFF]);
+
+		assert.equal(deliverSm(0x08, 'hej 一').params.short_message, 'hej 一');
+		assert.equal(deliverSm(0x03, Buffer.from([0xE1, 0xE7, 0xDA])).params.short_message, 'áçÚ');
+		assert.deepEqual(
+			Buffer.from(paramText(deliverSm(0x04, binary).params.short_message), 'latin1'),
+			binary,
+		);
+	});
+
+	// A delivery receipt is read from these rather than from the text above, since its body is
+	// Appendix B's fixed format whatever the data_coding the peer inherited onto it says.
+	test('keeps the octets that arrived alongside the text they decoded to', () => {
+		const pduObj = deliverSm(0x08, 'hej 一');
+
+		assert.deepEqual(pduObj.shortMessageOctets, Buffer.from('hej 一', 'utf16le').swap16());
 	});
 });
 

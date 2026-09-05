@@ -749,6 +749,35 @@ describe('receiving', () => {
 		assert.equal(answeredNotification.pduObj.cmdName, 'deliver_sm_resp');
 	});
 
+	// SMPPSim's receipt for a UCS2 message inherits its data_coding and writes the body as text.
+	test('parses a receipt written as text under a data_coding that says UCS2', async t => {
+		const { peer, session } = await inbound(t);
+		const reported = once<{ dlr: Dlr; pduObj: PduObject }>(resolve => {
+			session.on('dlr', (dlr, pduObj) => { resolve({ dlr, pduObj }); });
+		});
+		const smsId = '01a072f9-30f2-71b0-87cd-f5032df3a8e0';
+		const body = `id:${smsId} sub:001 dlvrd:001 submit date:2509051430 done date:2509051431 stat:DELIVRD err:000 text:`;
+		const delivered = peer.send({
+			cmdName: 'deliver_sm',
+			params: {
+				data_coding: consts.ENCODING.UCS2,
+				destination_addr: '46709771337',
+				esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+				short_message: Buffer.from(body, 'ascii'),
+				source_addr: '46701113311',
+			},
+		});
+		const received = await raceWithin(2000, reported);
+
+		assert.ok(received);
+		assert.equal(received.dlr.smsId, smsId);
+		assert.equal(received.dlr.statusMsg, 'DELIVERED');
+		assert.equal(received.dlr.receipt?.doneDate, '2509051431');
+		assert.equal(received.pduObj.params.data_coding, consts.ENCODING.UCS2);
+		assert.equal(received.pduObj.shortMessageOctets?.toString('latin1'), body);
+		assert.ok((await delivered).pduObj);
+	});
+
 	test('reassembles a multipart inbound SMS before the sms event', async t => {
 		const message = 'Inbound lorem ipsum dolor sit amet consectetur, '.repeat(6);
 		const { peer, session } = await inbound(t);
