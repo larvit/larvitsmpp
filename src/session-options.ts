@@ -1,6 +1,7 @@
 import type { Dlr } from './dlr.ts';
 import type { MessageDlr } from './dlr-merger.ts';
-import type { PduObject, PduRefusedError } from './pdu.ts';
+import type { PduObject } from './pdu.ts';
+import type { PduRefusedError } from './pdu-refusal.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
 import type { SmppLog } from './log.ts';
