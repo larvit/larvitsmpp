@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { PduRefusedError, isCommand, isResp, objToPdu, pduReturn, pduToObj, refusalAnswer } from '../src/pdu.ts';
+import { PduRefusedError, refusalAnswer } from '../src/pdu-refusal.ts';
+import { isCommand, isResp, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
 import { paramText } from '../src/defs/types.ts';
 
 function encode(...args: Parameters<typeof objToPdu>): Buffer {

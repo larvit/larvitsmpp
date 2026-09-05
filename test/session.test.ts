@@ -168,6 +168,7 @@ function enquireLink(seqNr: number): PduObject {
 		cmdStatusId: 0,
 		params: {},
 		seqNr,
+		shortMessageOctets: undefined,
 		tlvs: {},
 	};
 }

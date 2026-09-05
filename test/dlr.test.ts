@@ -211,9 +211,10 @@ describe('dlrFromPdu()', () => {
 		assert.equal(dlr.statusId, consts.MESSAGE_STATE.DELIVERED);
 	});
 
+	// A receipt a peer really did write in UCS2 costs exactly this: undetermined, never guessed at.
 	test('reports a receipt body it cannot read either way as undetermined', () => {
 		const dlr = dlrFromPdu(deliverSm(
-			encodeMessage(textReceipt, 'UCS2').buffer,
+			encodeMessage(`id:${textReceiptId} stat:DELIVRD err:000`, 'UCS2').buffer,
 			undefined,
 			consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
 			consts.ENCODING.UCS2,
