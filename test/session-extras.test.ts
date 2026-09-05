@@ -861,6 +861,38 @@ describe('reconnect from the first bind', () => {
 		assert.deepEqual(spy.delays, [10, 20], 'a link the SMSC refused a bind on does not reset the backoff');
 	});
 
+	// A drop while the bind is in flight is where the attempt's own session could retry as well.
+	test('retries once per attempt when the peer drops the link mid-bind', async t => {
+		let binds = 0;
+		const spy = logSpy();
+		const smpp = await startServer(t, {
+			authenticate: input => {
+				binds++;
+
+				if (binds > 2) return true;
+
+				input.session.sock.destroy();
+
+				return false;
+			},
+		});
+		const controller = new AbortController();
+		const connecting = client({
+			log: spy.log,
+			port: smpp.port,
+			reconnect: { fromStart: true, maxDelay: 40, minDelay: 10 },
+			signal: controller.signal,
+		});
+
+		abortAfter(t, controller, connecting);
+
+		const { err, session } = await connecting;
+
+		assert.equal(err, undefined);
+		assert.ok(session);
+		assert.deepEqual(spy.delays, [10, 20], 'only the loop that owns the retry announces one');
+	});
+
 	test('hands back a session that reported nothing and reconnects like any other', async t => {
 		const port = await closedPort();
 		const controller = new AbortController();
