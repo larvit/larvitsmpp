@@ -265,6 +265,24 @@ Grouped by what each one constrains.
   cannot be re-declared the same way — Node types it invariantly enough that widening `void` to
   `unknown` is `TS2416`. Re-probed 2026-09-01; `sendResp()` stays the signal.
 
+- **`PduRefusedError` is exported, and `sessionError` names it in the event's type.** Maintainer's
+  call, 2026-09-05, from a product review: one event carries both a PDU the peer malformed and the
+  session's own failure, and `instanceof` is the only way to separate them that hard rule 4 allows —
+  without the class as a value an application is left string-matching `err.message` on a link where a
+  real SMSC malforms half a command type (`interop-tests/findings/01-smscsim.md`). Goal 6 is paid by
+  exporting the discriminant and nothing more: `PduHeader` follows because the class carries one,
+  `PduRefusalReason` does not, since `reason` compares against string literals and
+  `PduRefusedError['reason']` names the type where a signature needs it. The payload union enforces
+  nothing — a subclass narrows out of `Error` either way — and is there so the event's own type names
+  what to narrow to; rejected: a `SessionError` alias for it, a third name for a type that is
+  structurally `Error`. Rejected: a separate `pduRefused` event, which splits the failure channel so
+  an application that wants every failure listens twice and an existing listener silently stops
+  seeing refusals. Rejected: coalescing or rate-limiting them, which re-opens the standing decision
+  that `sessionError` carries every failure, never coalesced or suppressed — the fix belongs where
+  the application is, since only it knows which peer is routinely sloppy. Rejected: an error code on
+  a plain `Error`, which reads back off an `unknown` property only through a cast and types nothing
+  it carries.
+
 ### The wire
 
 - **The declared interface version is an option on both `client()` and `server()`, and is not the
