@@ -71,33 +71,66 @@ function raceWithin<T>(ms: number, promise: Promise<T>): Promise<T | false> {
 	return Promise.race([promise, delay(ms).then((): false => false)]);
 }
 
-type Peer = { close: () => Promise<void>; port: number };
+/** A socket read as a queue of parsed PDUs; `handled` takes the ones the peer answers itself. */
+function pduQueue(
+	sock: net.Socket,
+	handled: (pduObj: PduObject) => boolean = () => false,
+): () => Promise<PduObject> {
+	const framer = new PduFramer();
+	const queue: PduObject[] = [];
+	const waiting: ((pduObj: PduObject) => void)[] = [];
 
-/** Answers binds and nothing else, which is what a link the peer has stopped serving looks like. */
-async function bindOnlyPeer(t: TestContext, options: { dropOn?: string } = {}): Promise<Peer> {
+	sock.on('data', chunk => {
+		framer.push(chunk);
+
+		for (const pdu of framer.next().pdus ?? []) {
+			const { pduObj } = pduToObj(pdu);
+
+			if (!pduObj || handled(pduObj)) continue;
+
+			const next = waiting.shift();
+
+			if (next) next(pduObj);
+			else queue.push(pduObj);
+		}
+	});
+
+	return () => {
+		const queued = queue.shift();
+
+		return queued ? Promise.resolve(queued) : once<PduObject>(resolve => waiting.push(resolve));
+	};
+}
+
+type Peer = {
+	close: () => Promise<void>;
+	/** The next PDU the ESME sent that the peer did not answer itself. */
+	next: () => Promise<PduObject>;
+	port: number;
+	/** Raw octets, so a test can say what objToPdu would not build. */
+	writeRaw: (bytes: Buffer) => void;
+};
+
+/** An SMSC answering binds and nothing else, which is what the tests write the other answers for. */
+async function smscPeer(t: TestContext, options: { dropOn?: string } = {}): Promise<Peer> {
 	const sockets: net.Socket[] = [];
+	let queued: (() => Promise<PduObject>) | undefined;
 	const listener = net.createServer(sock => {
-		const framer = new PduFramer();
-
 		sockets.push(sock);
-		sock.on('data', chunk => {
-			framer.push(chunk);
+		queued = pduQueue(sock, pduObj => {
+			if (pduObj.cmdName === options.dropOn) {
+				sock.destroy();
 
-			for (const pdu of framer.next().pdus ?? []) {
-				const { pduObj } = pduToObj(pdu);
-
-				if (pduObj && pduObj.cmdName === options.dropOn) {
-					sock.destroy();
-
-					return;
-				}
-
-				if (!pduObj || !bindCommands.includes(pduObj.cmdName)) continue;
-
-				const { buffer } = pduReturn(pduObj, 'ESME_ROK', { system_id: 'silent' });
-
-				if (buffer) sock.write(buffer);
+				return true;
 			}
+
+			if (!bindCommands.includes(pduObj.cmdName)) return false;
+
+			const { buffer } = pduReturn(pduObj, 'ESME_ROK', { system_id: 'silent' });
+
+			if (buffer) sock.write(buffer);
+
+			return true;
 		});
 	});
 
@@ -112,7 +145,13 @@ async function bindOnlyPeer(t: TestContext, options: { dropOn?: string } = {}): 
 
 			await new Promise<void>(resolve => { listener.close(() => { resolve(); }); });
 		},
+		next: () => {
+			assert.ok(queued, 'nothing has connected to the peer yet');
+
+			return queued();
+		},
 		port: typeof address === 'object' && address !== null ? address.port : 0,
+		writeRaw: (bytes: Buffer) => { sockets[sockets.length - 1]?.write(bytes); },
 	};
 
 	t.after(() => peer.close());
@@ -142,39 +181,14 @@ type RawPeer = {
 
 /** A peer driven PDU by PDU, which is the only way to say things the client never says. */
 function rawPeer(t: TestContext, port: number): RawPeer {
-	const framer = new PduFramer();
-	const queue: PduObject[] = [];
-	const waiting: ((pduObj: PduObject) => void)[] = [];
 	const sock = net.connect({ port });
-
-	sock.on('data', chunk => {
-		framer.push(chunk);
-
-		const { pdus } = framer.next();
-
-		for (const pdu of pdus ?? []) {
-			const { pduObj } = pduToObj(pdu);
-
-			if (!pduObj) continue;
-
-			const next = waiting.shift();
-
-			if (next) next(pduObj);
-			else queue.push(pduObj);
-		}
-	});
+	const next = pduQueue(sock);
 
 	t.after(() => { sock.destroy(); });
 
 	return {
 		close: () => { sock.destroy(); },
-		next: () => {
-			const queued = queue.shift();
-
-			return queued
-				? Promise.resolve(queued)
-				: once<PduObject>(resolve => waiting.push(resolve));
-		},
+		next,
 		write: input => {
 			const { buffer } = objToPdu(input);
 
@@ -218,7 +232,7 @@ describe('bind', () => {
 
 	// Plenty of SMSCs drop the connection on unbind instead of answering it.
 	test('takes a close that follows our unbind as a clean unbind', async t => {
-		const peer = await bindOnlyPeer(t, { dropOn: 'unbind' });
+		const peer = await smscPeer(t, { dropOn: 'unbind' });
 		const { session } = await client({ port: peer.port, responseTimeout: 2000 });
 
 		assert.ok(session);
@@ -227,7 +241,7 @@ describe('bind', () => {
 	});
 
 	test('still reports a close that lands on another in-flight request', async t => {
-		const peer = await bindOnlyPeer(t, { dropOn: 'enquire_link' });
+		const peer = await smscPeer(t, { dropOn: 'enquire_link' });
 		const { session } = await client({ port: peer.port, responseTimeout: 2000 });
 
 		assert.ok(session);
@@ -240,7 +254,7 @@ describe('bind', () => {
 	});
 
 	test('reports an unbind the peer left unanswered on a link that stays up', async t => {
-		const peer = await bindOnlyPeer(t);
+		const peer = await smscPeer(t);
 		const { session } = await client({ port: peer.port, responseTimeout: 150 });
 
 		assert.ok(session);
@@ -413,7 +427,7 @@ describe('bind', () => {
 
 	// The spec: an absent sc_interface_version means the SMSC supports no optional parameters.
 	test('takes an SMSC that declares no version as older than 3.4', async t => {
-		const peer = await bindOnlyPeer(t);
+		const peer = await smscPeer(t);
 		const { session } = await client({ port: peer.port });
 
 		assert.ok(session);
@@ -1189,6 +1203,175 @@ describe('robustness', () => {
 	});
 });
 
+describe('a PDU the codec cannot read', () => {
+	const receipt = {
+		destination_addr: '46709771337',
+		esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+		short_message: 'id:0199e0e9-4a3e-7c62-9a4b-1f0c5d7e8a21 stat:DELIVRD err:000 text:',
+		source_addr: '46701113311',
+	};
+
+	/** The octets objToPdu built, wearing a sequence number it would refuse to write itself. */
+	function withSeqNr(input: PduObjectInput, seqNr: number): Buffer {
+		const { buffer } = objToPdu(input);
+
+		assert.ok(buffer);
+		buffer.writeUInt32BE(seqNr, 12);
+
+		return buffer;
+	}
+
+	/** command_length honoured, so the stream stays in sync, with the declared body cut short. */
+	function shortened(input: PduObjectInput, octets: number): Buffer {
+		const { buffer } = objToPdu(input);
+
+		assert.ok(buffer);
+
+		const cut = buffer.subarray(0, buffer.length - octets);
+
+		cut.writeUInt32BE(cut.length, 0);
+
+		return cut;
+	}
+
+	/** The same, with a message_state TLV declaring four octets of value and carrying one. */
+	function truncatedTlv(input: PduObjectInput): Buffer {
+		const { buffer } = objToPdu(input);
+
+		assert.ok(buffer);
+
+		const appended = Buffer.concat([buffer, Buffer.from('0427000401', 'hex')]);
+
+		appended.writeUInt32BE(appended.length, 0);
+
+		return appended;
+	}
+
+	/** The peer's next PDU within a budget: a dropped link must fail the test, not hang it. */
+	async function answerTo(peer: Peer): Promise<PduObject> {
+		const pduObj = await raceWithin(2000, peer.next());
+
+		assert.ok(pduObj, 'the peer was never answered');
+
+		return pduObj;
+	}
+
+	async function bound(t: TestContext, options: Parameters<typeof client>[0] = {}) {
+		const peer = await smscPeer(t);
+		const { session } = await client({ port: peer.port, ...options });
+
+		assert.ok(session);
+		closeAfter(t, session);
+
+		return { peer, session };
+	}
+
+	// ukarim/smscsim signs every deliver_sm it sends unprompted with a raw uint32, so about half
+	// land above SMPP 3.4 4.7.1's ceiling; refusing them cost the link (findings/01-smscsim.md).
+	test('answers a deliver_sm whose sequence number is above the spec range, and keeps the link', async t => {
+		const { peer, session } = await bound(t);
+		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
+
+		peer.writeRaw(withSeqNr({ cmdName: 'deliver_sm', params: receipt, seqNr: 1 }, 0x80000001));
+
+		const answered = await answerTo(peer);
+
+		assert.equal(answered.cmdName, 'deliver_sm_resp');
+		assert.equal(answered.cmdStatus, 'ESME_ROK');
+		assert.equal(answered.seqNr, 0x80000001);
+
+		const dlr = await raceWithin(2000, reported);
+
+		assert.ok(dlr, 'the receipt is a report, not a reason to drop the link');
+		assert.equal(dlr.statusMsg, 'DELIVERED');
+
+		peer.writeRaw(withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 0xFFFFFFFF));
+
+		const pinged = await answerTo(peer);
+
+		assert.equal(pinged.cmdName, 'enquire_link_resp');
+		assert.equal(pinged.seqNr, 0xFFFFFFFF);
+	});
+
+	test('answers an unknown command id with generic_nack ESME_RINVCMDID', async t => {
+		const { peer, session } = await bound(t);
+		const failed = once<Error>(resolve => { session.on('sessionError', resolve); });
+		const vendorSpecific = withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 9);
+
+		vendorSpecific.writeUInt32BE(0x00010001, 4);
+		peer.writeRaw(vendorSpecific);
+
+		const answered = await answerTo(peer);
+
+		assert.equal(answered.cmdName, 'generic_nack');
+		assert.equal(answered.cmdStatus, 'ESME_RINVCMDID');
+		assert.equal(answered.seqNr, 9);
+		assert.ok((await raceWithin(2000, failed)) instanceof Error, 'one sessionError per refused PDU');
+	});
+
+	test('answers a deliver_sm with a truncated TLV stream with ESME_RINVTLVSTREAM', async t => {
+		const { peer, session } = await bound(t);
+		let reports = 0;
+
+		session.on('dlr', () => { reports++; });
+		peer.writeRaw(truncatedTlv({ cmdName: 'deliver_sm', params: receipt, seqNr: 5 }));
+
+		const answered = await answerTo(peer);
+
+		assert.equal(answered.cmdName, 'deliver_sm_resp');
+		assert.equal(answered.cmdStatus, 'ESME_RINVTLVSTREAM');
+		assert.equal(answered.seqNr, 5);
+		assert.equal(reports, 0, 'a refused PDU is not a report');
+	});
+
+	test('answers a deliver_sm whose body is shorter than it declares with ESME_RINVCMDLEN', async t => {
+		const { peer } = await bound(t);
+
+		peer.writeRaw(shortened({ cmdName: 'deliver_sm', params: receipt, seqNr: 6 }, 3));
+
+		const answered = await answerTo(peer);
+
+		assert.equal(answered.cmdName, 'deliver_sm_resp');
+		assert.equal(answered.cmdStatus, 'ESME_RINVCMDLEN');
+		assert.equal(answered.seqNr, 6);
+	});
+
+	test('settles the request a response it could not read was answering', async t => {
+		const { peer, session } = await bound(t, { responseTimeout: 60000 });
+		const sending = session.sendSms({ from: '46701113311', message: 'hi', to: '46709771337' });
+		const submitted = await answerTo(peer);
+
+		assert.equal(submitted.cmdName, 'submit_sm');
+		peer.writeRaw(truncatedTlv({
+			cmdName: 'submit_sm_resp',
+			params: { message_id: '0199e0ea-1c88-7a41-b6d2-4e7f0a9c3b15' },
+			seqNr: submitted.seqNr,
+		}));
+
+		const sent = await raceWithin(2000, sending);
+
+		assert.ok(sent, 'the request settles on the refusal rather than on the response timeout');
+		assert.ok(sent.err instanceof Error);
+		assert.equal(sent.unanswered, 1);
+
+		// Nothing goes back: a response carries a sequence number of ours, not one of the peer's.
+		peer.writeRaw(withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 77));
+		assert.equal((await answerTo(peer)).cmdName, 'enquire_link_resp');
+	});
+
+	test('tears the link down when the stream itself cannot be framed', async t => {
+		const { peer, session } = await bound(t, { reconnect: false });
+		const failed = once<Error>(resolve => { session.on('sessionError', resolve); });
+		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
+
+		// A command_length below the 16 octet header leaves nothing that can find the next PDU.
+		peer.writeRaw(Buffer.from('00000004000000150000000000000001', 'hex'));
+
+		assert.ok((await raceWithin(2000, failed)) instanceof Error);
+		assert.equal(await raceWithin(2000, closed), true);
+	});
+});
+
 describe('application hooks that throw or reject', () => {
 	test('turns a throwing authenticate into a session error', async t => {
 		const smpp = await startServer(t, {
@@ -1493,7 +1676,7 @@ describe('application hooks that throw or reject', () => {
 
 describe('link timers', () => {
 	test('closes a client link the peer has stopped answering', async t => {
-		const peer = await bindOnlyPeer(t);
+		const peer = await smscPeer(t);
 		const { err, session } = await client({
 			enquireLinkInterval: 50,
 			port: peer.port,
@@ -1513,7 +1696,7 @@ describe('link timers', () => {
 	});
 
 	test('reconnects a link that timed out', async t => {
-		const peer = await bindOnlyPeer(t);
+		const peer = await smscPeer(t);
 		const { session } = await client({
 			enquireLinkInterval: 40,
 			port: peer.port,
