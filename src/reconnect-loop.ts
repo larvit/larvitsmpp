@@ -10,6 +10,8 @@ export type ReconnectLoopOptions = {
 	now?: (() => number) | undefined;
 	/** Brings the owner back up on a freshly opened socket. An err means try again. */
 	onConnected: (sock: Socket) => Promise<VoidResult>;
+	/** Whether the wait between attempts lets the process exit. Default true. */
+	unref?: boolean | undefined;
 };
 
 /** Reopens a dropped connection, backing off between attempts until it is told to stop. */
@@ -45,13 +47,14 @@ export class ReconnectLoop {
 
 		const delay = this.delay;
 
-		this.options.log.info('reconnect - retrying after a drop', { delay });
+		this.options.log.info('reconnect - retrying', { delay });
 
 		this.timer = setTimeout(() => {
 			this.timer = undefined;
 			void this.run();
 		}, delay);
-		this.timer.unref();
+
+		if (this.options.unref !== false) this.timer.unref();
 
 		this.delay = Math.min(delay * 2, this.options.maxDelay);
 	}

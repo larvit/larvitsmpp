@@ -382,6 +382,23 @@ Grouped by what each one constrains.
   on arrival a fresh `minDelay` every cycle — one TCP connect and bind per second, forever. A drop
   after a healthy link still retries at `minDelay`.
 
+- **`reconnect: { fromStart: true }` puts the first connect and bind through that same loop, and
+  `client()` then resolves only once it is bound.** Maintainer's call, 2026-09-05: an application
+  started before its SMSC is up otherwise writes that retry itself, around the one this library
+  already owns. A field on `reconnect` rather than an option of its own, so the combination that
+  would contradict `false` cannot be written at all — `false` carries no fields — and a top-level
+  `fromStart` is refused by name rather than ignored. Nothing but the caller's `signal` ends the
+  wait: a bound of its own would be a second spelling of the deadline `AbortSignal.timeout()`
+  already writes, and giving up after one is what the default does. A bind the SMSC refuses is
+  retried like any other failure — rejected: giving up on `ESME_RINVPASWD` and `ESME_RBINDFAIL`,
+  which would have the initial attempts and a rebind disagree about what a refused bind means, and
+  gives up on the operator whose provisioning lands a minute later; the backoff is what bounds the
+  rate goal 4 cares about. The attempts before the first link report nothing, because the session
+  running one has not reached the application: `disconnected` would have no listener and `close`
+  would be a lie. Its wait is the one retry timer that is not `unref()`'d, for the reason
+  `LinkGate`'s hold is not — it is awaited with no other handle, so a process whose only work is
+  `client()` would exit unbound.
+
 - **A stream this library cannot frame is a dead link; one PDU it cannot parse is not.**
   Maintainer's call, 2026-08-31, narrowed 2026-09-05 via the interop plan: a `command_length` below
   16 or above `maxPduLength` leaves nothing that can say where the next PDU starts, so it tears the
