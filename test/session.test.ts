@@ -18,6 +18,7 @@ import { consts } from '../src/defs/constants.ts';
 import { isCommand, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
 import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
+import { shortened, truncatedTlv, withSeqNr, withUnknownCmdId } from './malformed-pdus.ts';
 import { silentLog } from '../src/log.ts';
 import { splitMessage } from '../src/message.ts';
 
@@ -1241,42 +1242,6 @@ describe('a PDU the codec cannot read', () => {
 		source_addr: '46701113311',
 	};
 
-	/** The octets objToPdu built, wearing a sequence number it would refuse to write itself. */
-	function withSeqNr(input: PduObjectInput, seqNr: number): Buffer {
-		const { buffer } = objToPdu(input);
-
-		assert.ok(buffer);
-		buffer.writeUInt32BE(seqNr, 12);
-
-		return buffer;
-	}
-
-	/** command_length honoured, so the stream stays in sync, with the declared body cut short. */
-	function shortened(input: PduObjectInput, octets: number): Buffer {
-		const { buffer } = objToPdu(input);
-
-		assert.ok(buffer);
-
-		const cut = buffer.subarray(0, buffer.length - octets);
-
-		cut.writeUInt32BE(cut.length, 0);
-
-		return cut;
-	}
-
-	/** The same, with a message_state TLV declaring four octets of value and carrying one. */
-	function truncatedTlv(input: PduObjectInput): Buffer {
-		const { buffer } = objToPdu(input);
-
-		assert.ok(buffer);
-
-		const appended = Buffer.concat([buffer, Buffer.from('0427000401', 'hex')]);
-
-		appended.writeUInt32BE(appended.length, 0);
-
-		return appended;
-	}
-
 	/** The peer's next PDU within a budget: a dropped link must fail the test, not hang it. */
 	async function answerTo(peer: Peer): Promise<PduObject> {
 		const pduObj = await raceWithin(2000, peer.next());
@@ -1326,10 +1291,8 @@ describe('a PDU the codec cannot read', () => {
 	test('answers an unknown command id with generic_nack ESME_RINVCMDID', async t => {
 		const { peer, session } = await bound(t);
 		const failed = once<Error>(resolve => { session.on('sessionError', resolve); });
-		const vendorSpecific = withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 9);
 
-		vendorSpecific.writeUInt32BE(0x00010001, 4);
-		peer.writeRaw(vendorSpecific);
+		peer.writeRaw(withUnknownCmdId({ cmdName: 'enquire_link', seqNr: 9 }));
 
 		const answered = await answerTo(peer);
 

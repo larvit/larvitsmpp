@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import type { PduHeader, PduObjectInput, Session } from '../src/index.ts';
+import type { PduHeader, Session } from '../src/index.ts';
 import type { TestContext } from 'node:test';
-import { PduRefusedError, client, objToPdu, server } from '../src/index.ts';
+import { PduRefusedError, client, server } from '../src/index.ts';
 import { closeAfter } from './teardown.ts';
+import { shortened, truncatedTlv, withUnknownCmdId } from './malformed-pdus.ts';
 
 const receipt = {
 	destination_addr: '46709771337',
@@ -62,42 +63,6 @@ async function linked(t: TestContext, options: Parameters<typeof client>[0] = {}
 	return { peer: await accepted, session };
 }
 
-/** The octets objToPdu built, wearing a command id the codec has no command for. */
-function unknownCommand(seqNr: number): Buffer {
-	const { buffer } = objToPdu({ cmdName: 'enquire_link', seqNr });
-
-	assert.ok(buffer);
-	buffer.writeUInt32BE(0x00010001, 4);
-
-	return buffer;
-}
-
-/** command_length honoured, so the stream stays in sync, with the declared body cut short. */
-function shortened(input: PduObjectInput, octets: number): Buffer {
-	const { buffer } = objToPdu(input);
-
-	assert.ok(buffer);
-
-	const cut = buffer.subarray(0, buffer.length - octets);
-
-	cut.writeUInt32BE(cut.length, 0);
-
-	return cut;
-}
-
-/** The same, with a message_state TLV declaring four octets of value and carrying one. */
-function truncatedTlv(input: PduObjectInput): Buffer {
-	const { buffer } = objToPdu(input);
-
-	assert.ok(buffer);
-
-	const appended = Buffer.concat([buffer, Buffer.from('0427000401', 'hex')]);
-
-	appended.writeUInt32BE(appended.length, 0);
-
-	return appended;
-}
-
 describe('telling a refused PDU from a failed session', () => {
 	test('narrows a refusal to its class, command and reason, from the entry point alone', async t => {
 		const { peer, session } = await linked(t);
@@ -122,7 +87,7 @@ describe('telling a refused PDU from a failed session', () => {
 
 		session.on('sessionError', err => { seen.push(err); });
 
-		peer.sock.write(unknownCommand(9));
+		peer.sock.write(withUnknownCmdId({ cmdName: 'enquire_link', seqNr: 9 }));
 		peer.sock.write(shortened({ cmdName: 'deliver_sm', params: receipt, seqNr: 6 }, 3));
 		peer.sock.write(truncatedTlv({ cmdName: 'deliver_sm', params: receipt, seqNr: 7 }));
 

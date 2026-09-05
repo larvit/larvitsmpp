@@ -25,7 +25,7 @@ import { client } from '../src/client.ts';
 import { closeAfter, closeListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
 import { errors } from '../src/defs/errors.ts';
-import { objToPdu } from '../src/pdu.ts';
+import { PduRefusedError, objToPdu } from '../src/pdu.ts';
 import { paramNumber, paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
@@ -499,14 +499,16 @@ describe('reconnect', () => {
 		const events: string[] = [];
 
 		session.on('close', () => { events.push('close'); });
-		session.on('sessionError', () => { events.push('sessionError'); });
+		session.on('sessionError', err => {
+			events.push(err instanceof PduRefusedError ? 'refused' : 'sessionError');
+		});
 
 		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
 
 		peerOf(smpp).sock.write(unreadablePdu);
 		await reconnected;
 
-		assert.deepEqual(events, ['sessionError']);
+		assert.deepEqual(events, ['sessionError'], 'an unframeable stream is the link dying, not one PDU refused');
 	});
 
 	test('refuses a backoff that would retry without pausing', () => {
