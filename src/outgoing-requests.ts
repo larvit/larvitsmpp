@@ -72,6 +72,11 @@ export class OutgoingRequests {
 		return this.pending.deliver(pduObj);
 	}
 
+	/** A response the codec refused settles its request instead of leaving it to time out. */
+	settleRefused(seqNr: number, err: Error): void {
+		this.pending.settle(seqNr, { err });
+	}
+
 	/** Sends a request and resolves with the peer's response. */
 	request(input: PduObjectInput, options: SendOptions): Promise<Result<{ pduObj: PduObject }>> {
 		// Ahead of the drain, so a misuse is named as one rather than blamed on the shutdown.

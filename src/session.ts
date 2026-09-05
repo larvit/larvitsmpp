@@ -1,7 +1,7 @@
 import type { ErrorName } from './defs/errors.ts';
 import type { MessageDlr } from './dlr-merger.ts';
 import type { ParamValue } from './defs/types.ts';
-import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
+import type { PduObject, PduObjectInput, PduRefusedError, TlvInput } from './pdu.ts';
 import type { BindType, CloseOptions, ReconnectOptions, SendOptions, SessionEvents, SessionOptions } from './session-options.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { SendSmsOptions, SendSmsResult } from './send-sms.ts';
@@ -18,7 +18,7 @@ import { leftOf } from './idle-waiters.ts';
 import { errorFrom } from './error-from.ts';
 import { optionalParamsMinVersion } from './defs/constants.ts';
 import { bindCarries, bindCommands, defaultSystemId, defaults } from './session-options.ts';
-import { isResp, pduReturn } from './pdu.ts';
+import { isResp, objToPdu, pduReturn, refusalAnswer } from './pdu.ts';
 import { guardedLog } from './log.ts';
 import { submitSms, unsent } from './send-sms.ts';
 import { ConcatReference } from './udh.ts';
@@ -173,20 +173,25 @@ export class Session extends EventEmitter<SessionEvents> {
 		params: Record<string, ParamValue> = {},
 		tlvs?: Record<string, TlvInput>,
 	): Promise<VoidResult> {
-		const built = pduReturn(pdu, status, params, tlvs);
+		return Promise.resolve(
+			this.answer(pduReturn(pdu, status, params, tlvs), pdu.cmdName, pdu.seqNr),
+		);
+	}
+
+	private answer(built: Result<{ buffer: Buffer }>, cmdName: string, seqNr: number): VoidResult {
 		const sent = built.err ? { err: built.err } : this.transport.write(built.buffer);
 
 		// A peer that unbinds and drops the link takes our response with it; that is not a failure.
 		if (sent.err && !this.closed) {
 			this.log.warn('session - could not answer a request', {
-				cmdName: pdu.cmdName,
+				cmdName,
 				message: sent.err.message,
-				seqNr: pdu.seqNr,
+				seqNr,
 			});
 			this.emit('sessionError', sent.err);
 		}
 
-		return Promise.resolve(sent);
+		return sent;
 	}
 
 	async sendSms(sms: SendSmsOptions, options: SendOptions = {}): Promise<SendSmsResult> {
@@ -244,6 +249,7 @@ export class Session extends EventEmitter<SessionEvents> {
 			onError: err => { this.emit('sessionError', err); },
 			onFramed: pdu => { this.emit('incomingPdu', pdu); },
 			onPdu: pduObj => { this.dispatch(pduObj); },
+			onRefused: refused => { this.refuse(refused); },
 			onUnreadable: err => {
 				this.emit('sessionError', err);
 				this.teardown();
@@ -386,6 +392,22 @@ export class Session extends EventEmitter<SessionEvents> {
 			this.log.error('session - a handler threw', { message: err.message });
 			this.emit('sessionError', err);
 		});
+	}
+
+	/** A PDU the codec refused. Its header parsed, so the peer gets an answer and the link stays. */
+	private refuse(refused: PduRefusedError): void {
+		this.emit('sessionError', refused);
+
+		// A response carries a sequence number of ours, so writing one back lands in the peer's space.
+		if (isResp(refused.header)) {
+			this.outgoing.settleRefused(refused.header.seqNr, refused);
+
+			return;
+		}
+
+		const { cmdName, cmdStatus } = refusalAnswer(refused);
+
+		this.answer(objToPdu({ cmdName, cmdStatus, seqNr: refused.header.seqNr }), cmdName, refused.header.seqNr);
 	}
 
 	private resetTimers(): void {
