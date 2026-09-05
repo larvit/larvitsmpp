@@ -106,6 +106,11 @@ are silently lost and bounce the link. Against a spec-conforming peer (small inc
 numbers) it never fires, so it is plausibly why the suite's own dummy peers never caught it - which
 is the whole reason this experiment exists.
 
+**Fixed** in PR #79: only a framing error tears the link down now, any 32-bit `sequence_number` is
+read and echoed, and `smscsim.test.ts`'s retry crutch is gone. A rerun of `./interop-tests/run.py
+smscsim` shows 54 frames, `deliver_sm: 6` answered by `deliver_sm_resp: 6`, `bind_transceiver: 5`
+(no reconnects), `malformed: 0`, `expert errors: 0`, 8/8 tests passing on their first attempt.
+
 ## Peer quirks
 
 - No PDU validation (documented): a bad `interface_version` or malformed PDU is never rejected.
