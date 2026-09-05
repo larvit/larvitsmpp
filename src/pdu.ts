@@ -20,6 +20,15 @@ const maxWireSeqNr = 0xFFFFFFFF;
 /** A hostile peer must not be able to make us allocate arbitrarily. */
 export const maxPduLength = 1024 * 1024;
 
+/** Why a command_length cannot frame a stream: past it nothing can say where the next PDU starts. */
+export function framingRefusal(cmdLength: number): Error | undefined {
+	if (cmdLength < 16 || cmdLength > maxPduLength) {
+		return new Error(`Refusing a cmd_length of ${String(cmdLength)}`);
+	}
+
+	return undefined;
+}
+
 export type TlvInput = {
 	/** Resolved from the record key; pass it for a tag the TLV table does not define. */
 	tagId?: number | undefined;
@@ -83,12 +92,19 @@ const refusalStatus = {
 	tlvs: 'ESME_RINVTLVSTREAM',
 } as const satisfies Record<PduRefusalReason, ErrorName>;
 
+/** The response SMPP pairs with a request command, where it has one. */
+function respNameFor(cmdName: CommandName | undefined): CommandName | undefined {
+	if (cmdName === undefined) return undefined;
+
+	const respName = `${cmdName}_resp`;
+
+	return isCommandName(respName) ? respName : undefined;
+}
+
 /** SMPP 3.4 4.3: a PDU whose command has no response of its own is refused with generic_nack. */
 export function refusalAnswer(refused: PduRefusedError): { cmdName: CommandName; cmdStatus: ErrorName } {
-	const respName = `${refused.header.cmdName ?? ''}_resp`;
-
 	return {
-		cmdName: isCommandName(respName) ? respName : 'generic_nack',
+		cmdName: respNameFor(refused.header.cmdName) ?? 'generic_nack',
 		cmdStatus: refusalStatus[refused.reason],
 	};
 }
@@ -403,10 +419,9 @@ function checkFraming(pdu: Buffer): VoidResult {
 	}
 
 	const cmdLength = pdu.readUInt32BE(0);
+	const unframable = framingRefusal(cmdLength);
 
-	if (cmdLength < 16 || cmdLength > maxPduLength) {
-		return { err: new Error(`Refusing a cmd_length of ${String(cmdLength)}`) };
-	}
+	if (unframable) return { err: unframable };
 
 	if (cmdLength > pdu.length) {
 		return { err: new Error(`cmd_length ${String(cmdLength)} exceeds the ${String(pdu.length)} octets given`) };
@@ -468,9 +483,9 @@ export function pduReturn(
 		return parsed.err ? { err: parsed.err } : pduReturn(parsed.pduObj, status, params, tlvs);
 	}
 
-	const respName = `${pdu.cmdName}_resp`;
+	const respName = respNameFor(pdu.cmdName);
 
-	if (!isCommandName(respName)) {
+	if (!respName) {
 		return { err: new Error(`"${pdu.cmdName}" has no response command`) };
 	}
 
