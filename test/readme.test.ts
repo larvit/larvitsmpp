@@ -274,7 +274,7 @@ describe('README: Errors', () => {
 			error: () => undefined,
 			info: () => undefined,
 			verbose: () => undefined,
-			warn: (msg, metadata) => { if (metadata) warned.push(metadata); },
+			warn: (msg, metadata) => { warned.push({ msg, ...metadata }); },
 		};
 
 		session.on('sessionError', err => {
@@ -301,6 +301,10 @@ describe('README: Errors', () => {
 
 		await reported;
 
-		assert.deepEqual(warned, [{ cmdName: 0x00010001, reason: 'command' }]);
+		assert.deepEqual(warned, [{
+			cmdName: 0x00010001,
+			msg: 'the peer sent a PDU that could not be read',
+			reason: 'command',
+		}]);
 	});
 });

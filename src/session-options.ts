@@ -1,6 +1,6 @@
 import type { Dlr } from './dlr.ts';
 import type { MessageDlr } from './dlr-merger.ts';
-import type { PduObject } from './pdu.ts';
+import type { PduObject, PduRefusedError } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
 import type { SmppLog } from './log.ts';
@@ -19,7 +19,8 @@ export type SessionEvents = {
 	incomingPduObj: [PduObject];
 	messageDlr: [MessageDlr];
 	reconnected: [];
-	sessionError: [Error];
+	/** A refusal is one PDU the codec could not read; every other failure is the session's own. */
+	sessionError: [Error | PduRefusedError];
 	sms: [Sms];
 };
 

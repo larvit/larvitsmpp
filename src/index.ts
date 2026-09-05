@@ -14,6 +14,7 @@ export {
 	isResp,
 	maxSeqNr,
 	objToPdu,
+	PduRefusedError,
 	pduReturn,
 	pduToObj,
 } from './pdu.ts';
@@ -61,7 +62,7 @@ export type { CommandName, PduParams, PduParamsInput } from './defs/commands.ts'
 export type { ConstGroup, MessageState } from './defs/constants.ts';
 export type { Encoding, EncodingName } from './defs/encodings.ts';
 export type { ErrorName } from './defs/errors.ts';
-export type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
+export type { PduHeader, PduObject, PduObjectInput, TlvInput } from './pdu.ts';
 export type { SplitOptions } from './message.ts';
 export type { Tlv, TlvDefinition, TlvName } from './defs/tlvs.ts';
 export type { DestAddress, ParamValue, UnsuccessSme, WireType } from './defs/types.ts';
