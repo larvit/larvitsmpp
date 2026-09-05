@@ -1,9 +1,9 @@
 import type { CommandDefinition, CommandName, PduParams, PduParamsInput } from './defs/commands.ts';
 import type { ErrorName } from './defs/errors.ts';
 import type { ParamValue } from './defs/types.ts';
+import type { PduHeader } from './pdu-refusal.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Tlv } from './defs/tlvs.ts';
-import type { PduHeader } from './pdu-refusal.ts';
 import { PduRefusedError, framingRefusal } from './pdu-refusal.ts';
 import { cmds, commandNameById, respNameFor } from './defs/commands.ts';
 import { consts, hasUdh } from './defs/constants.ts';
