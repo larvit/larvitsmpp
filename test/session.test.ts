@@ -18,7 +18,7 @@ import { consts } from '../src/defs/constants.ts';
 import { PduRefusedError, isCommand, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
 import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
-import { shortened, truncatedTlv, withSeqNr, withUnknownCmdId } from './malformed-pdus.ts';
+import { pduBytes, shortened, truncatedTlv, withUnknownCmdId } from './raw-pdus.ts';
 import { silentLog } from '../src/log.ts';
 import { splitMessage } from '../src/message.ts';
 
@@ -1267,7 +1267,7 @@ describe('a PDU the codec cannot read', () => {
 		const { peer, session } = await bound(t);
 		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
 
-		peer.writeRaw(withSeqNr({ cmdName: 'deliver_sm', params: receipt, seqNr: 1 }, 0x80000001));
+		peer.writeRaw(pduBytes({ cmdName: 'deliver_sm', params: receipt, seqNr: 0x80000001 }));
 
 		const answered = await answerTo(peer);
 
@@ -1280,7 +1280,7 @@ describe('a PDU the codec cannot read', () => {
 		assert.ok(dlr, 'the receipt is a report, not a reason to drop the link');
 		assert.equal(dlr.statusMsg, 'DELIVERED');
 
-		peer.writeRaw(withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 0xFFFFFFFF));
+		peer.writeRaw(pduBytes({ cmdName: 'enquire_link', seqNr: 0xFFFFFFFF }));
 
 		const pinged = await answerTo(peer);
 
@@ -1317,7 +1317,7 @@ describe('a PDU the codec cannot read', () => {
 		assert.equal(reports, 0, 'a refused PDU is not a report');
 
 		// The regression this fixes: the link, and the stream's sync, outlive the refused PDU.
-		peer.writeRaw(withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 78));
+		peer.writeRaw(pduBytes({ cmdName: 'enquire_link', seqNr: 78 }));
 		assert.equal((await answerTo(peer)).cmdName, 'enquire_link_resp');
 	});
 
@@ -1352,15 +1352,13 @@ describe('a PDU the codec cannot read', () => {
 		assert.ok(sent.err instanceof Error);
 		assert.equal(sent.unanswered, 1);
 
-		// Both channels on purpose: the call says what became of this send, the event that the peer
-		// answers unreadably at all.
 		const reported = await raceWithin(2000, failed);
 
 		assert.ok(reported instanceof PduRefusedError);
 		assert.equal(reported.header.cmdName, 'submit_sm_resp');
 
 		// Nothing goes back: a response carries a sequence number of ours, not one of the peer's.
-		peer.writeRaw(withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 77));
+		peer.writeRaw(pduBytes({ cmdName: 'enquire_link', seqNr: 77 }));
 		assert.equal((await answerTo(peer)).cmdName, 'enquire_link_resp');
 	});
 

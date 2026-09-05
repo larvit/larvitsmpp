@@ -4,7 +4,7 @@ import type { PduHeader, Session } from '../src/index.ts';
 import type { TestContext } from 'node:test';
 import { PduRefusedError, client, server } from '../src/index.ts';
 import { closeAfter } from './teardown.ts';
-import { shortened, truncatedTlv, withUnknownCmdId } from './malformed-pdus.ts';
+import { shortened, truncatedTlv, withUnknownCmdId } from './raw-pdus.ts';
 
 const receipt = {
 	destination_addr: '46709771337',

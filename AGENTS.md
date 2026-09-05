@@ -195,9 +195,10 @@ exactly 140.
 - Comments are the exception, not the default — see the root `CLAUDE.md` rules. Do not write file
   preambles or restate what the code says.
 - Test data uses real randomised UUID v7 values, never `aaaa-0000` placeholders.
-- Fixtures that encode the wire are shared so no two files can drift on it: `test/malformed-pdus.ts`
-  builds the PDUs `objToPdu()` will not write. The waiting helpers each file carries are copies,
-  tolerated because a wrong one fails that file's own tests and nothing else.
+- Fixtures that encode the wire are shared so no two files can drift on it: `test/raw-pdus.ts` builds
+  the octets a test writes straight to a socket, the PDUs `objToPdu()` refuses to build included. The
+  waiting helpers each file carries are copies, tolerated because a wrong one fails that file's own
+  tests and nothing else.
 - `message_id` values the library generates are UUID v7.
 - A test that needs a dummy peer must `resume()` its sockets. An unread socket never processes the
   peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
