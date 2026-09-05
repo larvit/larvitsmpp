@@ -970,7 +970,7 @@ describe('reconnect from the first bind', () => {
 		abortAfter(t, controller, connecting);
 		await delay(200);
 
-		assert.ok(timeouts() > before, 'an unref()d wait lets a process with nothing else to do exit unbound');
+		assert.ok(timeouts() > before, 'the wait should hold a process whose only work is this client');
 
 		controller.abort();
 
