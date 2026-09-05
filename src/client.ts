@@ -234,8 +234,8 @@ function retriesFromStart(reconnect: ClientOptions['reconnect']): reconnect is R
 }
 
 /** A fresh session per attempt, and the failure to answer an abort with when none of them binds. */
-function initialAttempts(options: ClientOptions, log: SmppLog) {
-	let lastErr: Error | undefined = undefined;
+function initialAttempts(options: ClientOptions, log: SmppLog, failed: Error) {
+	let lastErr = failed;
 
 	return {
 		bind: async (sock: Socket): Promise<Result<{ session: Session }>> => {
@@ -252,7 +252,7 @@ function initialAttempts(options: ClientOptions, log: SmppLog) {
 
 			return opened;
 		},
-		lastErr: (): Error | undefined => lastErr,
+		lastErr: (): Error => lastErr,
 	};
 }
 
@@ -261,9 +261,10 @@ function keepTrying(
 	options: ClientOptions,
 	log: SmppLog,
 	tuning: ReconnectTuning,
+	failed: Error,
 ): Promise<Result<{ session: Session }>> {
 	return new Promise(resolve => {
-		const attempts = initialAttempts(options, log);
+		const attempts = initialAttempts(options, log, failed);
 		const signal = options.signal;
 		let settled = false;
 		const loop = new ReconnectLoop({
@@ -318,5 +319,5 @@ export async function client(options: ClientOptions = {}): Promise<Result<{ sess
 
 	if (!first.err || options.signal?.aborted === true || !retriesFromStart(reconnect)) return first;
 
-	return keepTrying(options, log, reconnect);
+	return keepTrying(options, log, reconnect, first.err);
 }

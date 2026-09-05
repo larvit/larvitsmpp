@@ -918,6 +918,7 @@ describe('reconnect from the first bind', () => {
 
 		assert.ok(settled, 'an aborted signal is the way out of a wait nothing else ends');
 		assert.ok(settled.err instanceof Error);
+		assert.ok(settled.err.cause instanceof Error, 'an abort carries what the attempts kept failing with');
 		assert.equal(settled.session, undefined);
 	});
 
