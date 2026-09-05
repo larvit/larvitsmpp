@@ -56,10 +56,10 @@ export class ReconnectLoop {
 
 		const delay = this.delay;
 
-		this.options.log.info('reconnect - retrying', { delay });
-
+		// Announced when the wait is over rather than when it starts: a cancelled one never happened.
 		this.timer = setTimeout(() => {
 			this.timer = undefined;
+			this.options.log.info('reconnect - retrying', { delay });
 			void this.run();
 		}, delay);
 
