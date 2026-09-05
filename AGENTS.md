@@ -195,9 +195,9 @@ exactly 140.
 - Comments are the exception, not the default — see the root `CLAUDE.md` rules. Do not write file
   preambles or restate what the code says.
 - Test data uses real randomised UUID v7 values, never `aaaa-0000` placeholders.
-- Fixtures that encode the wire are shared, so no two files can drift on it: `test/malformed-pdus.ts`
-  builds the PDUs `objToPdu()` refuses to. Waiting helpers stay per-file, since the budget a test
-  waits for is the test's own.
+- Fixtures that encode the wire are shared so no two files can drift on it: `test/malformed-pdus.ts`
+  builds the PDUs `objToPdu()` will not write. The waiting helpers each file carries are copies,
+  tolerated because a wrong one fails that file's own tests and nothing else.
 - `message_id` values the library generates are UUID v7.
 - A test that needs a dummy peer must `resume()` its sockets. An unread socket never processes the
   peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
@@ -271,8 +271,7 @@ Grouped by what each one constrains.
 - **`PduRefusedError` is exported, and `sessionError` names it in the event's type.** Maintainer's
   call, 2026-09-05, from a product review: one event carries both a PDU the peer malformed and the
   session's own failure, and `instanceof` is the only way to separate them that hard rule 4 allows —
-  without the class as a value an application is left string-matching `err.message` on a link where a
-  real SMSC malforms half a command type (`interop-tests/findings/01-smscsim.md`). Goal 6 is paid by
+  without the class as a value an application is left string-matching `err.message`. Goal 6 is paid by
   exporting the discriminant and the struct it carries and nothing else: `PduHeader` is named because
   an application that logs or forwards a header wants a name for it, `PduRefusalReason` is not
   because `reason` is compared against string literals, and an accessor

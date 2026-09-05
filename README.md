@@ -268,8 +268,7 @@ is exactly what this library promises not to do.
 `sessionError` carries two kinds of failure, and `PduRefusedError` is what separates them:
 
 - **A PDU the peer sent that the codec could not read with the stream still in sync.** The link is
-  healthy and only that one PDU is lost. SMSCs do this steadily rather than once — one that malforms
-  half of a command type is a real one — so this is the kind to count, not to alert on.
+  healthy and only that one PDU is lost, so this is the kind to count rather than alert on.
 - **Everything else**: the session or the socket failing, and a hook or listener that threw or, if it
   was `async`, rejected.
 
@@ -296,10 +295,10 @@ undefined where the command id names no command this library knows — `PduHeade
 TypeScript consumer passing it on.
 
 A refused inbound `deliver_sm` is lost traffic: a message or a receipt that never arrives as `sms` or
-`dlr`, and this event is the only place it becomes visible. A refused *response* is reported twice,
-once as the `err` the awaiting `sendSms()` or `send()` returns and once here. That is deliberate: the
-call answers what became of that one send, and the event is what shows a peer answering unreadably at
-all.
+`dlr`, and this event is where that loss shows up. A refused *response* is reported twice where a
+call is still waiting on it, once as the `err` that `sendSms()` or `send()` returns and once here.
+That is deliberate: the call answers what became of that one send, and the event is what shows a peer
+answering unreadably at all.
 
 ## Logging
 
