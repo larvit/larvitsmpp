@@ -2,19 +2,26 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 import { consts } from '../src/defs/constants.ts';
 import { dlrFromPdu, parseReceipt, receiptCodes } from '../src/dlr.ts';
+import { encodeMessage } from '../src/message.ts';
 import { objToPdu, pduToObj } from '../src/pdu.ts';
 import type { PduObject, TlvInput } from '../src/pdu.ts';
 
 const receiptText = 'id:0195f0c7 sub:001 dlvrd:001 submit date:2508251430 done date:2508251431 stat:DELIVRD err:000 text:hello there';
 
+/** SMPPSim writes this body as plain text under the data_coding of the message it reports on. */
+const textReceiptId = '01a072f9-30f0-7807-945f-3412d4d5b8c3';
+const textReceipt = `id:${textReceiptId} sub:001 dlvrd:001 submit date:2509051430 done date:2509051431 stat:DELIVRD err:000 Text:hello there`;
+
 function deliverSm(
 	message: Buffer | string,
 	tlvs?: Record<string, TlvInput>,
 	esmClass: number = consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+	dataCoding = 0,
 ): PduObject {
 	const { buffer } = objToPdu({
 		cmdName: 'deliver_sm',
 		params: {
+			data_coding: dataCoding,
 			destination_addr: '46701113311',
 			esm_class: esmClass,
 			short_message: message,
@@ -149,8 +156,8 @@ describe('dlrFromPdu()', () => {
 		assert.equal(dlr.intermediate, false);
 	});
 
-	// pduToObj leaves a UDH-carrying short_message a buffer, so the body needs decoding before it
-	// can be read at all — and the message type sits under the UDH indicator in the same octet.
+	// The message type sits under the UDH indicator in the same octet, and the header has to come
+	// off the body before any of it can be read.
 	test('reads the body of a receipt that carries a UDH', () => {
 		const udh = Buffer.from([0x05, 0x00, 0x03, 0x2a, 0x01, 0x01]);
 		const body = Buffer.concat([udh, Buffer.from(receiptText, 'ascii')]);
@@ -158,11 +165,74 @@ describe('dlrFromPdu()', () => {
 			body,
 			undefined,
 			consts.ESM_CLASS.MC_DELIVERY_RECEIPT | consts.ESM_CLASS.UDH_INDICATOR,
+			consts.ENCODING.UCS2,
 		));
 
 		assert.ok(dlr);
 		assert.equal(dlr.smsId, '0195f0c7');
 		assert.equal(dlr.statusMsg, 'DELIVERED');
+	});
+
+	test('reads a text receipt out of a PDU whose data_coding declares UCS2', () => {
+		const dlr = dlrFromPdu(deliverSm(
+			Buffer.from(textReceipt, 'ascii'),
+			{
+				message_state: { tagValue: consts.MESSAGE_STATE.DELIVERED },
+				receipted_message_id: { tagValue: textReceiptId },
+			},
+			consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+			consts.ENCODING.UCS2,
+		));
+
+		assert.ok(dlr?.receipt);
+		assert.equal(dlr.receipt.id, textReceiptId);
+		assert.equal(dlr.receipt.sub, 1);
+		assert.equal(dlr.receipt.dlvrd, 1);
+		assert.equal(dlr.receipt.submitDate, '2509051430');
+		assert.equal(dlr.receipt.doneDate, '2509051431');
+		assert.equal(dlr.receipt.stat, 'DELIVRD');
+		assert.equal(dlr.receipt.err, '000');
+		assert.equal(dlr.receipt.text, 'hello there');
+		assert.equal(dlr.smsId, textReceiptId);
+		assert.equal(dlr.statusMsg, 'DELIVERED');
+	});
+
+	test('reads that same receipt with no TLVs to fall back on', () => {
+		const dlr = dlrFromPdu(deliverSm(
+			Buffer.from(textReceipt, 'ascii'),
+			undefined,
+			consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+			consts.ENCODING.UCS2,
+		));
+
+		assert.ok(dlr);
+		assert.equal(dlr.smsId, textReceiptId);
+		assert.equal(dlr.statusMsg, 'DELIVERED');
+		assert.equal(dlr.statusId, consts.MESSAGE_STATE.DELIVERED);
+	});
+
+	// A receipt a peer really did write in UCS2 costs exactly this: undetermined, never guessed at.
+	test('reports a receipt body it cannot read either way as undetermined', () => {
+		const dlr = dlrFromPdu(deliverSm(
+			encodeMessage(`id:${textReceiptId} stat:DELIVRD err:000`, 'UCS2').buffer,
+			undefined,
+			consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+			consts.ENCODING.UCS2,
+		));
+
+		assert.ok(dlr);
+		assert.equal(dlr.receipt?.id, undefined);
+		assert.equal(dlr.receipt?.stat, undefined);
+		assert.equal(dlr.smsId, undefined);
+		assert.equal(dlr.statusMsg, 'UNKNOWN');
+		assert.equal(dlr.statusId, consts.MESSAGE_STATE.UNKNOWN);
+	});
+
+	test('leaves a UCS2 message to arrive as an SMS, decoded by its data_coding', () => {
+		const pduObj = deliverSm(encodeMessage('hej 一', 'UCS2').buffer, undefined, 0, consts.ENCODING.UCS2);
+
+		assert.equal(dlrFromPdu(pduObj), undefined);
+		assert.equal(pduObj.params.short_message, 'hej 一');
 	});
 
 	// message_state 0x80-0xFF is reserved for MC-vendor-specific values, which we cannot name.

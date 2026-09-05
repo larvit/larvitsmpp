@@ -1,7 +1,8 @@
 import type { Result } from './result.ts';
 import type { EncodingName } from './defs/encodings.ts';
-import { hasUdh } from './defs/constants.ts';
 import { detect, encodingByDataCoding, encodings } from './defs/encodings.ts';
+import { hasUdh } from './defs/constants.ts';
+import { udhLength } from './udh.ts';
 
 /** A single SMS carries 1120 bits, whatever the alphabet. */
 const singleMessageBits = 1120;
@@ -37,11 +38,11 @@ export function decodeMessage(
 		return { message: encodings[encoding].decode(buffer), udh: undefined };
 	}
 
-	const udhLength = (buffer[0] ?? 0) + 1;
+	const headerLength = udhLength(buffer);
 
 	return {
-		message: encodings[encoding].decode(buffer.subarray(udhLength)),
-		udh: buffer.subarray(0, udhLength),
+		message: encodings[encoding].decode(buffer.subarray(headerLength)),
+		udh: buffer.subarray(0, headerLength),
 	};
 }
 

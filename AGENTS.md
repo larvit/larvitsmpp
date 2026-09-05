@@ -87,6 +87,7 @@ src/
 	outgoing-requests.ts OutgoingRequests: the gate, the window, the pending map and the retry
 	pdu.ts               pduToObj / objToPdu / pduReturn — synchronous, result-returning
 	pdu-framer.ts        PduFramer: a byte stream cut into complete PDUs
+	pdu-refusal.ts       A PDU the codec would not read, and the answer SMPP names for it
 	pdu-transport.ts     PduTransport: the socket a session reads complete PDUs off
 	pending-requests.ts  PendingRequests: sequence numbers, correlation, timeout, abort
 	reassembly.ts        Reassembler: capped, expiring multipart groups
@@ -96,7 +97,7 @@ src/
 	send-window.ts       SendWindow: the maxOutstanding semaphore
 	session-options.ts   SessionOptions, ReconnectOptions, bind direction and the session defaults
 	sms-id.ts            The notation a peer writes message ids in, normalised for comparison
-	udh.ts               User data header: the concatenation fields of a long SMS, and their reference
+	udh.ts               User data header: its length, the concatenation fields of a long SMS and their reference
 	unanswered-error.ts  UnansweredError: it went out and no answer came back
 	uuid.ts              uuidv7() — the ids the library generates for messages
 	defs/
@@ -288,6 +289,19 @@ Grouped by what each one constrains.
   authoritative only where it names a state in the table — SMPP reserves 0x80-0xFF for
   MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves `statusMsg` to
   the body.
+
+- **A receipt's body is read as octets, and its own `data_coding` never says how.** Maintainer's
+  call, 2026-09-05 via the SMPPSim interop run: SMPPSim copies the reported message's `data_coding`
+  onto a receipt whose body it always writes as plain text, and Melrose Labs documents the same
+  echo, so decoding by that field turns an Appendix B receipt into UCS-2 garbage — total loss
+  against the many peers that send no TLVs to fall back on. `dlrFromPdu()` reads
+  `PduObject.shortMessageOctets` through Latin-1, the one codec that maps every octet to a
+  character, so the fixed fields parse whatever the PDU claims; the codec keeps both spellings
+  because a message needs the text and a receipt needs the octets. Rejected: honouring `data_coding`
+  where the octets yield no field, which reads one body two ways for the sake of a peer writing a
+  UCS-2 receipt body that no researched SMSC is — that peer's receipt yields no fields at all here,
+  which goal 2 reports as undetermined rather than guessed. An inbound message is untouched: nothing
+  but `data_coding` can say how a message was written.
 
 - **A report is final unless its `esm_class` or its state says otherwise, and only `ENROUTE` and
   `SCHEDULED` say otherwise.** SMPP 3.4 Appendix B lists every other receipt state as final,

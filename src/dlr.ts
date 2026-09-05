@@ -2,10 +2,11 @@ import type { MessageState } from './defs/constants.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject } from './pdu.ts';
 import type { SmsIdFormat } from './sms-id.ts';
-import { consts, constsById, messageTypeOf } from './defs/constants.ts';
-import { decodeMessage } from './message.ts';
+import { consts, constsById, hasUdh, messageTypeOf } from './defs/constants.ts';
+import { encodings } from './defs/encodings.ts';
 import { normaliseSmsId } from './sms-id.ts';
 import { paramNumber, paramText } from './defs/types.ts';
+import { udhLength } from './udh.ts';
 
 /**
  * The seven-character status codes carried in a receipt's `stat:` field, mapped to the
@@ -154,17 +155,20 @@ function messageType(pduObj: PduObject): MessageType {
 	return nonEmptyText(pduObj.tlvs.receipted_message_id?.tagValue) === undefined ? 'unmarked' : 'receipt';
 }
 
-/** A UDH-carrying short_message reaches here as a buffer, header and all. */
+/**
+ * SMPP 3.4 Appendix B makes a receipt a fixed text format rather than a message, so its octets are
+ * read as octets — Latin-1 keeps every one of them — whatever data_coding the PDU declares.
+ */
 function receiptBody(pduObj: PduObject): string {
-	const message = pduObj.params.short_message;
+	const octets = pduObj.shortMessageOctets;
 
-	if (!Buffer.isBuffer(message)) return paramText(message);
+	if (octets === undefined) return paramText(pduObj.params.short_message);
 
-	return decodeMessage(
-		message,
-		paramNumber(pduObj.params.data_coding, 0),
-		paramNumber(pduObj.params.esm_class, 0),
-	).message;
+	const body = hasUdh(paramNumber(pduObj.params.esm_class, 0))
+		? octets.subarray(udhLength(octets))
+		: octets;
+
+	return encodings.LATIN1.decode(body);
 }
 
 function receiptId(

@@ -3,7 +3,9 @@ import type { ErrorName } from './defs/errors.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Tlv } from './defs/tlvs.ts';
-import { cmds, commandNameById, isCommandName } from './defs/commands.ts';
+import type { PduHeader } from './pdu-refusal.ts';
+import { PduRefusedError, framingRefusal } from './pdu-refusal.ts';
+import { cmds, commandNameById, respNameFor } from './defs/commands.ts';
 import { consts, hasUdh } from './defs/constants.ts';
 import { decodeMessage, encodeMessage } from './message.ts';
 import { detect, encodingByDataCoding } from './defs/encodings.ts';
@@ -16,18 +18,6 @@ export const maxSeqNr = 2147483646;
 
 /** What the field holds. Read and echoed in full, because peers do write above the spec's range. */
 const maxWireSeqNr = 0xFFFFFFFF;
-
-/** A hostile peer must not be able to make us allocate arbitrarily. */
-export const maxPduLength = 1024 * 1024;
-
-/** Why a command_length cannot frame a stream: past it nothing can say where the next PDU starts. */
-export function framingRefusal(cmdLength: number): Error | undefined {
-	if (cmdLength < 16 || cmdLength > maxPduLength) {
-		return new Error(`Refusing a cmd_length of ${String(cmdLength)}`);
-	}
-
-	return undefined;
-}
 
 export type TlvInput = {
 	/** Resolved from the record key; pass it for a tag the TLV table does not define. */
@@ -55,59 +45,10 @@ export type PduObject = {
 	cmdStatusId: number;
 	params: Record<string, ParamValue>;
 	seqNr: number;
+	/** short_message as it arrived, whatever data_coding turned `params.short_message` into. */
+	shortMessageOctets: Buffer | undefined;
 	tlvs: Record<string, Tlv>;
 };
-
-/** The 16 octets a framed PDU always has, whatever its body turns out to be. */
-export type PduHeader = {
-	cmdId: number;
-	cmdLength: number;
-	cmdName: CommandName | undefined;
-	cmdStatusId: number;
-	seqNr: number;
-};
-
-/** Which part of a PDU the codec could not read. */
-export type PduRefusalReason = 'body' | 'command' | 'tlvs';
-
-/** A PDU refused with the stream still in sync, so only this one PDU is lost. */
-export class PduRefusedError extends Error {
-	readonly header: PduHeader;
-	readonly reason: PduRefusalReason;
-
-	constructor(header: PduHeader, reason: PduRefusalReason, cause: Error) {
-		const named = header.cmdName ?? `command id ${String(header.cmdId)}`;
-
-		super(`Refused ${named} with seqNr ${String(header.seqNr)}: ${cause.message}`, { cause });
-		this.header = header;
-		this.name = 'PduRefusedError';
-		this.reason = reason;
-	}
-}
-
-// ESME_RINVTLVSTREAM is SMPP 5.0's name for 0xC0, which SMPP 3.4 spells ESME_RINVOPTPARSTREAM.
-const refusalStatus = {
-	body: 'ESME_RINVCMDLEN',
-	command: 'ESME_RINVCMDID',
-	tlvs: 'ESME_RINVTLVSTREAM',
-} as const satisfies Record<PduRefusalReason, ErrorName>;
-
-/** The response SMPP pairs with a request command, where it has one. */
-function respNameFor(cmdName: CommandName | undefined): CommandName | undefined {
-	if (cmdName === undefined) return undefined;
-
-	const respName = `${cmdName}_resp`;
-
-	return isCommandName(respName) ? respName : undefined;
-}
-
-/** SMPP 3.4 4.3: a PDU whose command has no response of its own is refused with generic_nack. */
-export function refusalAnswer(refused: PduRefusedError): { cmdName: CommandName; cmdStatus: ErrorName } {
-	return {
-		cmdName: respNameFor(refused.header.cmdName) ?? 'generic_nack',
-		cmdStatus: refusalStatus[refused.reason],
-	};
-}
 
 const respBit = 0x80000000;
 
@@ -391,11 +332,11 @@ function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolea
 
 	const params = read.params;
 	const message = params.short_message;
-	const esmClass = paramNumber(params.esm_class, 0);
+	const octets = Buffer.isBuffer(message) ? message : undefined;
 
 	// A message carrying a UDH stays a buffer; the session needs the header intact to reassemble.
-	if (Buffer.isBuffer(message) && !hasUdh(esmClass)) {
-		params.short_message = decodeMessage(message, paramNumber(params.data_coding, 0)).message;
+	if (octets && !hasUdh(paramNumber(params.esm_class, 0))) {
+		params.short_message = decodeMessage(octets, paramNumber(params.data_coding, 0)).message;
 	}
 
 	return {
@@ -408,6 +349,7 @@ function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolea
 			cmdStatusId,
 			params,
 			seqNr,
+			shortMessageOctets: octets,
 			tlvs: parsed.tlvs,
 		},
 	};
