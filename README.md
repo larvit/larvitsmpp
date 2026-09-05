@@ -78,7 +78,7 @@ Every one is optional.
 | `shutdownTimeout` | `5000` | How long `close()` and `unbind()` wait for the requests this end already sent and the messages the application has not answered. `0` waits forever for the requests, which end when the peer answers or `responseTimeout` expires — so setting both to `0` never ends. The messages fall back to `responseTimeout`, or to its default where that is `0` too, since nothing but the application ends that wait. |
 | `maxOutstanding` | `10` | Requests allowed on the wire at once; further sends queue. |
 | `smsIdFormat` | — | The notation the SMSC writes message ids in, per place it writes them: `{ receipt: 'decimal', submitResp: 'hex' }`. Only needed where the two disagree. |
-| `reconnect` | on | Re-binds after a drop, an idle timeout, or a stream the library cannot read, backing off from `minDelay` 1 s to `maxDelay` 30 s and starting over at `minDelay` once a link has lasted `maxDelay`. `{ minDelay, maxDelay }` retunes it; `false` turns it off, so a drop ends the session. |
+| `reconnect` | on | Re-binds after a drop, an idle timeout, or a stream the library cannot frame, backing off from `minDelay` 1 s to `maxDelay` 30 s and starting over at `minDelay` once a link has lasted `maxDelay`. `{ minDelay, maxDelay }` retunes it; `false` turns it off, so a drop ends the session. |
 | `log` | silent | Any object with `debug`, `error`, `info`, `verbose` and `warn` methods — see [Logging](#logging). |
 | `signal` | — | An `AbortSignal` that cancels connecting and tears the session down. |
 
@@ -298,7 +298,7 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 | `close` | The session is over, because nothing will bring the link back. Fires once, whether you closed it or the link failed for good. |
 | `disconnected` | The link dropped and the reconnect loop will retry it. Do not open a replacement client here — the session you hold comes back on its own, and `reconnected` says when. Fires again for each attempt that reconnects and then fails, so it is not one-to-one with `reconnected`. |
 | `reconnected` | The client re-bound after a drop. |
-| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires once per PDU the codec refused: the peer is answered with the status SMPP names and the link carries on, so only that PDU is lost. |
+| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires for each PDU the codec refused, and the link carries on: a refused request is answered with the status SMPP names, and a refused response is answered with nothing and settles the request it named as `unanswered`. |
 | `data` | Raw bytes arrived on the socket. |
 | `incomingPdu` | A complete PDU arrived, as a buffer. |
 | `incomingPduObj` | The same PDU, parsed into an object. |

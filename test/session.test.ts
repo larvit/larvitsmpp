@@ -1322,6 +1322,10 @@ describe('a PDU the codec cannot read', () => {
 		assert.equal(answered.cmdStatus, 'ESME_RINVTLVSTREAM');
 		assert.equal(answered.seqNr, 5);
 		assert.equal(reports, 0, 'a refused PDU is not a report');
+
+		// The regression this fixes: the link, and the stream's sync, outlive the refused PDU.
+		peer.writeRaw(withSeqNr({ cmdName: 'enquire_link', seqNr: 1 }, 78));
+		assert.equal((await answerTo(peer)).cmdName, 'enquire_link_resp');
 	});
 
 	test('answers a deliver_sm whose body is shorter than it declares with ESME_RINVCMDLEN', async t => {

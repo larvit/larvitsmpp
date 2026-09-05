@@ -319,7 +319,9 @@ Grouped by what each one constrains.
   that would not parse. Rejected: nacking a refused *response*, whose sequence number is one of
   ours — the `generic_nack` would land in the peer's own numbering and nack a request of the peer's
   we never saw, so a refused response is written back nothing and settles the request it names
-  instead. Rejected: clamping a sequence number outside 4.7.1's 0x00000001–0x7FFFFFFF into range
+  instead. An unknown command id with the response bit set takes that branch too: a peer echoing a
+  sequence number of ours is answering something, and settling it reaches the undetermined outcome
+  `responseTimeout` would have reached anyway, sooner. Rejected: clamping a sequence number outside 4.7.1's 0x00000001–0x7FFFFFFF into range
   before answering, which correlates with nothing at the peer — stacks write the field as a plain
   uint32 (ukarim/smscsim signs every unprompted `deliver_sm` with a raw `rand.Int()`), so goal 3
   keeps that traffic and `PendingRequests.nextSeqNr()`, the only thing that invents one, is what

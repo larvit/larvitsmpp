@@ -12,9 +12,7 @@ const PEER_WEB_PORT = Number(process.env.PEER_WEB_PORT ?? '12775');
 const FAILING_PEER_HOST = process.env.FAILING_PEER_HOST ?? 'smscsim-failing';
 const FAILING_PEER_PORT = Number(process.env.FAILING_PEER_PORT ?? '2775');
 
-const DLR_BUDGET_MS = 5000;
-// smscsim refuses a submit_sm on its own sequence number's parity, so a refusal and an acceptance
-// take at least two sends to both be seen.
+// smscsim keys its refusal on each submit_sm's own sequence number parity, so two sends minimum.
 const PARITY_MAX_ATTEMPTS = 6;
 
 function delay(ms: number): Promise<void> {
@@ -40,10 +38,9 @@ async function sendAndAwaitDlrs(session: Session, dlrs: Dlr[], message: string):
 
 	assert.equal(sent.err, undefined);
 
-	const complete = await waitFor(
-		() => (sent.smsIds.every(id => dlrs.some(dlr => dlr.smsId === id)) ? true : undefined),
-		DLR_BUDGET_MS,
-	);
+	const complete = await waitFor(() => (
+		sent.smsIds.every(id => dlrs.some(dlr => dlr.smsId === id)) ? true : undefined
+	));
 
 	assert.ok(complete, 'every segment of the first send should get a DLR');
 
@@ -191,7 +188,7 @@ describe('smscsim - MO injection through the web UI', () => {
 		assert.equal(response.status, 303);
 		assert.match(response.headers.get('location') ?? '', /message=/);
 
-		const sms = await waitFor(() => incoming[0], DLR_BUDGET_MS);
+		const sms = await waitFor(() => incoming[0]);
 
 		assert.ok(sms, 'the injected MO should arrive on the first attempt');
 		assert.equal(sms.from, '46701113311');
@@ -240,7 +237,7 @@ describe('smscsim-failing - C12 refusals', () => {
 
 			assert.ok(smsId);
 
-			const matched = await waitFor(() => dlrs.slice(before).find(dlr => dlr.smsId === smsId), DLR_BUDGET_MS);
+			const matched = await waitFor(() => dlrs.slice(before).find(dlr => dlr.smsId === smsId));
 
 			if (matched) {
 				assert.equal(matched.statusMsg, 'UNDELIVERABLE');

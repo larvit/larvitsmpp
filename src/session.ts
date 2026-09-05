@@ -396,18 +396,18 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	/** A PDU the codec refused. Its header parsed, so the peer gets an answer and the link stays. */
 	private refuse(refused: PduRefusedError): void {
+		const { cmdId, cmdName, seqNr } = refused.header;
+
 		this.emit('sessionError', refused);
 
 		// A response carries a sequence number of ours, so writing one back lands in the peer's space.
 		if (isResp(refused.header)) {
-			this.outgoing.settleRefused(refused.header.seqNr, refused);
+			this.outgoing.settleRefused(seqNr, refused);
 
 			return;
 		}
 
-		const { cmdName, cmdStatus } = refusalAnswer(refused);
-
-		this.answer(objToPdu({ cmdName, cmdStatus, seqNr: refused.header.seqNr }), cmdName, refused.header.seqNr);
+		this.answer(objToPdu({ ...refusalAnswer(refused), seqNr }), cmdName ?? String(cmdId), seqNr);
 	}
 
 	private resetTimers(): void {

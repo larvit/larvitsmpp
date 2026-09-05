@@ -91,6 +91,7 @@ export class PduTransport {
 				continue;
 			}
 
+			// The framer applies framingRefusal() first, so only a caller that skips it lands here.
 			if (parsed.err) {
 				this.options.log.warn('transport - could not parse an incoming PDU', {
 					message: parsed.err.message,
