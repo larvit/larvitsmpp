@@ -193,7 +193,8 @@ document, library changes, and the AGENTS.md decision record each one needs.
 | --- | --- | --- |
 | 0 | done | [01-smscsim.md](findings/01-smscsim.md) |
 | 1 | done | [01-smscsim.md](findings/01-smscsim.md) |
-| 2–3 | not started | — |
+| 2 | done | [02-smppsim.md](findings/02-smppsim.md) |
+| 3 | not started | — |
 | 4 | done | [04-kannel.md](findings/04-kannel.md) |
 | 5–10 | not started | — |
 

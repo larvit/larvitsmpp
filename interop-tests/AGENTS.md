@@ -36,7 +36,9 @@ Both counts must be zero for a phase to pass.
 ## Rules for an experiment
 
 1. Peers run in Docker with full patch-version pins. Nothing is installed on the host. Node runs
-   only through the `node` service.
+   only through the `node` service. Every peer service caps its logs (`logging: json-file`,
+   `max-size`/`max-file`) and healthchecks something the peer does not log a stack trace for —
+   SMPPSim once filled the whole host disk in twenty minutes from a TCP-probe healthcheck.
 2. `src/` and `test/` are read-only during an experiment. A defect is recorded with a reproducer,
    never fixed here — a fix is a separate change with a regression test in `test/`.
 3. No git command that changes state: no add, commit, push, checkout, stash, reset. The
