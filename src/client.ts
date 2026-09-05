@@ -6,12 +6,16 @@ import type { SmsIdFormat } from './sms-id.ts';
 import type { Socket } from 'node:net';
 export type { BindType };
 
+import { ReconnectLoop } from './reconnect-loop.ts';
 import { Session } from './session.ts';
-import { checkSessionOptions, undeclaredInterfaceVersion } from './session-options.ts';
+import { checkSessionOptions, defaults as sessionDefaults, undeclaredInterfaceVersion } from './session-options.ts';
 import { connect as netConnect } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
 import { guardedLog } from './log.ts';
+
+/** `fromStart` puts the very first connect and bind through the same backoff loop as a drop. */
+type ReconnectTuning = { fromStart?: boolean; maxDelay?: number; minDelay?: number };
 
 export type ClientOptions = {
 	addressRange?: string;
@@ -26,7 +30,7 @@ export type ClientOptions = {
 	maxOutstanding?: number;
 	password?: string;
 	port?: number;
-	reconnect?: { maxDelay?: number; minDelay?: number } | false;
+	reconnect?: ReconnectTuning | false;
 	responseTimeout?: number;
 	shutdownTimeout?: number;
 	signal?: AbortSignal;
@@ -168,15 +172,10 @@ function createSession(options: ClientOptions, log: SmppLog, sock: Socket): Sess
 	});
 }
 
-async function connect(options: ClientOptions, log: SmppLog): Promise<Result<{ sock: Socket }>> {
-	const checked = checkSessionOptions(options);
-
-	if (checked.err) {
-		log.warn('client - unusable option', { message: checked.err.message });
-
-		return { err: checked.err };
-	}
-
+async function connectAndBind(
+	options: ClientOptions,
+	log: SmppLog,
+): Promise<Result<{ session: Session }>> {
 	const opened = await openSocket(options);
 
 	if (opened.err) {
@@ -189,17 +188,14 @@ async function connect(options: ClientOptions, log: SmppLog): Promise<Result<{ s
 		return { err: opened.err };
 	}
 
-	return { sock: opened.sock };
+	return bindOn(createSession(options, log, opened.sock), options);
 }
 
-/** Connects to an SMSC and binds. */
-export async function client(options: ClientOptions = {}): Promise<Result<{ session: Session }>> {
-	const log = guardedLog(options.log);
-	const opened = await connect(options, log);
-
-	if (opened.err) return { err: opened.err };
-
-	const session = createSession(options, log, opened.sock);
+/** Binds a session the caller has not seen yet, so a failure takes it down instead of surfacing. */
+async function bindOn(
+	session: Session,
+	options: ClientOptions,
+): Promise<Result<{ session: Session }>> {
 	const signal = options.signal;
 
 	if (signal?.aborted === true) {
@@ -208,16 +204,88 @@ export async function client(options: ClientOptions = {}): Promise<Result<{ sess
 		return { err: new Error('Aborted before binding') };
 	}
 
+	const onAbort = (): void => { void session.close({ signal }); };
+
 	// Registered before the bind: an abort landing while it is in flight has to close the session.
-	signal?.addEventListener('abort', () => { void session.close({ signal }); }, { once: true });
+	signal?.addEventListener('abort', onAbort, { once: true });
 
 	const bound = await bind(session, options);
 
 	if (bound.err) {
+		// close() stops this session's own loop before the socket goes, so only one loop retries.
+		signal?.removeEventListener('abort', onAbort);
 		void session.close({ signal });
 
 		return { err: bound.err };
 	}
 
 	return { session };
+}
+
+function retriesFromStart(reconnect: ClientOptions['reconnect']): reconnect is ReconnectTuning {
+	return reconnect !== undefined && reconnect !== false && reconnect.fromStart === true;
+}
+
+/** Retries the first connect and bind, on the backoff a drop takes, until one of them binds. */
+function keepTrying(
+	options: ClientOptions,
+	log: SmppLog,
+	tuning: ReconnectTuning,
+): Promise<Result<{ session: Session }>> {
+	return new Promise(resolve => {
+		const signal = options.signal;
+		let settled = false;
+		const loop = new ReconnectLoop({
+			connect: () => openSocket(options),
+			log,
+			maxDelay: tuning.maxDelay ?? sessionDefaults.maxDelay,
+			minDelay: tuning.minDelay ?? sessionDefaults.minDelay,
+			onConnected: async sock => {
+				const bound = await bindOn(createSession(options, log, sock), options);
+
+				if (bound.err) return { err: bound.err };
+
+				settle({ session: bound.session });
+
+				return {};
+			},
+			// Awaited with no other handle, so an unref()'d wait would exit the process unbound.
+			unref: false,
+		});
+
+		function settle(result: Result<{ session: Session }>): void {
+			if (settled) return;
+
+			settled = true;
+			loop.stop();
+			signal?.removeEventListener('abort', onAbort);
+			resolve(result);
+		}
+
+		function onAbort(): void {
+			settle({ err: new Error('Aborted while connecting') });
+		}
+
+		signal?.addEventListener('abort', onAbort, { once: true });
+		loop.schedule();
+	});
+}
+
+/** Connects to an SMSC and binds. */
+export async function client(options: ClientOptions = {}): Promise<Result<{ session: Session }>> {
+	const log = guardedLog(options.log);
+	const checked = checkSessionOptions(options);
+
+	if (checked.err) {
+		log.warn('client - unusable option', { message: checked.err.message });
+
+		return { err: checked.err };
+	}
+
+	const first = await connectAndBind(options, log);
+	const reconnect = options.reconnect;
+
+	if (!first.err || options.signal?.aborted === true || !retriesFromStart(reconnect)) return first;
+
+	return keepTrying(options, log, reconnect);
 }

@@ -550,7 +550,7 @@ describe('reconnect', () => {
 		await closed;
 
 		assert.equal(disconnects, 0);
-		assert.ok(!infos.includes('reconnect - retrying after a drop'));
+		assert.ok(!infos.includes('reconnect - retrying'));
 	});
 
 	test('re-binds after the connection drops, keeping the same session object', async t => {
