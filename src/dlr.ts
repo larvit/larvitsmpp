@@ -155,10 +155,7 @@ function messageType(pduObj: PduObject): MessageType {
 	return nonEmptyText(pduObj.tlvs.receipted_message_id?.tagValue) === undefined ? 'unmarked' : 'receipt';
 }
 
-/**
- * SMPP 3.4 Appendix B makes a receipt a fixed text format rather than a message, so its octets are
- * read as octets — Latin-1 keeps every one of them — whatever data_coding the PDU declares.
- */
+/** SMPP 3.4 Appendix B makes a receipt fixed text, so its octets are read as octets, not decoded. */
 function receiptBody(pduObj: PduObject): string {
 	const octets = pduObj.shortMessageOctets;
 
