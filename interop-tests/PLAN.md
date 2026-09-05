@@ -191,7 +191,9 @@ document, library changes, and the AGENTS.md decision record each one needs.
 
 | Phase | State | Findings |
 | --- | --- | --- |
-| 0–10 | not started | — |
+| 0 | done | [01-smscsim.md](findings/01-smscsim.md) |
+| 1 | done | [01-smscsim.md](findings/01-smscsim.md) |
+| 2–10 | not started | — |
 
 Research notes behind this plan, 2026-09-05, are in `research/`: SMSC simulators, ESME clients
 and validators, and operator quirks with one source URL per claim. Ask before trusting a claim here
