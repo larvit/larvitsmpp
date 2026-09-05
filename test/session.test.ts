@@ -1421,7 +1421,7 @@ describe('application hooks that throw or reject', () => {
 			debug: noop,
 			error: noop,
 			info: (msg, metadata) => {
-				if (msg === 'reconnect - retrying after a drop') delays.push(Number(metadata?.delay));
+				if (msg === 'reconnect - retrying') delays.push(Number(metadata?.delay));
 			},
 			verbose: noop,
 			warn: noop,
