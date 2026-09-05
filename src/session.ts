@@ -257,8 +257,8 @@ export class Session extends EventEmitter<SessionEvents> {
 		return new ReconnectLoop({
 			connect: reconnect.connect,
 			log: this.log,
-			maxDelay: reconnect.maxDelay ?? defaults.maxDelay,
-			minDelay: reconnect.minDelay ?? defaults.minDelay,
+			maxDelay: reconnect.maxDelay,
+			minDelay: reconnect.minDelay,
 			onConnected: sock => this.comeBackUp(sock, reconnect.onConnected),
 		});
 	}

@@ -360,8 +360,8 @@ Grouped by what each one constrains.
   already owns. A field on `reconnect` rather than an option of its own, so the combination that
   would contradict `false` cannot be written at all — `false` carries no fields — and a top-level
   `fromStart` is refused by name rather than ignored. Nothing but the caller's `signal` ends the
-  wait: a bound of its own would be a second spelling of the deadline `AbortSignal.timeout()`
-  already writes, and giving up after one is what the default does. A bind the SMSC refuses is
+  wait: a bound of its own would be a second spelling of a deadline the caller already writes with
+  that signal, and giving up after one is what the default does. A bind the SMSC refuses is
   retried like any other failure — rejected: giving up on `ESME_RINVPASWD` and `ESME_RBINDFAIL`,
   which would have the initial attempts and a rebind disagree about what a refused bind means, and
   gives up on the operator whose provisioning lands a minute later; the backoff is what bounds the

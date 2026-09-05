@@ -8,7 +8,7 @@ export type { BindType };
 
 import { ReconnectLoop } from './reconnect-loop.ts';
 import { Session } from './session.ts';
-import { checkSessionOptions, defaults as sessionDefaults, undeclaredInterfaceVersion } from './session-options.ts';
+import { checkSessionOptions, undeclaredInterfaceVersion } from './session-options.ts';
 import { connect as netConnect } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { defaultInterfaceVersion } from './defs/constants.ts';
@@ -100,6 +100,21 @@ function openSocket(options: ClientOptions): Promise<Result<{ sock: Socket }>> {
 	});
 }
 
+/** Every connect this client makes goes through here, so a failed one is named the same way once. */
+async function connectSocket(options: ClientOptions, log: SmppLog): Promise<Result<{ sock: Socket }>> {
+	const opened = await openSocket(options);
+
+	if (opened.err) {
+		log.warn('client - could not connect', {
+			host: options.host ?? defaults.host,
+			message: opened.err.message,
+			port: options.port ?? defaults.port,
+		});
+	}
+
+	return opened;
+}
+
 function bindParams(options: ClientOptions, systemId: string) {
 	return {
 		address_range: options.addressRange ?? '',
@@ -143,13 +158,13 @@ async function bind(session: Session, options: ClientOptions): Promise<VoidResul
 	return {};
 }
 
-function reconnectFor(options: ClientOptions): ReconnectOptions | undefined {
+function reconnectFor(options: ClientOptions, log: SmppLog): ReconnectOptions | undefined {
 	if (options.reconnect === false) return undefined;
 
 	const tuning = options.reconnect ?? {};
 
 	return {
-		connect: () => openSocket(options),
+		connect: () => connectSocket(options, log),
 		maxDelay: tuning.maxDelay,
 		minDelay: tuning.minDelay,
 		onConnected: reconnected => bind(reconnected, options),
@@ -164,7 +179,7 @@ function createSession(options: ClientOptions, log: SmppLog, sock: Socket): Sess
 		idleTimeout: options.idleTimeout ?? enquireLinkInterval * defaults.idleTimeoutFactor,
 		log,
 		maxOutstanding: options.maxOutstanding,
-		reconnect: reconnectFor(options),
+		reconnect: reconnectFor(options, log),
 		responseTimeout: options.responseTimeout,
 		shutdownTimeout: options.shutdownTimeout,
 		smsIdFormat: options.smsIdFormat,
@@ -176,17 +191,9 @@ async function connectAndBind(
 	options: ClientOptions,
 	log: SmppLog,
 ): Promise<Result<{ session: Session }>> {
-	const opened = await openSocket(options);
+	const opened = await connectSocket(options, log);
 
-	if (opened.err) {
-		log.warn('client - could not connect', {
-			host: options.host ?? defaults.host,
-			message: opened.err.message,
-			port: options.port ?? defaults.port,
-		});
-
-		return { err: opened.err };
-	}
+	if (opened.err) return { err: opened.err };
 
 	return bindOn(createSession(options, log, opened.sock), options);
 }
@@ -212,8 +219,8 @@ async function bindOn(
 	const bound = await bind(session, options);
 
 	if (bound.err) {
-		// close() stops this session's own loop before the socket goes, so only one loop retries.
 		signal?.removeEventListener('abort', onAbort);
+		// close() must reach the loop's stop() before its first await, or this session retries too.
 		void session.close({ signal });
 
 		return { err: bound.err };
@@ -226,6 +233,29 @@ function retriesFromStart(reconnect: ClientOptions['reconnect']): reconnect is R
 	return reconnect !== undefined && reconnect !== false && reconnect.fromStart === true;
 }
 
+/** A fresh session per attempt, and the failure to answer an abort with when none of them binds. */
+function initialAttempts(options: ClientOptions, log: SmppLog) {
+	let lastErr: Error | undefined = undefined;
+
+	return {
+		bind: async (sock: Socket): Promise<Result<{ session: Session }>> => {
+			const bound = await bindOn(createSession(options, log, sock), options);
+
+			if (bound.err) lastErr = bound.err;
+
+			return bound;
+		},
+		connect: async (): Promise<Result<{ sock: Socket }>> => {
+			const opened = await connectSocket(options, log);
+
+			if (opened.err) lastErr = opened.err;
+
+			return opened;
+		},
+		lastErr: (): Error | undefined => lastErr,
+	};
+}
+
 /** Retries the first connect and bind, on the backoff a drop takes, until one of them binds. */
 function keepTrying(
 	options: ClientOptions,
@@ -233,15 +263,16 @@ function keepTrying(
 	tuning: ReconnectTuning,
 ): Promise<Result<{ session: Session }>> {
 	return new Promise(resolve => {
+		const attempts = initialAttempts(options, log);
 		const signal = options.signal;
 		let settled = false;
 		const loop = new ReconnectLoop({
-			connect: () => openSocket(options),
+			connect: attempts.connect,
 			log,
-			maxDelay: tuning.maxDelay ?? sessionDefaults.maxDelay,
-			minDelay: tuning.minDelay ?? sessionDefaults.minDelay,
+			maxDelay: tuning.maxDelay,
+			minDelay: tuning.minDelay,
 			onConnected: async sock => {
-				const bound = await bindOn(createSession(options, log, sock), options);
+				const bound = await attempts.bind(sock);
 
 				if (bound.err) return { err: bound.err };
 
@@ -263,7 +294,7 @@ function keepTrying(
 		}
 
 		function onAbort(): void {
-			settle({ err: new Error('Aborted while connecting') });
+			settle({ err: new Error('Aborted while connecting', { cause: attempts.lastErr() }) });
 		}
 
 		signal?.addEventListener('abort', onAbort, { once: true });
