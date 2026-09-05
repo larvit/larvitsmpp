@@ -267,8 +267,8 @@ is exactly what this library promises not to do.
 
 `sessionError` carries two kinds of failure, and `PduRefusedError` is what separates them:
 
-- **A PDU the peer sent that the codec could not read.** The stream is still in sync and the link is
-  healthy; only that one PDU is lost. SMSCs do this steadily rather than once — one that malforms
+- **A PDU the peer sent that the codec could not read with the stream still in sync.** The link is
+  healthy and only that one PDU is lost. SMSCs do this steadily rather than once — one that malforms
   half of a command type is a real one — so this is the kind to count, not to alert on.
 - **Everything else**: the session or the socket failing, and a hook or listener that threw or, if it
   was `async`, rejected.
@@ -342,7 +342,7 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 | `close` | The session is over, because nothing will bring the link back. Fires once, whether you closed it or the link failed for good. |
 | `disconnected` | The link dropped and the reconnect loop will retry it. Do not open a replacement client here — the session you hold comes back on its own, and `reconnected` says when. Fires again for each attempt that reconnects and then fails, so it is not one-to-one with `reconnected`. |
 | `reconnected` | The client re-bound after a drop. |
-| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires for each PDU the codec refused as well, carrying a `PduRefusedError` that names the command and the part of it that would not read, while the link carries on: a refused request is answered with the status SMPP names, and a refused response is answered with nothing and settles the request it named as `unanswered`. A refused inbound `deliver_sm` is traffic lost with nowhere else to show. [Errors](#errors) has the narrowing that tells the two kinds apart. |
+| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires for each PDU the codec refused as well, carrying a `PduRefusedError` while the link carries on: a refused request is answered with the status SMPP names, and a refused response is answered with nothing and settles the request it named as `unanswered`. [Errors](#errors) tells the two kinds apart. |
 | `data` | Raw bytes arrived on the socket. |
 | `incomingPdu` | A complete PDU arrived, as a buffer. |
 | `incomingPduObj` | The same PDU, parsed into an object. |
