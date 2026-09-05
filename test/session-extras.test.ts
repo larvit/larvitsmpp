@@ -892,6 +892,14 @@ describe('reconnect from the first bind', () => {
 		await reconnected;
 
 		assert.deepEqual(events, ['disconnected'], 'the attempts before the first link reported nothing');
+
+		const closed = once<true>(resolve => { session.on('close', () => { resolve(true); }); });
+
+		controller.abort();
+		await closed;
+
+		// Which is why a deadline for the wait may not be a signal that goes on arming afterwards.
+		assert.deepEqual(events, ['disconnected', 'close'], 'the signal that bounded the wait ends the session');
 	});
 
 	test('lets an abort out of the initial retries', async () => {
