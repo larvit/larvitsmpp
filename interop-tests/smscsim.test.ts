@@ -12,14 +12,10 @@ const PEER_WEB_PORT = Number(process.env.PEER_WEB_PORT ?? '12775');
 const FAILING_PEER_HOST = process.env.FAILING_PEER_HOST ?? 'smscsim-failing';
 const FAILING_PEER_PORT = Number(process.env.FAILING_PEER_PORT ?? '2775');
 
-// smscsim signs every deliver_sm it sends unprompted (a DLR, or an injected MO) with a
-// `rand.Int()`-derived sequence_number, unconstrained to the SMPP 3.4 4.7.1 ceiling
-// (0x7FFFFFFF) - about half land above it, and pdu.ts refuses the PDU outright, so the DLR or
-// MO is silently lost (see findings/01-smscsim.md, "an out-of-range deliver_sm sequence
-// number"). Retrying with a fresh send works around that peer+library interaction without
-// hiding it: a scenario only fails here if it keeps missing well past what chance alone explains.
-const DLR_RETRY_BUDGET_MS = 3000;
-const DLR_MAX_ATTEMPTS = 20;
+const DLR_BUDGET_MS = 5000;
+// smscsim refuses a submit_sm on its own sequence number's parity, so a refusal and an acceptance
+// take at least two sends to both be seen.
+const PARITY_MAX_ATTEMPTS = 6;
 
 function delay(ms: number): Promise<void> {
 	return new Promise(resolve => { setTimeout(resolve, ms); });
@@ -38,22 +34,20 @@ async function waitFor<T>(get: () => T | undefined, budget = 5000): Promise<T | 
 	return value;
 }
 
-/** Resends the message until one attempt's segments are every one matched by a `dlr` event. */
-async function sendUntilAllDlrsArrive(session: Session, dlrs: Dlr[], message: string): Promise<string[]> {
-	for (let attempt = 0; attempt < DLR_MAX_ATTEMPTS; attempt++) {
-		const sent = await session.sendSms({ dlr: true, from: '46701113311', message, to: '46709771337' });
+/** Sends once and waits for every segment of it to be matched by a `dlr` event. */
+async function sendAndAwaitDlrs(session: Session, dlrs: Dlr[], message: string): Promise<string[]> {
+	const sent = await session.sendSms({ dlr: true, from: '46701113311', message, to: '46709771337' });
 
-		assert.equal(sent.err, undefined);
+	assert.equal(sent.err, undefined);
 
-		const complete = await waitFor(
-			() => (sent.smsIds.every(id => dlrs.some(dlr => dlr.smsId === id)) ? true : undefined),
-			DLR_RETRY_BUDGET_MS,
-		);
+	const complete = await waitFor(
+		() => (sent.smsIds.every(id => dlrs.some(dlr => dlr.smsId === id)) ? true : undefined),
+		DLR_BUDGET_MS,
+	);
 
-		if (complete) return sent.smsIds;
-	}
+	assert.ok(complete, 'every segment of the first send should get a DLR');
 
-	throw new Error(`no attempt got a DLR for every segment within ${String(DLR_MAX_ATTEMPTS)} tries`);
+	return sent.smsIds;
 }
 
 describe('smscsim - C1 bind, keepalive, unbind', () => {
@@ -113,7 +107,7 @@ describe('smscsim - a single SMS', () => {
 
 		session.on('dlr', dlr => { dlrs.push(dlr); });
 
-		const smsIds = await sendUntilAllDlrsArrive(session, dlrs, 'hello world');
+		const smsIds = await sendAndAwaitDlrs(session, dlrs, 'hello world');
 
 		assert.equal(smsIds.length, 1);
 
@@ -142,7 +136,7 @@ describe('smscsim - multipart segments', () => {
 
 		// 200 plain GSM chars: over the 160-char single-segment budget, under the 306-char
 		// 2-segment one (153 septets each).
-		const smsIds = await sendUntilAllDlrsArrive(session, dlrs, 'a'.repeat(200));
+		const smsIds = await sendAndAwaitDlrs(session, dlrs, 'a'.repeat(200));
 
 		assert.equal(smsIds.length, 2);
 	});
@@ -160,7 +154,7 @@ describe('smscsim - multipart segments', () => {
 
 		// 一 (2 bytes) + an emoji (a surrogate pair, 4 bytes) + 70 padding chars (2 bytes each):
 		// 146 bytes, over the 140-byte single-segment budget, under the 268-byte 2-segment one.
-		const smsIds = await sendUntilAllDlrsArrive(session, dlrs, `一😀${'x'.repeat(70)}`);
+		const smsIds = await sendAndAwaitDlrs(session, dlrs, `一😀${'x'.repeat(70)}`);
 
 		assert.equal(smsIds.length, 2);
 	});
@@ -183,30 +177,23 @@ describe('smscsim - MO injection through the web UI', () => {
 
 		session.on('sms', sms => { incoming.push(sms); });
 
-		let sms: Sms | undefined;
+		const response = await fetch(`http://${PEER_HOST}:${String(PEER_WEB_PORT)}/`, {
+			body: new URLSearchParams({
+				message: 'hello from the web UI',
+				recipient: '46709771337',
+				sender: '46701113311',
+				system_id: 'mo-inject',
+			}),
+			method: 'POST',
+			redirect: 'manual',
+		});
 
-		for (let attempt = 0; attempt < DLR_MAX_ATTEMPTS && !sms; attempt++) {
-			const before = incoming.length;
+		assert.equal(response.status, 303);
+		assert.match(response.headers.get('location') ?? '', /message=/);
 
-			const response = await fetch(`http://${PEER_HOST}:${String(PEER_WEB_PORT)}/`, {
-				body: new URLSearchParams({
-					message: 'hello from the web UI',
-					recipient: '46709771337',
-					sender: '46701113311',
-					system_id: 'mo-inject',
-				}),
-				method: 'POST',
-				redirect: 'manual',
-			});
+		const sms = await waitFor(() => incoming[0], DLR_BUDGET_MS);
 
-			assert.equal(response.status, 303);
-			assert.match(response.headers.get('location') ?? '', /message=/);
-
-			await waitFor(() => incoming[before], DLR_RETRY_BUDGET_MS);
-			sms = incoming[before];
-		}
-
-		assert.ok(sms, 'no MO message arrived across the attempts');
+		assert.ok(sms, 'the injected MO should arrive on the first attempt');
 		assert.equal(sms.from, '46701113311');
 		assert.equal(sms.to, '46709771337');
 		assert.equal(sms.message, 'hello from the web UI');
@@ -230,7 +217,7 @@ describe('smscsim-failing - C12 refusals', () => {
 		let refusedSeen = false;
 		let acceptedConfirmed = false;
 
-		for (let attempt = 0; attempt < DLR_MAX_ATTEMPTS && !(refusedSeen && acceptedConfirmed); attempt++) {
+		for (let attempt = 0; attempt < PARITY_MAX_ATTEMPTS && !(refusedSeen && acceptedConfirmed); attempt++) {
 			const before = dlrs.length;
 
 			// Sequential: smscsim keys its refusal on each submit_sm's own sequence number parity.
@@ -253,7 +240,7 @@ describe('smscsim-failing - C12 refusals', () => {
 
 			assert.ok(smsId);
 
-			const matched = await waitFor(() => dlrs.slice(before).find(dlr => dlr.smsId === smsId), DLR_RETRY_BUDGET_MS);
+			const matched = await waitFor(() => dlrs.slice(before).find(dlr => dlr.smsId === smsId), DLR_BUDGET_MS);
 
 			if (matched) {
 				assert.equal(matched.statusMsg, 'UNDELIVERABLE');
