@@ -74,6 +74,11 @@ function delay(ms: number): Promise<void> {
 	return new Promise(resolve => { setTimeout(resolve, ms); });
 }
 
+/** Undefined where the promise never settled, which is an assertion rather than a hung run. */
+function within<T>(ms: number, promise: Promise<T>): Promise<T | undefined> {
+	return Promise.race([promise, delay(ms).then((): undefined => undefined)]);
+}
+
 function submitPdu(seqNr: number, cmdStatus: ErrorName = 'ESME_ROK'): PduObject {
 	return {
 		cmdId: 0x00000004,
@@ -727,6 +732,226 @@ describe('reconnect', () => {
 		await delay(150);
 
 		assert.equal(reconnects, 0);
+	});
+});
+
+describe('reconnect from the first bind', () => {
+	type LogSpy = { delays: number[]; log: SmppLog; messages: string[] };
+
+	/** The backoff is only visible in the log, which is where the loop announces each wait. */
+	function logSpy(): LogSpy {
+		const delays: number[] = [];
+		const messages: string[] = [];
+		const noop = (): void => undefined;
+		const record = (msg: string): void => { messages.push(msg); };
+
+		return {
+			delays,
+			log: {
+				debug: noop,
+				error: record,
+				info: (msg, metadata) => {
+					messages.push(msg);
+
+					if (msg === 'reconnect - retrying') delays.push(Number(metadata?.delay));
+				},
+				verbose: noop,
+				warn: record,
+			},
+			messages,
+		};
+	}
+
+	/** A port nothing answers on: taken and given straight back. */
+	async function closedPort(): Promise<number> {
+		const listener = net.createServer();
+
+		await new Promise<void>(resolve => { listener.listen(0, resolve); });
+
+		const address = listener.address();
+		const port = typeof address === 'object' && address !== null ? address.port : 0;
+
+		await new Promise<void>(resolve => { listener.close(() => { resolve(); }); });
+
+		return port;
+	}
+
+	/** A client still retrying holds a socket and a timer nothing else releases. */
+	function abortAfter(
+		t: TestContext,
+		controller: AbortController,
+		connecting: ReturnType<typeof client>,
+	): void {
+		t.after(async () => {
+			controller.abort();
+
+			const { session } = await connecting;
+
+			await session?.close({ signal: AbortSignal.abort() });
+		});
+	}
+
+	test('gives up on the first attempt where reconnect alone is asked for', async () => {
+		const port = await closedPort();
+		const spy = logSpy();
+		const started = Date.now();
+		const { err, session } = await client({ log: spy.log, port, reconnect: { maxDelay: 40, minDelay: 10 } });
+
+		assert.ok(err instanceof Error);
+		assert.equal(session, undefined);
+		assert.ok(Date.now() - started < 1000, 'the default answers the caller rather than retrying');
+		assert.ok(!spy.messages.includes('reconnect - retrying'), 'nothing may retry what the default gave up on');
+	});
+
+	test('retries the first connect with backoff and binds once the SMSC listens', async t => {
+		const port = await closedPort();
+		const spy = logSpy();
+		const controller = new AbortController();
+		const connecting = client({
+			log: spy.log,
+			port,
+			reconnect: { fromStart: true, maxDelay: 40, minDelay: 10 },
+			signal: controller.signal,
+		});
+
+		abortAfter(t, controller, connecting);
+		await delay(200);
+
+		const listening = await server({ port });
+
+		assert.equal(listening.err, undefined);
+		assert.ok(listening.server);
+		closeAfter(t, listening.server);
+
+		const { err, session } = await connecting;
+
+		assert.equal(err, undefined);
+		assert.ok(session);
+		assert.equal(session.loggedIn, true);
+		assert.ok(spy.delays.length >= 3, 'the SMSC was down for several attempts');
+		assert.deepEqual(spy.delays.slice(0, 3), [10, 20, 40], 'each wait doubles, up to maxDelay');
+		assert.ok(
+			!spy.messages.includes('session - reconnected'),
+			'a first link is not a link coming back',
+		);
+	});
+
+	// Bind flooding is what the backoff bounds; credentials an SMSC refuses now it may take later.
+	test('retries a bind the SMSC refuses rather than giving up on it', async t => {
+		let binds = 0;
+		const spy = logSpy();
+		const smpp = await startServer(t, { authenticate: () => ++binds > 2 });
+		const controller = new AbortController();
+		const connecting = client({
+			log: spy.log,
+			port: smpp.port,
+			reconnect: { fromStart: true, maxDelay: 40, minDelay: 10 },
+			signal: controller.signal,
+		});
+
+		abortAfter(t, controller, connecting);
+
+		const { err, session } = await connecting;
+
+		assert.equal(err, undefined);
+		assert.ok(session);
+		assert.equal(binds, 3, 'the two refusals were retried, not reported');
+		assert.deepEqual(spy.delays, [10, 20], 'a link the SMSC refused a bind on does not reset the backoff');
+	});
+
+	test('hands back a session that reported nothing and reconnects like any other', async t => {
+		const port = await closedPort();
+		const controller = new AbortController();
+		const connecting = client({
+			port,
+			reconnect: { fromStart: true, maxDelay: 40, minDelay: 10 },
+			signal: controller.signal,
+		});
+
+		abortAfter(t, controller, connecting);
+		await delay(100);
+
+		const listening = await server({ port });
+
+		assert.equal(listening.err, undefined);
+		assert.ok(listening.server);
+		closeAfter(t, listening.server);
+
+		const { session } = await connecting;
+
+		assert.ok(session);
+
+		const events: string[] = [];
+
+		session.on('close', () => { events.push('close'); });
+		session.on('disconnected', () => { events.push('disconnected'); });
+
+		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
+
+		await peerOf(listening.server).close();
+		await reconnected;
+
+		assert.deepEqual(events, ['disconnected'], 'the attempts before the first link reported nothing');
+	});
+
+	test('lets an abort out of the initial retries', async () => {
+		const port = await closedPort();
+		const controller = new AbortController();
+		const connecting = client({
+			port,
+			reconnect: { fromStart: true, maxDelay: 40, minDelay: 10 },
+			signal: controller.signal,
+		});
+
+		await delay(60);
+		controller.abort();
+
+		const settled = await within(2000, connecting);
+
+		assert.ok(settled, 'an aborted signal is the way out of a wait nothing else ends');
+		assert.ok(settled.err instanceof Error);
+		assert.equal(settled.session, undefined);
+	});
+
+	test('holds the process open between the initial attempts', async t => {
+		const port = await closedPort();
+		const controller = new AbortController();
+		const timeouts = (): number => process.getActiveResourcesInfo().filter(name => name === 'Timeout').length;
+		const before = timeouts();
+		const connecting = client({
+			port,
+			reconnect: { fromStart: true, maxDelay: 5000, minDelay: 5000 },
+			signal: controller.signal,
+		});
+
+		abortAfter(t, controller, connecting);
+		await delay(200);
+
+		assert.ok(timeouts() > before, 'an unref()d wait lets a process with nothing else to do exit unbound');
+
+		controller.abort();
+
+		const settled = await within(2000, connecting);
+
+		assert.ok(settled);
+		assert.ok(settled.err instanceof Error);
+	});
+
+	test('refuses fromStart spelled anywhere but inside reconnect', async () => {
+		const misspelled = { fromStart: true, port: 1, reconnect: false } as const;
+
+		assert.match(
+			checkSessionOptions(misspelled).err?.message ?? '',
+			/reconnect: \{ fromStart: true \}/,
+			'off and from-start contradict each other, so the one spelling has to be named',
+		);
+
+		const refused = await client(misspelled);
+
+		assert.ok(refused.err instanceof Error);
+		assert.equal(refused.session, undefined);
+		assert.match(checkSessionOptions({ reconnect: { fromStart: 'yes' } }).err?.message ?? '', /fromStart/);
+		assert.equal(checkSessionOptions({ reconnect: { fromStart: true, minDelay: 10 } }).err, undefined);
 	});
 });
 
