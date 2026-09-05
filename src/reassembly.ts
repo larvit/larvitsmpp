@@ -39,7 +39,12 @@ function detach(pduObj: PduObject): PduObject {
 			: tlv;
 	}
 
-	return { ...pduObj, params, tlvs };
+	// short_message holds the same octets wherever it was not decoded, so one copy covers both.
+	const octets = Buffer.isBuffer(params.short_message)
+		? params.short_message
+		: pduObj.shortMessageOctets && Buffer.from(pduObj.shortMessageOctets);
+
+	return { ...pduObj, params, shortMessageOctets: octets, tlvs };
 }
 
 // A cstring param arrives as a string, and source_addr alone can carry most of a 1 MiB PDU.

@@ -1,5 +1,5 @@
 import type { Result } from './result.ts';
-import { framingRefusal } from './pdu.ts';
+import { framingRefusal } from './pdu-refusal.ts';
 
 /**
  * Cuts a byte stream into whole PDUs.

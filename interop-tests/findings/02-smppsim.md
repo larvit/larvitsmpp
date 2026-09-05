@@ -52,7 +52,7 @@ tests passing, `malformed: 0`, `expert errors: 0` in both.
 | C5 (single-state variants) | pass | `smppsim single-state variants - C5 …`; UNDELIVERABLE/REJECTED/ACCEPTED each map correctly; 2-segment message's shared status confirmed, `messageDlr` confirmed absent (see Open questions) |
 | C6 (`smppsim-delayed`) | pass | `smppsim-delayed - C6 …`; disconnect+reconnect observed, delayed receipt still reaches `dlr` on the new link |
 | C7 (loopback, GSM 1/2/3/10-segment) | pass | same `C3+C7` suite; one id per segment, receipt per id, loopback reassembles the exact text including € and \[ \] |
-| C7 (loopback, UCS2 2-segment) | pass with a documented defect | `… 2-segment UCS2 …: TLVs stay right, the receipt body is corrupted`; TLVs and loopback reassembly both correct, receipt body unreadable - `@larvit/smpp` defect below |
+| C7 (loopback, UCS2 2-segment) | pass with a defect, since fixed | `… 2-segment UCS2 …`; TLVs and loopback reassembly both correct, receipt body unreadable at this commit - `@larvit/smpp` defect below |
 | C11 (bind refusal + backoff) | pass | `smppsim - C11 …`, three sub-tests, see below for what each shows |
 | C12 (`smppsim-queuefull`) | pass | `smppsim-queuefull - C12 …`; `ESME_RMSGQFUL` returned, session stays bound, later send succeeds once the one-slot queue drains |
 | C13 (`maxOutstanding: 1`, 10 parallel) | pass | `smppsim - C13 …`; 10 distinct, strictly-increasing ids, none lost |
@@ -95,6 +95,8 @@ resolve correctly - but total for a peer that answers `DELIVERY_RECEIPT_OPTIONAL
 left to fall back on. Not reproduced against `smppsim-textdlr` here (that variant's own C2 test
 only sends ASCII), so this is inferred from the mechanism, not independently confirmed there - see
 Open questions.
+
+**Fixed** in PR #81: a receipt body is read as the octets that arrived, never by its `data_coding`.
 
 ### `reconnect` never retries the very first connect or bind attempt
 

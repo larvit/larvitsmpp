@@ -265,3 +265,12 @@ export function commandNameById(id: number): CommandName | undefined {
 
 	return isCommandName(command) ? command : undefined;
 }
+
+/** The response SMPP pairs with a request command, where it has one. */
+export function respNameFor(cmdName: CommandName | undefined): CommandName | undefined {
+	if (cmdName === undefined) return undefined;
+
+	const respName = `${cmdName}_resp`;
+
+	return isCommandName(respName) ? respName : undefined;
+}

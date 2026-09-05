@@ -9,6 +9,11 @@ export class ConcatReference {
 	}
 }
 
+/** A user data header is as long as its first octet says, that octet included. */
+export function udhLength(message: Buffer): number {
+	return (message[0] ?? 0) + 1;
+}
+
 export type ConcatInfo = {
 	part: number;
 	reference: number;

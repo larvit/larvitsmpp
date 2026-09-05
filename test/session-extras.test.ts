@@ -83,6 +83,7 @@ function submitPdu(seqNr: number, cmdStatus: ErrorName = 'ESME_ROK'): PduObject 
 		cmdStatusId: 0,
 		params: { destination_addr: '46709771337', short_message: 'held', source_addr: '46701113311' },
 		seqNr,
+		shortMessageOctets: undefined,
 		tlvs: {},
 	};
 }
@@ -313,6 +314,7 @@ describe('sendSms()', () => {
 			cmdStatusId: errors[status],
 			params: { message_id: messageId },
 			seqNr,
+			shortMessageOctets: undefined,
 			tlvs: {},
 		};
 	}
@@ -1153,6 +1155,7 @@ describe('sendDlr()', () => {
 describe('reassembly bounds', () => {
 	function segment(reference: number, part: number, total: number): PduObject {
 		const udh = Buffer.from([0x05, 0x00, 0x03, reference, total, part]);
+		const body = Buffer.concat([udh, Buffer.from('fragment')]);
 
 		return {
 			cmdId: 0x00000004,
@@ -1164,10 +1167,11 @@ describe('reassembly bounds', () => {
 				data_coding: 0,
 				destination_addr: '46709771337',
 				esm_class: 0x40,
-				short_message: Buffer.concat([udh, Buffer.from('fragment')]),
+				short_message: body,
 				source_addr: '46701113311',
 			},
 			seqNr: part,
+			shortMessageOctets: body,
 			tlvs: {},
 		};
 	}

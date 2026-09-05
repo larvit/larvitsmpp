@@ -137,8 +137,9 @@ session.on('sms', async sms => {
 Delivery receipts travel on the same SMPP command but reach you as `dlr`, so nothing you write has
 to tell the two apart. `esm_class` is what tells them apart; where it names no message type a
 `receipted_message_id` TLV does, and failing both the message body is read for the standard
-`id:` and `stat:` receipt fields. An intermediate delivery notification is the SMSC reporting as
-well, not an inbound message.
+`id:` and `stat:` receipt fields. That body is read as text whatever `data_coding` the receipt
+declares, since SMSCs commonly copy the reported message's onto it. An intermediate delivery
+notification is the SMSC reporting as well, not an inbound message.
 
 Matching a receipt to a send means comparing `dlr.smsId` against the `smsIds` that `sendSms()`
 returned. Some SMSCs write the two in different notations — a hex `message_id` on the
@@ -382,6 +383,9 @@ if (isCommand(pduObj, 'submit_sm')) {
 	pduObj.params.destination_addr; // typed as a string
 }
 ```
+
+`params.short_message` is decoded with the PDU's own `data_coding`; `shortMessageOctets` is that
+same field exactly as it arrived.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.

@@ -12,12 +12,13 @@ export { types } from './defs/types.ts';
 export {
 	isCommand,
 	isResp,
-	maxPduLength,
 	maxSeqNr,
 	objToPdu,
 	pduReturn,
 	pduToObj,
 } from './pdu.ts';
+
+export { maxPduLength } from './pdu-refusal.ts';
 
 export {
 	bitCount,

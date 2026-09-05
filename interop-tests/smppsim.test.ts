@@ -4,7 +4,6 @@ import type { Dlr } from '../src/dlr.ts';
 import type { EncodingName } from '../src/defs/encodings.ts';
 import type { MessageDlr } from '../src/dlr-merger.ts';
 import type { PduObject } from '../src/pdu.ts';
-import type { SendSmsResult } from '../src/send-sms.ts';
 import type { Session } from '../src/session.ts';
 import type { Sms } from '../src/sms.ts';
 import { client } from '../src/client.ts';
@@ -164,11 +163,20 @@ async function sendUntilComplete(
 }
 
 describe('smppsim - C3+C7 long MT, receipts and loopback reassembly', () => {
-	const cases: { expectedSegments: number; label: string; message: string }[] = [
+	const cases: { encoding?: EncodingName; expectedSegments: number; label: string; message: string }[] = [
 		{ expectedSegments: 1, label: 'single-segment GSM with extension chars', message: gsmFiller(100) },
 		{ expectedSegments: 2, label: '2-segment GSM with extension chars', message: gsmFiller(200) },
 		{ expectedSegments: 3, label: '3-segment GSM with extension chars', message: gsmFiller(400) },
 		{ expectedSegments: 10, label: '10-segment GSM with extension chars', message: gsmFiller(1450) },
+		// SMPPSim writes this one's receipt body as text under the data_coding of the submit it
+		// reports on (8, UCS2), so it holds to the same bar as the GSM cases only if the body is
+		// read as the octets that arrived.
+		{
+			encoding: 'UCS2',
+			expectedSegments: 2,
+			label: '2-segment UCS2 with 一 and an emoji',
+			message: `一😀${'x'.repeat(70)}`,
+		},
 	];
 
 	for (const testCase of cases) {
@@ -182,7 +190,13 @@ describe('smppsim - C3+C7 long MT, receipts and loopback reassembly', () => {
 			const dlrs = collectDlrs(session);
 			const sms = collectSms(session);
 
-			const { reassembled, smsIds } = await sendUntilComplete(session, dlrs, sms, testCase.message);
+			const { reassembled, smsIds } = await sendUntilComplete(
+				session,
+				dlrs,
+				sms,
+				testCase.message,
+				testCase.encoding,
+			);
 
 			assert.equal(smsIds.length, testCase.expectedSegments);
 
@@ -195,75 +209,15 @@ describe('smppsim - C3+C7 long MT, receipts and loopback reassembly', () => {
 				// match, which is what a well-behaved SMSC gives you (C3).
 				assert.equal(received.pduObj.tlvs.receipted_message_id?.tagValue, id);
 				assert.equal(received.pduObj.tlvs.message_state?.tagValue, consts.MESSAGE_STATE.DELIVERED);
-				assert.equal(received.dlr.receipt?.stat, 'DELIVRD');
+				assert.ok(received.dlr.receipt);
+				assert.equal(received.dlr.receipt.stat, 'DELIVRD');
+				assert.equal(received.dlr.receipt.id, id);
+				assert.equal(received.dlr.receipt.err, '000');
 			}
 
 			assert.equal((await reassembled.sendResp()).err, undefined);
 		});
 	}
-
-	test('2-segment UCS2 with 一 and an emoji: TLVs stay right, the receipt body is corrupted', async t => {
-		const { err, session } = await bind(PEER_HOST);
-
-		assert.equal(err, undefined);
-		assert.ok(session);
-		closeAfter(t, session);
-
-		const dlrs = collectDlrs(session);
-		const sms = collectSms(session);
-		const message = `一😀${'x'.repeat(70)}`;
-
-		let smsIds: string[] | undefined;
-		let reassembled: Sms | undefined;
-
-		for (let attempt = 0; attempt < DLR_MAX_ATTEMPTS && !reassembled; attempt++) {
-			const sent: SendSmsResult = await session.sendSms(
-				{ dlr: true, encoding: 'UCS2', from: FROM, message, to: TO },
-			);
-
-			assert.equal(sent.err, undefined);
-			assert.equal(sent.smsIds.length, 2);
-
-			const complete = await waitFor(() => {
-				const tlvsIntact = sent.smsIds.every(id => {
-					const received = dlrs.find(r => r.dlr.smsId === id);
-
-					return received?.pduObj.tlvs.receipted_message_id?.tagValue !== undefined
-						&& received.pduObj.tlvs.message_state?.tagValue !== undefined;
-				});
-				const found = sms.find(s => s.message === message);
-
-				return tlvsIntact && found ? { found } : undefined;
-			}, DLR_RETRY_BUDGET_MS);
-
-			if (complete) {
-				smsIds = sent.smsIds;
-				reassembled = complete.found;
-			}
-		}
-
-		assert.ok(smsIds);
-		assert.ok(reassembled, 'expected the loopback deliver_sm(s), unaffected by the defect, to reassemble');
-
-		for (const id of smsIds) {
-			const received = dlrs.find(r => r.dlr.smsId === id);
-
-			assert.ok(received);
-			// The TLVs are typed fields, unaffected by the defect below.
-			assert.equal(received.dlr.statusMsg, 'DELIVERED');
-			assert.equal(received.pduObj.tlvs.receipted_message_id?.tagValue, id);
-			assert.equal(received.pduObj.tlvs.message_state?.tagValue, consts.MESSAGE_STATE.DELIVERED);
-
-			// Defect (see findings/02-smppsim.md): SMPPSim's delivery receipt echoes the
-			// original submit_sm's data_coding (8, UCS2) but writes its short_message as plain
-			// ASCII text. pdu.ts decodes short_message for any non-UDH PDU using that same
-			// data_coding at parse time, so the ASCII receipt bytes are read back as UCS2 -
-			// every "stat:"/"id:" field becomes unrecoverable CJK-range garbage.
-			assert.equal(received.dlr.receipt?.stat, undefined);
-		}
-
-		assert.equal((await reassembled.sendResp()).err, undefined);
-	});
 });
 
 describe('smppsim-textdlr - C2 text-only receipts', () => {

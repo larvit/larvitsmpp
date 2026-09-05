@@ -3,7 +3,8 @@ import type { SmppLog } from './log.ts';
 import type { Socket } from 'node:net';
 import type { VoidResult } from './result.ts';
 import { PduFramer } from './pdu-framer.ts';
-import { PduRefusedError, pduToObj } from './pdu.ts';
+import { PduRefusedError } from './pdu-refusal.ts';
+import { pduToObj } from './pdu.ts';
 
 export type PduTransportOptions = {
 	log: SmppLog;
