@@ -1,225 +1,191 @@
 # todo.md
 
-Remaining work for the `@larvit/smpp` 1.0.0 rewrite. Read [AGENTS.md](AGENTS.md) first — the hard
-rules there constrain every item below.
+Remaining work for the `@larvit/smpp` 1.0.0 rewrite. Read [AGENTS.md](AGENTS.md) first — the goals
+and hard rules there constrain every item below.
 
-## How to resume
+This is a temporary working file: it is deleted when 1.0.0 ships, and until then it sets its own
+rules. The documentation conventions in AGENTS.md do not govern it, and nothing here is a source
+anything else may cite.
 
-```bash
-docker compose run --rm node npm install
-docker compose run --rm node npm test
-```
+## Status
 
-Work top to bottom. Each task states what "done" means. Tests come before implementation: write the
-failing test for the behaviour, then implement until it passes. The 0.4.0 implementation is on the
-`master` branch of this repository and is the reference for protocol behaviour — read it, do not
-copy its structure.
+The rewrite is **feature complete and green**: the suite, lint and typecheck are clean on Node 18,
+20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ## The agreed API
 
-Settled with the maintainer before implementation started. Do not change any of it without asking;
-it is the contract the tasks below implement.
+Settled with the maintainer before implementation. Do not change any of it without asking. The
+public surface is documented in [README.md](README.md); this is the short form.
 
 ```ts
-import { client, server, consts, defs, errors, objToPdu, pduToObj } from '@larvit/smpp';
+import { client, server } from '@larvit/smpp';
 
-// --- client ---------------------------------------------------------------
-const { err, session } = await client({
-	addrNpi:             0,              // optional, bind field
-	addrTon:             0,              // optional, bind field
-	addressRange:        '',             // optional, bind field
-	bindType:            'transceiver',  // 'transceiver' | 'transmitter' | 'receiver'
-	enquireLinkInterval: 20000,
-	host:                'localhost',
-	interfaceVersion:    0x50,           // optional, bind field
-	log,                                 // @larvit/log LogInt, silent by default
-	maxOutstanding:      10,             // in-flight requests before sends queue
-	password:            'pass',
-	port:                2775,
-	reconnect:           { maxDelay: 30000, minDelay: 1000 },  // optional, opt-in
-	responseTimeout:     30000,
-	signal,                              // optional AbortSignal
-	systemType:          '',             // optional, bind field
-	tls:                 false,          // boolean or tls.ConnectionOptions
-	username:            'user',
-});
-
-const { err, pduObjs, smsIds } = await session.sendSms({
-	dlr:                  false,
-	encoding:             'UCS2',        // optional, overrides auto-detection
-	flash:                false,
-	from:                 'MyBrand',     // alphanumeric -> TON 5, digits -> TON 1
-	message:              'Hello world',
-	scheduleDeliveryTime: undefined,     // optional
-	to:                   '46709771337',
-	validityPeriod:       undefined,     // optional
-}, { signal });                          // optional per-call AbortSignal
-
+const { err, session } = await client({ host, password, port, username });
+const { err: sendErr, pduObjs, smsIds } = await session.sendSms({ dlr, from, message, to });
 await session.unbind();
-await session.close();
 
-// --- server ---------------------------------------------------------------
-const { err, server: smpp } = await server({
-	authenticate: async ({ password, systemId }) => {
-		if (systemId !== 'foo' || password !== 'bar') return false;
-
-		return { userData: { userId: 123 } };   // attached to session.userData
-	},
-	idleTimeout:       40000,
-	log,
-	maxReassembly:     1000,
-	port:              2775,
-	reassemblyTimeout: 300000,
-	signal,
-	tls:               false,
-});
-
-smpp.port;             // resolved port, useful when 0 was requested
-await smpp.close();
-
+const { err: serverErr, server: smpp } = await server({ authenticate, port });
 smpp.on('session', session => {
 	session.on('sms', async sms => {
-		const { err } = await sms.sendResp();          // defaults to ESME_ROK
-		if (sms.dlr) await sms.sendDlr('DELIVERED');   // defaults to DELIVERED
+		await sms.sendResp();
+		if (sms.dlr) await sms.sendDlr('DELIVERED');
 	});
 });
+await smpp.close();
 ```
 
-### Events
-
-| Emitter | Event | Payload |
-| --- | --- | --- |
-| server | `session` | `Session` |
-| server | `serverError` | `Error` |
-| session | `sms` | `Sms` (live handle: `sendResp()`, `sendDlr()`) |
-| session | `dlr` | one per segment — `{ doneDate?, errorCode?, smsId, statusId, statusMsg }` |
-| session | `messageDlr` | merged once all segments of a message are accounted for — adds `segments` and the worst status across them |
-| session | `sessionError` | `Error` |
-| session | `close` | — |
-| session | `reconnected` | — (only when `reconnect` is configured) |
-| session | `data` | `Buffer` |
-| session | `incomingPdu` | `Buffer` |
-| session | `incomingPduObj` | `PduObject` |
-
-### Rules the API follows
+Rules the API follows:
 
 - **Never throws.** Everything fallible resolves to `{ err?, … }`. See AGENTS.md rule 1.
-- **Named exports only.** No default export. `defs` stays as a grouped export alongside the
-  individual tables (`cmds`, `consts`, `encodings`, `errors`, `tlvs`, `types`, and the `*ById` maps).
-- **`utils` is gone.** Its contents are named exports: `bitCount`, `decodeMessage`, `encodeMessage`,
-  `objToPdu`, `pduReturn`, `pduToObj`, `smppDate`, `splitMessage`.
+- **Named exports only**, no default export. `defs` is exported as a group alongside the individual
+  tables.
 - **The PDU codec is synchronous** and returns `{ err?, pduObj? }` / `{ err?, buffer? }`.
 - **Low-level surface stays public**, including `session.sock`, `session.send()` and
-  `session.sendReturn()` — that is how the other 29 commands are reached.
-- `pduObj.isResp()` is now the standalone export `isResp(pduObj)`; PDU objects are pure data.
+  `session.sendReturn()`.
 
-## Tasks
+## Done
 
-### 1. Definition tables — `src/defs/`
+| | Covered by |
+| --- | --- |
+| Definition tables: constants, errors, encodings, wire types, TLVs, commands | `test/encodings.test.ts`, `test/types.test.ts`, `test/commands.test.ts` |
+| Message helpers: splitting, bit counting, SMPP dates and times | `test/message.test.ts` |
+| PDU codec: parse, build, respond, per-command typing, bounds checks | `test/pdu.test.ts` |
+| Stream framing | `test/pdu-framer.test.ts` |
+| Delivery receipt parsing, TLV and text | `test/dlr.test.ts` |
+| Session, client, server: bind, auth, send, reassembly, DLRs, timeouts, abort, send window | `test/session.test.ts` |
+| Merged multipart DLRs including across a reconnect, reassembly bounds, per-send abort, the segment cap | `test/session-extras.test.ts` |
+| `smsIdFormat`: a peer's `submit_sm_resp` and receipt ids read into one notation before they are compared | `test/dlr.test.ts`, `test/session-extras.test.ts` |
+| A draining `close()` and `unbind()`, bounded by `shutdownTimeout` or an abort | `test/session-extras.test.ts` |
+| A drain that also waits out the messages the application has not answered, with `sendDlr()` the one send that passes it | `test/session-extras.test.ts` |
+| `OutgoingRequests`: the gate, the window, the pending map and the retry under one owner, told when a link comes up or goes down | `test/session-extras.test.ts`, `test/session.test.ts` |
+| Held messages capped and expiring, so an application that answers nothing cannot grow them | `test/session-extras.test.ts` |
+| A send with no link held for the next one, and one the link dropped under counted as `unanswered` | `test/session-extras.test.ts` |
+| A message whose link dropped refused an answer, with its receipt still allowed out | `test/session-extras.test.ts` |
+| The hold released exactly when the peer was answered: a refused `sendResp()` keeps it, a listener that rejected drops it | `test/session-extras.test.ts` |
+| Every runnable README example | `test/readme.test.ts` |
+| Receipt-versus-message classification by `esm_class` | `test/dlr.test.ts`, `test/session.test.ts` |
+| An intermediate delivery notification read as a report marked `intermediate`, as is a receipt reporting `ENROUTE` or `SCHEDULED`, and never counted into a merge | `test/dlr.test.ts`, `test/session.test.ts`, `test/session-extras.test.ts` |
+| A transient state sent under the marker the spec gives it, off the same list the reader uses | `test/session-extras.test.ts` |
+| A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
+| Cross-checked against node-smpp both ways and over a live session | `test/interop.test.ts` |
+| CI on Node 18/20/22/24, Renovate, tag-triggered publish | `.github/workflows/` |
 
-- [x] `constants.ts` — `consts` + `constsById`.
-- [ ] `errors.ts` — all `ESME_*` codes plus `errorsById`. Port from 0.4.0 `lib/defs.js`; note that
-      0.4.0 has a typo, `ESME_RINVBCASTCHANIND = 0x011` (three digits), which should be `0x0111`.
-      Verify every code against the SMPP 3.4/5.0 spec while porting.
-- [ ] `types.ts` — wire types `int8`, `int16`, `int32`, `string`, `cstring`, `buffer`,
-      `dest_address_array`, `unsuccess_sme_array`, and the `tlv` variants. Each is
-      `{ default, read(buffer, offset, length?), size(value), write(value, buffer, offset) }`.
-      `read` must be bounds-checked and return a result rather than throwing.
-- [ ] `encodings.ts` — GSM 03.38 (`ASCII`), `LATIN1`, `UCS2`, `FLASH` (alias of ASCII) and `detect`.
-      Drop `iconv-lite`: LATIN1 is `Buffer.from(str, 'latin1')`, UCS2 is `Buffer.from(str,
-      'utf16le').swap16()` (copy before swapping, and reject odd-length input on decode).
-- [ ] `filters.ts` — `time`, `message`, `billing_identification`, `broadcast_area_identifier`,
-      `broadcast_content_type`, `broadcast_frequency_interval`, `callback_num`, `callback_num_atag`.
-- [ ] `tlvs.ts` — the 67 TLV definitions plus `tlvsById` and the two aliases
-      (`alert_on_msg_delivery`, `failed_broadcast_area_identifier`).
-- [ ] `commands.ts` — all 33 commands with ids and **wire-ordered** parameter lists, plus `cmdsById`.
+Every defect listed in the AGENTS.md table has a regression test naming the behaviour.
 
-### 2. Message helpers — `src/message.ts`
+## The GitHub backlog, once this branch is `main`
 
-- [ ] `bitCount(msg, encoding?)`, `encodeMessage`, `decodeMessage`, `smppDate`, `splitMessage`.
-- [ ] **Fix:** segments are 134 GSM characters or 67 UCS2 characters, so that segment + 6-byte UDH
-      is exactly 140 octets. 0.4.0 produces 152/66.
-- [ ] **Fix:** `smppDate` must add 1 to `getMonth()` and zero-pad correctly.
-- [ ] **Fix:** LATIN1 must actually decode — resolve `data_coding` to a concrete encoding, not to
-      whichever alias happens to sort last.
-- [ ] The concatenation reference counter is per session, not module-global. `splitMessage` therefore
-      takes the reference as an argument instead of owning a counter.
+Nothing below is closed while the default branch is still 0.4.0 — declining a security bump on a live
+default branch is worse than leaving it open. Work through this immediately after the rename.
 
-### 3. PDU codec — `src/pdu.ts`
+**Close as fixed by 1.0.0**, naming the replacement in the comment:
 
-- [ ] `pduToObj(buffer)` → `{ err?, pduObj? }`, `objToPdu(obj)` → `{ err?, buffer? }`,
-      `pduReturn(pdu, status?, params?, tlvs?)` → `{ err?, buffer? }`, `isResp(pduObj)`.
-- [ ] Keep the trailing-NULL-octet retry for `short_message` that 0.4.0 has — real peers send it.
-- [ ] Guard `cmdLength` against a maximum before allocating, so a hostile peer cannot ask for a 4 GiB
-      buffer. 0.4.0 has no such guard.
-- [ ] Per-command typed params: `pduToObj` returns a union discriminated on `cmdName`, and
-      `objToPdu` narrows `params` to the named command's fields.
+| | Fixed by |
+| --- | --- |
+| [#4](https://github.com/larvit/larvitsmpp/issues/4) DLR errors with `message_state` missing | `dlrFromPdu()` parses the `stat:` receipt text when the TLVs are absent |
+| [#33](https://github.com/larvit/larvitsmpp/issues/33) Large inbound text arrives as raw `Buffer` segments | `IncomingRequests` reassembles a UDH-carrying `deliver_sm` into one `sms` event |
+| [#3](https://github.com/larvit/larvitsmpp/issues/3) Tests for flash messages | `test/session.test.ts` |
+| [#20](https://github.com/larvit/larvitsmpp/issues/20) Tests fail on current dependency versions | The mocha suite is gone; `node:test` on Node 18/20/22/24 |
+| [#2](https://github.com/larvit/larvitsmpp/issues/2) Tests for the README examples | `test/readme.test.ts` |
+| [#17](https://github.com/larvit/larvitsmpp/issues/17) `addr_ton`/`addr_npi` should be settable | `sendSms()` takes all four, documented and tested |
+| [#16](https://github.com/larvit/larvitsmpp/issues/16) Support all three bind types | Bound and enforced in both directions |
+| [#13](https://github.com/larvit/larvitsmpp/issues/13) Limit a long SMS to fewer segments | The `maxSegments` send option |
+| [#68](https://github.com/larvit/larvitsmpp/pull/68) `message_id` in `submit_sm_resp`, spec DLR codes | All four hold: `sendResp()` always answers a `message_id`, per segment; `stat:UNDELIV` is the 7-character code. Credit the reporter — the fork found real defects. |
 
-### 4. Session — `src/session.ts`
+**Close as superseded**, all against 0.4.0 dependencies the rewrite does not have — `async`,
+`coveralls`, `eslint`, `iconv-lite`, `larvitutils`, `mocha`, `mocha-eslint`, `portfinder`, `uuid`:
+[#40](https://github.com/larvit/larvitsmpp/pull/40), [#41](https://github.com/larvit/larvitsmpp/pull/41),
+[#42](https://github.com/larvit/larvitsmpp/pull/42), [#45](https://github.com/larvit/larvitsmpp/pull/45),
+[#46](https://github.com/larvit/larvitsmpp/pull/46), [#47](https://github.com/larvit/larvitsmpp/pull/47),
+[#59](https://github.com/larvit/larvitsmpp/pull/59), [#63](https://github.com/larvit/larvitsmpp/pull/63),
+[#64](https://github.com/larvit/larvitsmpp/pull/64), [#65](https://github.com/larvit/larvitsmpp/pull/65),
+[#67](https://github.com/larvit/larvitsmpp/pull/67), [#70](https://github.com/larvit/larvitsmpp/pull/70).
+[#70](https://github.com/larvit/larvitsmpp/pull/70) is the open `uuid` advisory GitHub reports on the
+default branch; it disappears with the runtime dependencies rather than being fixed.
 
-- [ ] Framing off the socket. Replace 0.4.0's `Buffer.concat` per chunk with an accumulating reader —
-      concatenating the whole queue on every `data` event is quadratic.
-- [ ] Sequence numbers, wrapping at 2147483646.
-- [ ] `send()` with `responseTimeout`, `maxOutstanding` windowing and a queue, and `AbortSignal`.
-      Listeners must be removed on every exit path — timeout, abort and close included.
-- [ ] `sendReturn()`, `unbind()`, `close()`.
-- [ ] `submit_sm` handling, including long-SMS reassembly with `maxReassembly` and a real
-      `reassemblyTimeout` timer.
-- [ ] `deliver_sm` handling: prefer the TLVs, fall back to parsing the receipt text
-      (`id:… sub:001 dlvrd:1 submit date:… done date:… stat:DELIVRD err:0 text:…`).
-- [ ] Per-segment `dlr` plus merged `messageDlr`.
-- [ ] `enquire_link` and `unbind` handling.
+[#60](https://github.com/larvit/larvitsmpp/issues/60) is Renovate's dashboard — leave it, it
+re-baselines itself against the new `package.json`.
 
-### 5. Sms handle — `src/sms.ts`
+**Leave open:** [#8](https://github.com/larvit/larvitsmpp/issues/8), the socket's remote host and
+port on log messages. Only `server - incoming connection` carries them today; putting them on every
+session message is a change to every call site.
 
-- [ ] `sendResp(status?)` and `sendDlr(status?)` returning result DTOs.
-- [ ] Generated `message_id` values are UUID v7.
-- [ ] **Fix:** `sendDlr` emits the 7-character spec status (`UNDELIV`, not `UNDELIVERABLE`).
+## Before publishing 1.0.0
 
-### 6. Client and server — `src/client.ts`, `src/server.ts`
+- [ ] Create the `@larvit/smpp` package on npm and add `NPM_TOKEN` to the repository secrets, which
+      `.github/workflows/release.yaml` needs.
+- [ ] Run the interoperability plan, [interop-tests/PLAN.md](interop-tests/PLAN.md), and fix or
+      document what it finds.
+- [ ] Tag `v1.0.0` to publish.
+- [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
+      something CI should do.
+- [ ] **Rename the branches, once everything above is done.** Maintainer's call, 2026-09-04:
+      `master` becomes `v0.4.0`, `typescript` becomes `main`, and `main` is the repository's default
+      branch. Renaming rather than merging is what the orphan commit leaves available — the two
+      histories share no ancestor, so a merge refuses them outright.
+      - [ ] Rename `master` to `v0.4.0`.
+      - [ ] Rename `typescript` to `main`, and make it the default branch.
+      - [ ] Retarget what still points at an old name: [#71](https://github.com/larvit/larvitsmpp/pull/71),
+            and the open PRs based on `master`, which a rename carries over rather than closes.
+      - [ ] Delete `rewrite-base` once [#71](https://github.com/larvit/larvitsmpp/pull/71) is
+            resolved; it exists only to give that PR a reviewable diff.
 
-- [ ] `client()` — bind by `bindType`, all bind fields optional with 0.4.0's defaults.
-- [ ] **Fix:** real TLS via `tls.connect()` / `tls.createServer()`, accepting an options object.
-- [ ] Opt-in reconnect with exponential backoff between `minDelay` and `maxDelay`, re-binding and
-      emitting `reconnected`. Decide and document what happens to in-flight sends across a reconnect.
-- [ ] `server()` — resolves once when listening, exposes `port`, `close()` and the `session` event.
-- [ ] `authenticate` hook; `userData` attached to the session.
-- [ ] `idleTimeout` drops silent peers.
+## Worth doing, not blocking
 
-### 7. Public surface — `src/index.ts`
+- [ ] **Group the session's collaborators under `src/session/`.** `session.ts` imports
+      `dlr-merger`, `incoming-requests`, `link-timers`, `outgoing-requests`, `pdu-transport`,
+      `reconnect-loop` and `send-sms`, and nothing else does, so the directory would make that
+      boundary visible. The `OutgoingRequests` extraction this was to be done with landed on
+      2026-09-01, so it is the remaining half. Raised by review, 2026-09-01.
 
-- [ ] Named exports only, matching "The agreed API" above exactly.
+- [ ] **`leftOf()` and the link gate's own budget are one concept counted twice.**
+      `idle-waiters.ts` reads what is left of a budget as `Math.max(1, deadline - now)`, because 0
+      means "forever" there; `link-gate.ts` runs the same subtraction and calls `<= 0` expired.
+      Neither is reachable from the other, so nothing can disagree today, but a reader who learns one
+      and applies it to the other is wrong. A budget type both take would close it. Raised by review,
+      2026-09-01.
 
-### 8. Tests
+- [ ] **`err:` on a receipt for a state that neither delivered nor failed.** `receiptText()` now
+      writes `err:000` for `DELIVERED` and for the two transient states, and `err:001` for every
+      other — so `ACCEPTED`, `SKIPPED`, `UNKNOWN` and `DELETED` still announce an error code the SMSC
+      never had. Which of those are failures is the open half. Raised by review, 2026-09-03; needs a
+      decision.
 
-Port the 0.4.0 suite (`test/01_encodings.js` … `test/04_session.js` on `master`) and extend it. Every
-defect in the AGENTS.md table needs a test that fails against 0.4.0 behaviour.
+- [ ] **`once()` is copied into four test files, and two copies never give up.**
+      `session-extras.test.ts` and `readme.test.ts` reject after 5000 ms; `session.test.ts` and
+      `tls.test.ts` wait forever, so an event that never fires still hangs the run the way an
+      unclosed listener used to. One shared, guarded copy closes the rest of that class.
 
-- [ ] Encodings, wire types, PDU round-trips, return PDUs, message sizing and splitting.
-- [ ] Sessions: bind, auth success and failure, simple SMS, long SMS, DLRs, and the Kannel capture
-      with the large UDH from `test/04_session.js`.
-- [ ] **Interop:** add the reference `smpp` package (farhadi/node-smpp) as a dev dependency and assert
-      both directions — our encoder against its parser, its encoder against our parser. This is how
-      the wire-format fixes are validated; the maintainer asked specifically for proof that the
-      corrected framing is right rather than differently wrong.
-- [ ] Reassembly bounds, response timeouts, abort, and the send window.
+- [ ] **A peer whose message ids share one base logs a refused merge on every send.** `smsc01-000123`
+      and `smsc01-000124` carry the same base, so `DlrMerger` merges the first message and refuses
+      every one after it, one log line per send. Left at `info` — nothing the operator can fix is
+      wrong — but a rate guard or silence may suit it better. Raised by review, 2026-08-30.
 
-### 9. CI and release
+- [ ] **`submit_multi` and the broadcast commands** encode and decode, but nothing exercises them
+      end to end. The interop suite is the natural place.
+- [ ] **Move to TypeScript 7** once `typescript-eslint` supports it; `renovate.json` pins TypeScript
+      below 6.1 for exactly that reason.
+- [ ] **Coverage reporting.** `node --test --experimental-test-coverage` works today; nothing
+      publishes the numbers.
 
-- [ ] `.github/workflows/test.yaml` — lint, typecheck and test on Node 18, 20, 22 and 24. The 18/20
-      legs need the tests compiled first, since type stripping needs Node 22.18+.
-- [ ] `.github/workflows/release.yaml` — `npm publish --provenance` on a `v*` tag.
-- [ ] `renovate.json`.
-- [ ] Delete nothing from `master`; this branch simply does not carry `.travis.yml`.
+- [ ] **An `onReceipt` hook.** Receipt text is only loosely specified and operators disagree on it,
+      but `dlrFromPdu()` is wired into `IncomingRequests` with no seam of its own: an application
+      facing a format we do not parse has to take the whole PDU on `onRequest` and reimplement the
+      dispatch, which owns the response as well.
+      Mirror the `onRequest` seam — return a `Dlr` to own the receipt, `undefined` to fall through
+      to the built-in parser.
 
-### 10. Release chores
+## Declined
 
-- [ ] Fill in README usage docs as each part lands — right now the README documents the target API,
-      and it must not claim anything that is not implemented and tested.
-- [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp` once 1.0.0 is published. Maintainer's
-      call to run it; not something CI should do.
+- **Merge state surviving a process restart.** Declined by AGENTS.md goal 7, maintainer's call,
+  2026-09-02. A restart loses every incomplete receipt group and a peer has no reason to resend one it
+  already had answered, so the loss is real — but surviving it means handing the application the merge
+  state to persist, which the scope floor covers as squarely as holding the state here would, and
+  which publishes the shape of `DlrMerger`'s groups against goal 6. Nothing is foreclosed: the seam
+  can still be added after 1.0.0 as a minor.
 
-## Open questions
-
-None outstanding. Everything above was settled with the maintainer; anything genuinely new that comes
-up during implementation should be asked rather than assumed.
+- **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** Declined by AGENTS.md
+  goal 7: an operator's rate limit is scoped to the account, while the widest thing this library owns
+  is a session, so a bucket here cannot see a second process binding the same account and is wrong in
+  exactly the case it exists for. `sendSms()` surfaces `ESME_RTHROTTLED` to the caller instead, and
+  `maxOutstanding` stays — a window slot frees on the peer's next response, which is self-limiting in
+  a way a rate ceiling is not.

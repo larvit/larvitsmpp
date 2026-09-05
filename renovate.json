@@ -1,0 +1,11 @@
+{
+	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
+	"extends": ["config:recommended"],
+	"packageRules": [
+		{
+			"description": "typescript-eslint peer-requires TypeScript <6.1, so TS 7 has to wait for it.",
+			"allowedVersions": "<6.1.0",
+			"matchPackageNames": ["typescript"]
+		}
+	]
+}

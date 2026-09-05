@@ -1,0 +1,45 @@
+services:
+  smscsim:
+    image: ukarim/smscsim:0.2.0
+    environment:
+      SMSC_PORT: "2775"
+      WEB_PORT: "12775"
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -lnt | grep -q :2775"]
+      interval: 1s
+      retries: 30
+      timeout: 2s
+
+  smscsim-failing:
+    image: ukarim/smscsim:0.2.0
+    environment:
+      FAILED_SUBMITS: "true"
+      SMSC_PORT: "2775"
+      WEB_PORT: "12775"
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -lnt | grep -q :2775"]
+      interval: 1s
+      retries: 30
+      timeout: 2s
+
+  capture:
+    image: nicolaka/netshoot:v0.16
+    network_mode: "service:smscsim"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      smscsim:
+        condition: service_started
+    command: ["dumpcap", "-i", "any", "-f", "tcp port 2775", "-w", "/captures/smscsim.pcapng"]
+    volumes:
+      - ./interop-tests/captures:/captures
+
+  node:
+    depends_on:
+      capture:
+        condition: service_started
+      smscsim:
+        condition: service_healthy
+      smscsim-failing:
+        condition: service_healthy

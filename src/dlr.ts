@@ -1,0 +1,229 @@
+import type { MessageState } from './defs/constants.ts';
+import type { ParamValue } from './defs/types.ts';
+import type { PduObject } from './pdu.ts';
+import type { SmsIdFormat } from './sms-id.ts';
+import { consts, constsById, messageTypeOf } from './defs/constants.ts';
+import { decodeMessage } from './message.ts';
+import { normaliseSmsId } from './sms-id.ts';
+import { paramNumber, paramText } from './defs/types.ts';
+
+/**
+ * The seven-character status codes carried in a receipt's `stat:` field, mapped to the
+ * message_state values they correspond to.
+ */
+const receiptStates: Record<string, MessageState> = {
+	ACCEPTD: 'ACCEPTED',
+	DELETED: 'DELETED',
+	DELIVRD: 'DELIVERED',
+	ENROUTE: 'ENROUTE',
+	EXPIRED: 'EXPIRED',
+	REJECTD: 'REJECTED',
+	UNDELIV: 'UNDELIVERABLE',
+	UNKNOWN: 'UNKNOWN',
+};
+
+/** message_state values as the seven-character codes a receipt's `stat:` field must carry. */
+export const receiptCodes: Record<MessageState, string> = {
+	ACCEPTED: 'ACCEPTD',
+	DELETED: 'DELETED',
+	DELIVERED: 'DELIVRD',
+	ENROUTE: 'ENROUTE',
+	EXPIRED: 'EXPIRED',
+	REJECTED: 'REJECTD',
+	SCHEDULED: 'ENROUTE',
+	SKIPPED: 'UNKNOWN',
+	UNDELIVERABLE: 'UNDELIV',
+	UNKNOWN: 'UNKNOWN',
+};
+
+export type Receipt = {
+	doneDate: string | undefined;
+	dlvrd: number | undefined;
+	err: string | undefined;
+	id: string | undefined;
+	stat: string | undefined;
+	sub: number | undefined;
+	submitDate: string | undefined;
+	text: string | undefined;
+};
+
+export type Dlr = {
+	doneDate: Date | undefined;
+	errorCode: string | undefined;
+	intermediate: boolean;
+	receipt: Receipt | undefined;
+	smsId: string | undefined;
+	statusId: number;
+	statusMsg: MessageState;
+};
+
+const field = (name: string) => new RegExp(`\\b${name}:(\\S*)`, 'i');
+
+const patterns = {
+	dlvrd: field('dlvrd'),
+	doneDate: field('done date'),
+	err: field('err'),
+	id: field('id'),
+	stat: field('stat'),
+	sub: field('sub'),
+	submitDate: field('submit date'),
+	// The one field that may hold a space, carrying the message's own start, so it ends at its line.
+	text: /\btext:([^\r\n]*)/i,
+};
+
+function toNumber(value: string | undefined): number | undefined {
+	// Number('') is 0, which would report a receipt that stated no count as one that stated none sent.
+	if (value === undefined || value === '') return undefined;
+
+	const parsed = Number(value);
+
+	return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/** Delivery receipt dates are YYMMDDhhmm, sometimes with seconds. */
+function receiptDate(value: string | undefined): Date | undefined {
+	if (value === undefined) return undefined;
+
+	const match = /^(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)?$/.exec(value);
+
+	if (!match) return undefined;
+
+	const [, years, months, days, hours, minutes, seconds] = match;
+	const century = Math.floor(new Date().getUTCFullYear() / 100) * 100;
+	const date = new Date(Date.UTC(
+		century + Number(years),
+		Number(months) - 1,
+		Number(days),
+		Number(hours),
+		Number(minutes),
+		Number(seconds ?? 0),
+	));
+
+	// Date.UTC rolls 31 February over into March rather than refusing it.
+	const rolled = date.getUTCMonth() !== Number(months) - 1
+		|| date.getUTCDate() !== Number(days)
+		|| date.getUTCHours() !== Number(hours)
+		|| date.getUTCMinutes() !== Number(minutes)
+		|| date.getUTCSeconds() !== Number(seconds ?? 0);
+
+	return rolled ? undefined : date;
+}
+
+/**
+ * Parses the standard receipt body, as in
+ * `id:0123 sub:001 dlvrd:001 submit date:2508251430 done date:2508251431 stat:DELIVRD err:000 text:…`
+ */
+export function parseReceipt(message: string): Receipt {
+	const read = (pattern: RegExp): string | undefined => pattern.exec(message)?.[1];
+
+	return {
+		dlvrd: toNumber(read(patterns.dlvrd)),
+		doneDate: read(patterns.doneDate),
+		err: read(patterns.err),
+		id: read(patterns.id),
+		stat: read(patterns.stat),
+		sub: toNumber(read(patterns.sub)),
+		submitDate: read(patterns.submitDate),
+		text: read(patterns.text),
+	};
+}
+
+type MessageType = 'intermediate' | 'other' | 'receipt' | 'unmarked';
+
+/** SMPP 3.4 Appendix B lists every other receipt state as final. */
+export const transientStates: readonly MessageState[] = ['ENROUTE', 'SCHEDULED'];
+
+/** Written by the far-end SME, not by the MC reporting on a message we submitted. */
+const smeMessageTypes: readonly number[] = [
+	consts.ESM_CLASS.CONVERSATION_ABORT,
+	consts.ESM_CLASS.DELIVERY_ACKNOWLEDGEMENT,
+	consts.ESM_CLASS.USER_ACKNOWLEDGEMENT,
+];
+
+function nonEmptyText(value: ParamValue | undefined): string | undefined {
+	return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+function messageType(pduObj: PduObject): MessageType {
+	const type = messageTypeOf(paramNumber(pduObj.params.esm_class, 0));
+
+	if (type === consts.ESM_CLASS.MC_DELIVERY_RECEIPT) return 'receipt';
+	if (type === consts.ESM_CLASS.INTERMEDIATE_DELIVERY) return 'intermediate';
+	if (smeMessageTypes.includes(type)) return 'other';
+
+	return nonEmptyText(pduObj.tlvs.receipted_message_id?.tagValue) === undefined ? 'unmarked' : 'receipt';
+}
+
+/** A UDH-carrying short_message reaches here as a buffer, header and all. */
+function receiptBody(pduObj: PduObject): string {
+	const message = pduObj.params.short_message;
+
+	if (!Buffer.isBuffer(message)) return paramText(message);
+
+	return decodeMessage(
+		message,
+		paramNumber(pduObj.params.data_coding, 0),
+		paramNumber(pduObj.params.esm_class, 0),
+	).message;
+}
+
+function receiptId(
+	tlvId: ParamValue | undefined,
+	receipt: Receipt | undefined,
+	format: SmsIdFormat,
+): string | undefined {
+	// SMPP 3.4 5.3.2.26: the TLV is the id the submit_sm_resp carried, where the body's is a rendering.
+	const fromTlv = nonEmptyText(tlvId);
+
+	if (fromTlv !== undefined) return normaliseSmsId(fromTlv, format.submitResp);
+
+	const fromBody = nonEmptyText(receipt?.id);
+
+	return fromBody === undefined ? undefined : normaliseSmsId(fromBody, format.receipt);
+}
+
+function isMessageState(name: string | undefined): name is MessageState {
+	return name !== undefined && name in consts.MESSAGE_STATE;
+}
+
+/** The state TLV wins where it names a state we know; an unnameable one leaves the body to say. */
+function receiptStatus(
+	tlvState: ParamValue | undefined,
+	receipt: Receipt | undefined,
+): { statusId: number; statusMsg: MessageState | undefined } {
+	const scraped = receiptStates[receipt?.stat?.toUpperCase() ?? ''];
+
+	if (typeof tlvState !== 'number') {
+		return { statusId: consts.MESSAGE_STATE[scraped ?? 'UNKNOWN'], statusMsg: scraped };
+	}
+
+	const named = constsById.MESSAGE_STATE?.[tlvState];
+
+	return { statusId: tlvState, statusMsg: isMessageState(named) ? named : scraped };
+}
+
+/** The delivery report a deliver_sm carries, or nothing when it carries a message instead. */
+export function dlrFromPdu(pduObj: PduObject, format: SmsIdFormat = {}): Dlr | undefined {
+	const type = messageType(pduObj);
+
+	if (type === 'other') return undefined;
+
+	const body = receiptBody(pduObj);
+	const receipt = body === '' ? undefined : parseReceipt(body);
+	const smsId = receiptId(pduObj.tlvs.receipted_message_id?.tagValue, receipt, format);
+	const { statusId, statusMsg } = receiptStatus(pduObj.tlvs.message_state?.tagValue, receipt);
+
+	if (type === 'unmarked' && (smsId === undefined || statusMsg === undefined)) return undefined;
+
+	const state = statusMsg ?? 'UNKNOWN';
+
+	return {
+		doneDate: receiptDate(receipt?.doneDate),
+		errorCode: receipt?.err,
+		intermediate: type === 'intermediate' || transientStates.includes(state),
+		receipt,
+		smsId,
+		statusId,
+		statusMsg: state,
+	};
+}

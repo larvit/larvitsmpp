@@ -1,3 +1,9 @@
+/** The version declared on the wire. The tables below cover 5.0, which is a superset of it. */
+export const defaultInterfaceVersion = 0x34;
+
+/** Spec rule, not a preference: a peer declaring less than 3.4 is sent no optional parameters. */
+export const optionalParamsMinVersion = 0x34;
+
 export const consts = {
 	BROADCAST_AREA_FORMAT: {
 		ALIAS: 0x00,
@@ -96,6 +102,15 @@ export const consts = {
 		UNKNOWN: 0x00,
 	},
 } as const;
+
+export function hasUdh(esmClass: number): boolean {
+	return (esmClass & consts.ESM_CLASS.UDH_INDICATOR) === consts.ESM_CLASS.UDH_INDICATOR;
+}
+
+/** Bits 5-2 of esm_class; the rest carry the messaging mode and the GSM features. */
+export function messageTypeOf(esmClass: number): number {
+	return esmClass & 0x3c;
+}
 
 export type ConstGroup = keyof typeof consts;
 export type MessageState = keyof typeof consts.MESSAGE_STATE;

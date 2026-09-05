@@ -1,0 +1,130 @@
+x-smppsim-healthcheck: &smppsim-healthcheck
+  # Not a raw TCP probe on 2775: SMPPSim reads an empty connection as a malformed PDU and logs a
+  # full stack trace per attempt: with DECODE_PDUS_IN_LOG and a 1s interval that fills the disk
+  # within tens of minutes (24GB+ across the 9 services in-house). The HTTP admin port answers a
+  # bare request harmlessly.
+  test: ["CMD-SHELL", "curl -sf -o /dev/null http://127.0.0.1:8884/"]
+  interval: 1s
+  retries: 30
+  timeout: 2s
+
+# A second line of defence for the same runaway-logging risk: DECODE_PDUS_IN_LOG dumps every PDU,
+# so a stuck reconnect loop or a bad probe fills the disk long before anyone notices.
+x-log-limits: &log-limits
+  logging:
+    driver: json-file
+    options:
+      max-file: "3"
+      max-size: 20m
+
+services:
+  smppsim:
+    build:
+      context: interop-tests/peers/smppsim
+    image: larvitsmpp-interop/smppsim:bc29982
+    <<: *log-limits
+    command: ["conf/smppsim.props"]
+    healthcheck: *smppsim-healthcheck
+
+  smppsim-textdlr:
+    image: larvitsmpp-interop/smppsim:bc29982
+    <<: *log-limits
+    command: ["conf/smppsim-textdlr.props"]
+    healthcheck: *smppsim-healthcheck
+
+  smppsim-transition:
+    image: larvitsmpp-interop/smppsim:bc29982
+    <<: *log-limits
+    command: ["conf/smppsim-transition.props"]
+    healthcheck: *smppsim-healthcheck
+
+  smppsim-undeliv:
+    image: larvitsmpp-interop/smppsim:bc29982
+    <<: *log-limits
+    command: ["conf/smppsim-undeliv.props"]
+    healthcheck: *smppsim-healthcheck
+
+  smppsim-rejected:
+    image: larvitsmpp-interop/smppsim:bc29982
+    <<: *log-limits
+    command: ["conf/smppsim-rejected.props"]
+    healthcheck: *smppsim-healthcheck
+
+  smppsim-accepted:
+    image: larvitsmpp-interop/smppsim:bc29982
+    <<: *log-limits
+    command: ["conf/smppsim-accepted.props"]
+    healthcheck: *smppsim-healthcheck
+
+  smppsim-delayed:
+    image: larvitsmpp-interop/smppsim:bc29982
+    <<: *log-limits
+    command: ["conf/smppsim-delayed.props"]
+    healthcheck: *smppsim-healthcheck
+
+  smppsim-queuefull:
+    image: larvitsmpp-interop/smppsim:bc29982
+    <<: *log-limits
+    command: ["conf/smppsim-queuefull.props"]
+    healthcheck: *smppsim-healthcheck
+
+  # OUTBIND_ESME_IP_ADDRESS in smppsim-outbind.props names the node service by its --use-aliases
+  # hostname; our own server() in smppsim.test.ts listens on port 2776 for it to connect to.
+  smppsim-outbind:
+    image: larvitsmpp-interop/smppsim:bc29982
+    <<: *log-limits
+    command: ["conf/smppsim-outbind.props"]
+    healthcheck: *smppsim-healthcheck
+
+  capture:
+    image: nicolaka/netshoot:v0.16
+    network_mode: "service:smppsim"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      smppsim:
+        condition: service_started
+    command: ["dumpcap", "-i", "any", "-f", "tcp port 2775", "-w", "/captures/smppsim.pcapng"]
+    volumes:
+      - ./interop-tests/captures:/captures
+
+  # A second sidecar, cheap to add, so a textdlr-specific wire question can be checked without a
+  # second run. Not read by run.py's own pass/fail (that only decodes captures/smppsim.pcapng).
+  capture-textdlr:
+    image: nicolaka/netshoot:v0.16
+    network_mode: "service:smppsim-textdlr"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      smppsim-textdlr:
+        condition: service_started
+    command: ["dumpcap", "-i", "any", "-f", "tcp port 2775", "-w", "/captures/smppsim-textdlr.pcapng"]
+    volumes:
+      - ./interop-tests/captures:/captures
+
+  node:
+    depends_on:
+      capture:
+        condition: service_started
+      capture-textdlr:
+        condition: service_started
+      smppsim:
+        condition: service_healthy
+      smppsim-textdlr:
+        condition: service_healthy
+      smppsim-transition:
+        condition: service_healthy
+      smppsim-undeliv:
+        condition: service_healthy
+      smppsim-rejected:
+        condition: service_healthy
+      smppsim-accepted:
+        condition: service_healthy
+      smppsim-delayed:
+        condition: service_healthy
+      smppsim-queuefull:
+        condition: service_healthy
+      smppsim-outbind:
+        condition: service_healthy
