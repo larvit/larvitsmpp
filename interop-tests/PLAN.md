@@ -70,9 +70,12 @@ manual runs, never CI. Tags below were current on 2026-09-05.
 | **Jasmin 0.11.0** — Python/Twisted, a production gateway, not a toy | Independent codec (`smpp.pdu`), SAR segmentation by default, UUID message ids, a real DLR pipeline that can use `data_sm` | `jookies/jasmin:0.11.0` + `redis:8.8.2-alpine` + `rabbitmq:4.3.5-management-alpine` (env `REDIS_CLIENT_HOST`, `AMQP_BROKER_HOST`; fall back to `redis:7.4.x` / `rabbitmq:3.13.x` if 0.11.0 balks). User, group, `mtrouter` and `morouter` over `jcli` on 8990 | `[smpp-server]`: `enquireLinkTimerSecs` 30, `inactivityTimerSecs` 300, `responseTimerSecs` 60; `submit_throughput` for throttling; `dlr_level` |
 | **SMPPSim 2.6.x** — Java, the classic | Richest fault injection of anything open: per-state receipt percentages, delayed and intermediate receipts, queue-full, `LOOPBACK` (echoes our `submit_sm` back as `deliver_sm`), SMSC-initiated `outbind`, receipts with or without TLVs, its own decoded PDU log | Vendor site is down (522); build from `kwahome/smpp-sim-docker` and tag locally. Port 2775, HTTP 8884, `smppclient1`/`password` | `DELIVERY_RECEIPT_OPTIONAL_PARAMS` (off = Kannel-style text-only receipts), `PERCENTAGE_DELIVERED/UNDELIVERABLE/ACCEPTED/REJECTED`, `PERCENTAGE_THAT_TRANSITION`, `MAX_TIME_ENROUTE`, `DELAY_DELIVERY_RECEIPTS_BY`, `OUTBOUND_QUEUE_MAX_SIZE`, `OUTBIND_ENABLED`, `CAPTURE_*_DECODED_TO_FILE` |
 | **ukarim/smscsim 0.2.0** — Go | Zero setup; MO injection from a web page; the smoke test | `ukarim/smscsim:0.2.0`, ports 2775 and 12775, no auth | `FAILED_SUBMITS=1` fails even sequence numbers and undelivers odd ones. No PDU validation, so it proves nothing about strictness |
-| **Melrose Labs SMSC Simulator** — hosted, closed | A peer nobody here can special-case; TLS 1.2 on 8775 with a public CA; `message_payload` on `deliver_sm`; 64-char ids; SMPP 3.3/3.4/5; sends `enquire_link` itself after 45 s idle; rejects a destination under 8 digits | `smscsim.melroselabs.com:2775`, free developer account; MO by writing the bound `system_id`'s digits into the destination address | 100 SMS/s cap; delivered-only receipts on the free tier, TLVs plus text; MO echoes the submit's `data_coding` |
-| **smscsim.smpp.org** — hosted | Second closed peer for the same assertions | port 2775, 2 SMS/s cap | — |
 | **jsmpp `SMPPServerSimulator`** — Java | Strict PDU validation on the SMSC side, from the best-maintained SMPP codebase found (pushed 2026-06) | Build from `opentelecoms-org/jsmpp` `jsmpp-examples`; no image | Only if the Java clients below leave a gap |
+
+The two hosted simulators, Melrose Labs and smscsim.smpp.org, are **dropped**, maintainer's call,
+2026-09-06: the useful tiers cost money a hobby project does not have, and the peers above already
+carry the traffic they would have. What goes with them is named under [Untested](#untested) rather
+than left to be assumed.
 
 Skipped, with the reason: Kannel's `opensmppbox` is not in any package and last saw a commit in
 2014; `fakesmsc` does not speak SMPP; OsmoMSC and Restcomm need a telecom stack for no extra
@@ -118,23 +121,23 @@ from real-world documentation, not interop runs, and belong in `test/`.
 
 | # | Scenario | Assert | Peers |
 | --- | --- | --- | --- |
-| C1 | Bind each type, `enquire_link` both ways, `unbind` | Bound; SMSC-initiated `enquire_link` answered; close after our `unbind` is clean, no reconnect | all SMSC peers; Melrose (45 s idle), Jasmin (30 s) |
+| C1 | Bind each type, `enquire_link` both ways, `unbind` | Bound; SMSC-initiated `enquire_link` answered; close after our `unbind` is clean, no reconnect | all SMSC peers; Jasmin (30 s) |
 | C2 | Text-only receipts, no TLVs | `dlr.smsId` equals the `submit_sm_resp` id; `statusMsg` right; `messageDlr` merges per segment | SMPPSim with `DELIVERY_RECEIPT_OPTIONAL_PARAMS` off |
-| C3 | Receipts with `receipted_message_id` + `message_state` | Same, and TLV wins over body when both present | Jasmin, Melrose, SMPPSim TLVs on |
+| C3 | Receipts with `receipted_message_id` + `message_state` | Same, and TLV wins over body when both present | Jasmin, SMPPSim TLVs on |
 | C4 | Intermediate then final receipt | First arrives `intermediate: true` and never counts in `messageDlr`; final settles | SMPPSim `PERCENTAGE_THAT_TRANSITION` 100, `MAX_TIME_ENROUTE` |
-| C5 | Failure states | UNDELIV, REJECTD, EXPIRED, ACCEPTD mapped; `messageDlr` carries the worst segment | SMPPSim percentages; Melrose dedicated tier |
+| C5 | Failure states | UNDELIV, REJECTD, EXPIRED, ACCEPTD mapped; `messageDlr` carries the worst segment | SMPPSim percentages |
 | C6 | Receipt delayed past a link drop | Merge survives the reconnect; late receipt still reaches `dlr` | SMPPSim `DELAY_DELIVERY_RECEIPTS_BY` + kill the TCP link |
-| C7 | Long MT: GSM with extension chars, UCS-2 with emoji, 2/3/10 segments | One id per segment; peer reassembles (loopback or MO route shows the whole text); receipt per segment | SMPPSim `LOOPBACK`, Jasmin MO route, Melrose |
-| C8 | Long MO as UDH 8-bit, UDH 16-bit, `sar_*`, `message_payload` | One `sms` with the whole text in every spelling (targets 2, 3) | Jasmin (SAR), Melrose (`message_payload`), SMPPSim loopback (UDH 8), fixture (UDH 16) |
+| C7 | Long MT: GSM with extension chars, UCS-2 with emoji, 2/3/10 segments | One id per segment; peer reassembles (loopback or MO route shows the whole text); receipt per segment | SMPPSim `LOOPBACK`, Jasmin MO route |
+| C8 | Long MO as UDH 8-bit, UDH 16-bit, `sar_*`, `message_payload` | One `sms` with the whole text in every spelling (targets 2, 3) | Jasmin (SAR), jsmpp (`message_payload`, UDH 16), SMPPSim loopback (UDH 8) |
 | C9 | MO or receipt on `data_sm` | Not refused; reaches `sms`/`dlr` (target 4) | Jasmin if configurable, else fixture |
 | C10 | Unknown command id, unknown or malformed TLV, vendor TLV, zero-length integer TLV from the SMSC | Link stays up; `generic_nack`/`*_resp` with the right status; `sessionError` logged once (target 1) | fixture |
 | C11 | Bind refused: bad password, `ESME_RALYBND`, TCP refused | Backoff 1 s → 30 s, one attempt per interval, no flood (target 10) | Jasmin bad creds, SMPPSim `SYSTEM_IDS`, closed port |
 | C12 | `ESME_RTHROTTLED` and `ESME_RMSGQFUL` on submit | `sendSms` returns `err` naming the status; session stays bound; next send works | Jasmin `submit_throughput`, SMPPSim queue sizes, smscsim `FAILED_SUBMITS` |
 | C13 | Slow SMSC and a full window | `maxOutstanding` queues, nothing overruns; `close()` drains; `responseTimeout` fires as documented (target 11) | Jasmin `responseTimerSecs`, SMPPSim delays |
-| C14 | TLS bind against a public CA | Handshake, bind, send, receipt | Melrose 8775 |
-| C15 | `interfaceVersion` 0x50 and a peer answering 3.3 or no `sc_interface_version` | Bound; no TLVs sent to a pre-3.4 peer; TLVs sent to 3.4+ (target 8) | Melrose (v5), SMPPSim, fixture |
+| C14 | TLS bind against a public CA | Handshake, bind, send, receipt | dropped — see Untested |
+| C15 | `interfaceVersion` 0x50 and a peer answering 3.3 or no `sc_interface_version` | Bound; no TLVs sent to a pre-3.4 peer; TLVs sent to 3.4+ (target 8) | SMPPSim, fixture; no 5.0 peer — see Untested |
 | C16 | Receipt text variants from operator docs | LINK `sub:000 dlvrd:000 text:`; Vonage `stat:FAILED`; tyntec two receipts one id; Infobip `stat:ENROUTE` under 0x04; no `id:`; hex id in `submit_sm_resp`, decimal in receipt (target 7) | fixture |
-| C17 | Encodings round trip | Latin-1, UCS-2 big-endian, flash 0x10 and 0xF0, 8-bit binary with UDH — what comes back matches (target 12) | SMPPSim loopback, Melrose MO echo |
+| C17 | Encodings round trip | Latin-1, UCS-2 big-endian, flash 0x10 and 0xF0, 8-bit binary with UDH — what comes back matches (target 12) | SMPPSim loopback |
 | C18 | `outbind` from the SMSC to our server | No bogus response PDU; logged (target 6) | SMPPSim `OUTBIND_ENABLED` |
 
 ### An ESME against our server
@@ -168,7 +171,7 @@ fix before the next phase starts, per AGENTS.md.
 | 5 | jsmpp + Cloudhopper (S2, S3, S5, S10) | 1 day |
 | 6 | python-smpplib + php-smpp (S2, S4, S11) | ½ day |
 | 7 | Load: smppload + smpp-dumb-client (S6, S8, S9) | ½ day |
-| 8 | Hosted, manual: Melrose and smpp.org (C1, C7, C8, C14, C15, C17) | 2 h |
+| 8 | ~~Hosted, manual~~ — dropped, see [Untested](#untested) | — |
 | 9 | Fixtures from the quirk list into `test/` (C8 UDH-16, C9, C10, C15, C16) | 1 day |
 | 10 | Decide 1.0 scope for targets 2–5: fix, or document as a limitation with the peers that refuse | — |
 | 11 | One product-owner pass over everything the fixes changed on the public surface — see below | 2 h |
@@ -213,6 +216,21 @@ Cheaper model, with these instructions and the tables above, no judgement calls:
 
 Stronger model: reading a failure against the spec and the peer's docs, deciding fix versus
 document, library changes, and the AGENTS.md decision record each one needs.
+
+## Untested
+
+Dropping the hosted simulators leaves three things this suite never exercises. None is a known
+defect; each is a claim resting on the specification and on Node rather than on a peer having agreed.
+
+- **A TLS handshake against a certificate a public authority signed.** Every TLS test here, our own
+  and Cloudhopper's, uses a certificate generated for the test, so what is proven is that the
+  handshake works and that a bad certificate is refused. Verifying a real chain is Node's job and we
+  pass `tls.ConnectionOptions` through untouched, which is why this is a thin risk rather than none.
+- **A peer that genuinely speaks SMPP 5.0.** `interfaceVersion: 0x50` is tested against peers that
+  answer 3.4 or answer nothing, so what 5.0 declares back is unobserved.
+- **An SMSC written by someone who never sees this code.** Every peer here is open source and
+  configured by us. A closed commercial SMSC is the one thing a free suite cannot buy, and the first
+  operator integration is where that gets answered.
 
 ## Status
 
