@@ -368,16 +368,19 @@ Grouped by what each one constrains.
   modes of SMPP 3.4 5.2.12 are a `MESSAGING_MODE` constant group and the option takes one of their
   names, so 0x43 is a composition this library makes rather than a value a caller states, and the UDH
   indicator a segment carrying a header needs cannot be cleared by anything the option can express.
-  Those three names moved out of `ESM_CLASS`, where they were a second spelling of the same bits that
+  It takes three of those four: 2.10.3 carries transaction mode on `data_sm` alone, and none goes out
+  of here, so `FORWARD` stays in the group that mirrors the spec table and `sendSms()` refuses it by
+  that reason rather than as an unknown name — a mode this library cannot deliver is a promise goal 6
+  will not let it make. `DATAGRAM` with `dlr: true` is refused on the same footing: 2.10.2 defines the
+  report away, so arming `DlrMerger` for one is goal 2's wrong answer, where the mode alone and a
+  report under any other mode both go out untouched. Those three names left `ESM_CLASS`, where they
   had `constsById.ESM_CLASS` read 0x03 as a whole `esm_class`. Rejected: a raw `esmClass` number,
   which is exactly that clearable state and would need refusing bit by bit to be safe. Rejected:
   taking a number beside a name, two spellings of one goal — which is why a value naming no mode is
   refused, by name, before a segment goes out. Rejected: a session-level default with a per-send
   override; an operator's requirement is a property of the link, but the library can verify nothing
   the caller's own options object does not, and shipping both buys a precedence rule to document and
-  test for that. `SMSC_DEFAULT` is named so pinning the default deliberately is sayable, and
-  `test/messaging-mode.test.ts` holds it and the absent option to the same octets.
-  Untouched: the message-type bits `sendDlr()` writes, which have a decision of their own here.
+  test for that. `SMSC_DEFAULT` is named so pinning the default deliberately is sayable.
 
 - **An inbound `data_sm` stands in for whichever of `submit_sm` and `deliver_sm` its direction makes
   it, and none goes out.** Maintainer's call, 2026-09-06, from the Jasmin interoperability phase:

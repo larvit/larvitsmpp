@@ -120,10 +120,20 @@ export type ConstGroup = keyof typeof consts;
 export type MessageState = keyof typeof consts.MESSAGE_STATE;
 export type MessagingMode = keyof typeof consts.MESSAGING_MODE;
 
-export const messagingModes: readonly string[] = Object.keys(consts.MESSAGING_MODE);
+/** SMPP 3.4 2.10.3 carries transaction mode on `data_sm` alone, so a `submit_sm` never asks for it. */
+const transactionMode = 'FORWARD';
+
+export type SubmitMessagingMode = Exclude<MessagingMode, typeof transactionMode>;
+
+export const submitMessagingModes: readonly string[] = Object.keys(consts.MESSAGING_MODE)
+	.filter(mode => mode !== transactionMode);
 
 export function isMessagingMode(value: unknown): value is MessagingMode {
 	return typeof value === 'string' && Object.hasOwn(consts.MESSAGING_MODE, value);
+}
+
+export function isSubmitMessagingMode(value: unknown): value is SubmitMessagingMode {
+	return isMessagingMode(value) && value !== transactionMode;
 }
 
 // Aliased values (NPI.IP === NPI.INTERNET === 0x0E) resolve to whichever name sorts last.
