@@ -199,9 +199,10 @@ if (err) throw err;
 smpp.on('session', session => {
 	session.on('sms', async sms => {
 		// Responding is part of the protocol, not optional. Without arguments it answers
-		// ESME_ROK with a generated id; pass your own, and a status to refuse the message.
-		await sms.sendResp();
+		// ESME_ROK with a generated id. On a message sendResp() still answers itself — see
+		// below — you may pass your own id, and a status to refuse the message:
 		// await sms.sendResp({ smsId: yourOwnId, status: 'ESME_RMSGQFUL' });
+		await sms.sendResp();
 
 		if (sms.dlr) {
 			await sms.sendDlr(); // same as sms.sendDlr('DELIVERED')
@@ -212,6 +213,18 @@ smpp.on('session', session => {
 console.log(smpp.port);  // the port actually bound, useful when 0 was requested
 await smpp.close();      // stop listening, then drain and close every live session
 ```
+
+A message that arrived in several segments was already answered when you see it: each segment is
+answered as it lands, because a relaying SMSC will not send the next one until the last is answered.
+That answer is `ESME_ROK` unless the segment's header names no message this session can join, which
+refuses it, or the reassembly buffer is full, which asks the SMSC to keep it and try again.
+`sms.answeredOnArrival` says whether the message you are holding was answered that way — a segment count cannot, since a peer
+may number a concatenated message one part of one. The id was fixed with the first segment, so
+`sendResp()` there only says you are done with the message, and returns an `err` for an `smsId` or a
+refusing `status`; choosing the id and refusing the message belong to a message `sendResp()` still
+answers itself. `sms.smsId` is the base either way, and `sendDlr()` names `<smsId>-1`, `<smsId>-2`
+and so on — the ids a `submit_sm`'s responses carried. A `deliver_sm` is answered with no id at all,
+since SMPP marks that field unused, so an inbound message's base is a handle of your own only.
 
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
 `ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`. `SCHEDULED` and `ENROUTE` go out as intermediate
@@ -265,10 +278,14 @@ Runtime failures on a live connection arrive as `sessionError` and `serverError`
 deliberately not called `error`: Node turns an unhandled `error` event into a thrown exception, which
 is exactly what this library promises not to do.
 
-`sessionError` carries two kinds of failure, and `PduRefusedError` is what separates them:
+`sessionError` carries three kinds of failure, and `PduRefusedError` separates the first from the
+rest:
 
 - **A PDU the peer sent that the codec could not read with the stream still in sync.** The link is
   healthy and only that one PDU is lost, so this is the kind to count rather than alert on.
+- **A concatenated message given up on before it was whole.** Its arrived segments were answered, so
+  the peer will not send them again. Also a counting kind: no `sms` event ever fired for it, so
+  there is nothing to act on beyond knowing traffic was lost.
 - **Everything else**: the session or the socket failing, and a hook or listener that threw or, if it
   was `async`, rejected.
 
@@ -335,13 +352,13 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 
 | Event | Fires when |
 | --- | --- |
-| `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and its `smsId`. |
+| `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and its `smsId`. A multipart one was answered as its segments arrived — see [Server](#server). |
 | `dlr` | A delivery report arrives, one per segment. `intermediate` is true where the report is not final: the SMSC either marked it an intermediate notification, or reported `ENROUTE` or `SCHEDULED`. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. `statusMsg` names `statusId` unless the peer sent a `message_state` this library cannot name — then `statusId` is that raw value and `statusMsg` is whatever the body said, or `UNKNOWN`. |
 | `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. A report carrying `intermediate` never counts towards it. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. A base is merged once: a later message the SMSC gives the same ids is reported on through `dlr` alone, and an earlier one still collecting loses its merged report as well. |
 | `close` | The session is over, because nothing will bring the link back. Fires once, whether you closed it or the link failed for good. |
 | `disconnected` | The link dropped and the reconnect loop will retry it. Do not open a replacement client here — the session you hold comes back on its own, and `reconnected` says when. Fires again for each attempt that reconnects and then fails, so it is not one-to-one with `reconnected`. |
 | `reconnected` | The client re-bound after a drop. |
-| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires for each PDU the codec refused as well, carrying a `PduRefusedError` while the link carries on: a refused request is answered with the status SMPP names, and a refused response is answered with nothing and settles the request it named as `unanswered`. [Errors](#errors) tells the two kinds apart. |
+| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires for each PDU the codec refused as well, carrying a `PduRefusedError` while the link carries on: a refused request is answered with the status SMPP names, and a refused response is answered with nothing and settles the request it named as `unanswered`. [Errors](#errors) tells its three kinds apart. |
 | `data` | Raw bytes arrived on the socket. |
 | `incomingPdu` | A complete PDU arrived, as a buffer. |
 | `incomingPduObj` | The same PDU, parsed into an object. |
@@ -353,7 +370,8 @@ refuse further sends, wait out the requests this end already sent for up to `shu
 then tear down whatever is left, resolving to an `err` that says what was lost. They also wait for
 every `sms` still in the application's hands, so a peer whose `submit_sm` is being handled is
 answered rather than left to re-send it. That wait ends when `sendResp()` puts the response on the
-wire, or when every listener that took the message has failed; answering its PDUs through
+wire — or, for a message whose segments were answered as they arrived, when it is called at all —
+or when every listener that took the message has failed; answering its PDUs through
 `sendReturn()` instead leaves the wait running until it gives up. `sendDlr()` is the one send the
 refusal lets past, and it catches the wait when issued straight after `sendResp()`; await anything in
 between and it races the shutdown like any other send. `close({ signal })` takes an `AbortSignal`
@@ -445,8 +463,8 @@ promises and the rough edges taken off.
 - **`server()` resolves once, when it is listening**, and gives you a handle with `close()`, `port`
   and a `session` event. It no longer calls your callback once per incoming connection.
 - **The id a message is answered with goes to `sendResp({ smsId })`**, and `sms.smsId` is read-only:
-  it reports the id `sendResp()` was given, or the UUID v7 generated instead. Delete any
-  `sms.smsId = …` line — assigning to it
+  it reports the id the segments were answered with, the id `sendResp()` was given, or the UUID v7
+  generated instead. Delete any `sms.smsId = …` line — assigning to it
   throws a `TypeError`, since modules are always strict mode — and pass the id to `sendResp()`.
 - **`checkuserpass` is now `authenticate`**, takes `{ password, session, systemId, systemType }` and
   returns `false` or `{ userData }`.
@@ -485,6 +503,9 @@ have worked around any of these, remove the workaround:
 - A message whose last octet was `0x00` was allocated one octet short while `sm_length` still
   reported the full length, so it went out corrupt. In UCS2 that is any message ending in a
   character like 一 (U+4E00), which made the bug routine for CJK text.
+- Every response carried a `message_id`, `deliver_sm_resp` included, where SMPP 3.4 4.6.2 makes
+  that field unused and NULL. Jasmin closes the connection on one. Answering an inbound message now
+  puts nothing in it, and `sms.smsId` is the local handle it always was.
 - Binary TLVs (`message_payload`, `network_error_code`, `callback_num` and the rest) were parsed
   into a hex string and written back as the ASCII of that string, so every one that made a round
   trip went out corrupt. They are `Buffer`s in both directions now, so drop any hex encoding of

@@ -2,6 +2,7 @@ import type { Dlr } from './dlr.ts';
 import type { MessageState } from './defs/constants.ts';
 import type { SmppLog } from './log.ts';
 import { ExpiringGroups } from './expiring-groups.ts';
+import { parseSegmentId } from './sms-id.ts';
 
 export type MessageDlr = Dlr & { segments: Dlr[]; smsId: string };
 
@@ -17,8 +18,6 @@ type Group = {
 	expected: Set<number>;
 	parts: Map<number, Dlr>;
 };
-
-const numbered = /^(.*)-(\d+)$/;
 
 /**
  * MESSAGE_STATE is a flat enum, not a ranking — ACCEPTED is 6 where UNDELIVERABLE is 5 — so reducing
@@ -43,14 +42,12 @@ function idNumbering(smsIds: string[]): { base: string; parts: Set<number> } | u
 	const parts = new Set<number>();
 
 	for (const smsId of smsIds) {
-		const match = numbered.exec(smsId);
-		const base = match?.[1];
-		const part = match?.[2];
+		const numbering = parseSegmentId(smsId);
 
-		if (base === undefined || part === undefined) return undefined;
+		if (!numbering) return undefined;
 
-		bases.add(base);
-		parts.add(Number(part));
+		bases.add(numbering.base);
+		parts.add(numbering.part);
 	}
 
 	const [base] = bases;
@@ -110,17 +107,14 @@ export class DlrMerger {
 
 		if (dlr.intermediate || dlr.smsId === undefined) return undefined;
 
-		const match = numbered.exec(dlr.smsId);
-		const base = match?.[1];
-		const part = match?.[2];
+		const numbering = parseSegmentId(dlr.smsId);
 
-		if (base === undefined || part === undefined) return undefined;
+		if (!numbering) return undefined;
 
+		const { base, part: number } = numbering;
 		const group = this.groups.get(base);
 
 		if (!group) return undefined;
-
-		const number = Number(part);
 
 		if (!group.expected.has(number)) return undefined;
 
@@ -137,8 +131,8 @@ export class DlrMerger {
 	}
 
 	clear(): void {
-		this.groups.clear();
-		this.spent.clear();
+		this.groups.takeAll();
+		this.spent.takeAll();
 	}
 
 	/** Drops every group past its deadline. Runs before each collect and on its own timer. */

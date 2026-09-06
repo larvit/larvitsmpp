@@ -1,4 +1,7 @@
+import type { CommandName } from './defs/commands.ts';
 import type { DlrMerger } from './dlr-merger.ts';
+import type { ErrorName } from './defs/errors.ts';
+import type { LostGroup, Refusal } from './reassembly.ts';
 import type { OnRequest } from './session-options.ts';
 import type { PduObject, PduObjectInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
@@ -13,6 +16,20 @@ import { hasUdh } from './defs/constants.ts';
 import { createSms } from './sms.ts';
 import { dlrFromPdu } from './dlr.ts';
 import { paramNumber, paramText } from './defs/types.ts';
+import { respIdParams, segmentId } from './sms-id.ts';
+
+/** SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another. */
+export function refusedSegmentStatus(cmdName: CommandName, refusal: Refusal): ErrorName {
+	if (refusal === 'unplaceable') return 'ESME_RINVESMCLASS';
+
+	return cmdName === 'deliver_sm' ? 'ESME_RX_T_APPN' : 'ESME_RMSGQFUL';
+}
+
+const lostReasons: Record<LostGroup['reason'], string> = {
+	evicted: 'the reassembly buffer filled',
+	expired: 'no further segment arrived in time',
+	linkGone: 'the link they arrived on went',
+};
 
 export type IncomingRequestsOptions = {
 	dlrMerger: DlrMerger;
@@ -56,6 +73,7 @@ export class IncomingRequests {
 			log: options.log,
 			max: options.maxReassembly ?? defaults.maxReassembly,
 			maxOctets: options.maxOctets,
+			onLost: lost => { this.reportLost(lost); },
 			timeout: options.reassemblyTimeout ?? defaults.reassemblyTimeout,
 		});
 		this.sendPastDrain = options.sendPastDrain;
@@ -94,7 +112,7 @@ export class IncomingRequests {
 				await this.session.sendReturn(pduObj);
 				break;
 			case 'submit_sm':
-				this.onMessage(pduObj);
+				await this.onMessage(pduObj);
 				break;
 			case 'unbind':
 				await this.session.sendReturn(pduObj);
@@ -148,7 +166,7 @@ export class IncomingRequests {
 		const dlr = dlrFromPdu(pduObj, this.smsIdFormat);
 
 		if (!dlr) {
-			this.onMessage(pduObj);
+			await this.onMessage(pduObj);
 
 			return;
 		}
@@ -162,7 +180,11 @@ export class IncomingRequests {
 		await this.session.sendReturn(pduObj);
 	}
 
-	private onMessage(pduObj: PduObject): void {
+	/**
+	 * A concatenated message is answered segment by segment as it arrives: a peer that dispatches
+	 * one request at a time never sends the second segment until the first has been answered.
+	 */
+	private async onMessage(pduObj: PduObject): Promise<void> {
 		const message = pduObj.params.short_message;
 		const carriesUdh = hasUdh(paramNumber(pduObj.params.esm_class, 0));
 		const concat = carriesUdh && Buffer.isBuffer(message) ? concatInfo(message) : undefined;
@@ -173,12 +195,30 @@ export class IncomingRequests {
 			return;
 		}
 
-		const whole = this.reassembler.collect(pduObj, concat);
+		const collected = this.reassembler.collect(pduObj, concat);
 
-		if (whole) this.emitSms(whole);
+		if (!collected.kept) {
+			await this.session.sendReturn(pduObj, refusedSegmentStatus(pduObj.cmdName, collected.refusal));
+
+			return;
+		}
+
+		await this.session.sendReturn(
+			pduObj,
+			'ESME_ROK',
+			respIdParams(pduObj.cmdName, segmentId(collected.smsId, concat.part - 1, concat.total)),
+		);
+
+		if (collected.whole) this.emitSms(collected.whole, collected.smsId);
 	}
 
-	private emitSms(pduObjs: PduObject[]): void {
+	private reportLost(lost: LostGroup): void {
+		this.session.emit('sessionError', new Error(
+			`Gave up ${String(lost.parts)} of ${String(lost.total)} segments of an incomplete concatenated message: ${lostReasons[lost.reason]}`,
+		));
+	}
+
+	private emitSms(pduObjs: PduObject[], answeredAs?: string): void {
 		const first = pduObjs[0];
 
 		if (!first) return;
@@ -188,6 +228,7 @@ export class IncomingRequests {
 		const release = (): void => { setImmediate(() => { this.held.release(pduObjs); }); };
 
 		const sms = createSms({
+			answeredAs,
 			from: paramText(first.params.source_addr),
 			message: decodeSegments(pduObjs),
 			pduObjs,

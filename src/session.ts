@@ -359,12 +359,16 @@ export class Session extends EventEmitter<SessionEvents> {
 		if (this.closed) return;
 
 		this.closed = true;
-		this.outgoing.linkLost(this.retrying());
+
+		// Read once: clear() reports lost segments, and a listener could stop the loop between reads.
+		const retrying = this.retrying();
+
+		this.outgoing.linkLost(retrying);
 		this.timers.clear();
 		this.incoming.clear();
 		this.sock.destroy();
 
-		if (this.retrying()) this.emit('disconnected');
+		if (retrying) this.emit('disconnected');
 		else this.emitClose();
 	}
 

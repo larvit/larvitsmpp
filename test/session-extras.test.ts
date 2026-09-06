@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import test, { describe } from 'node:test';
+import type { Collected, LostGroup } from '../src/reassembly.ts';
 import type { Dlr } from '../src/dlr.ts';
 import type { ErrorName } from '../src/defs/errors.ts';
 import type { MessageState } from '../src/defs/constants.ts';
@@ -13,7 +14,7 @@ import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
 import { HeldMessages } from '../src/held-messages.ts';
-import { IncomingRequests } from '../src/incoming-requests.ts';
+import { IncomingRequests, refusedSegmentStatus } from '../src/incoming-requests.ts';
 import { UnansweredError } from '../src/unanswered-error.ts';
 import { createSms } from '../src/sms.ts';
 import { LinkGate } from '../src/link-gate.ts';
@@ -30,7 +31,8 @@ import { errors } from '../src/defs/errors.ts';
 import { paramNumber, paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
 import { silentLog } from '../src/log.ts';
-import { submitSms } from '../src/send-sms.ts';
+import { splitMessage } from '../src/message.ts';
+import { submitSms, submitSmParams } from '../src/send-sms.ts';
 
 async function startServer(
 	t: TestContext,
@@ -153,7 +155,7 @@ describe('merged delivery reports', () => {
 
 		const [sms] = await Promise.all([
 			incoming.then(async received => {
-				await received.sendResp({ smsId: 'merge-me' });
+				await received.sendResp();
 
 				return received;
 			}),
@@ -169,10 +171,10 @@ describe('merged delivery reports', () => {
 
 		const report = await merged;
 
-		assert.equal(report.smsId, 'merge-me');
+		assert.equal(report.smsId, sms.smsId);
 		assert.equal(report.segments.length, 3);
 		assert.equal(report.statusMsg, 'DELIVERED');
-		assert.deepEqual(perSegment, ['merge-me-1', 'merge-me-2', 'merge-me-3']);
+		assert.deepEqual(perSegment, [1, 2, 3].map(part => `${sms.smsId}-${String(part)}`));
 	});
 
 	test('reports once, on the final receipts, when the peer reports en route first', async t => {
@@ -195,7 +197,7 @@ describe('merged delivery reports', () => {
 
 		const [sms] = await Promise.all([
 			incoming.then(async received => {
-				await received.sendResp({ smsId: 'en-route' });
+				await received.sendResp();
 
 				return received;
 			}),
@@ -212,7 +214,7 @@ describe('merged delivery reports', () => {
 
 		const report = await merged;
 
-		assert.equal(report.smsId, 'en-route');
+		assert.equal(report.smsId, sms.smsId);
 		assert.equal(report.statusMsg, 'DELIVERED');
 		assert.equal(report.segments.length, 3);
 		const notification = consts.ESM_CLASS.INTERMEDIATE_DELIVERY;
@@ -244,7 +246,7 @@ describe('merged delivery reports', () => {
 
 		const [sms] = await Promise.all([
 			incoming.then(async received => {
-				await received.sendResp({ smsId: 'partly-failed' });
+				await received.sendResp();
 
 				return received;
 			}),
@@ -604,11 +606,12 @@ describe('reconnect', () => {
 
 	test('merges the receipts of a multipart message across a drop', async t => {
 		const smpp = await startServer(t);
-
-		smpp.on('session', bound => {
-			bound.on('sms', sms => { void sms.sendResp({ smsId: 'across-the-drop' }); });
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', bound => bound.on('sms', sms => {
+				resolve(sms);
+				void sms.sendResp();
+			}));
 		});
-
 		const { session } = await connect(t, smpp, { reconnect: { maxDelay: 100, minDelay: 20 } });
 
 		assert.ok(session);
@@ -619,11 +622,12 @@ describe('reconnect', () => {
 			message: 'x'.repeat(400),
 			to: '46709771337',
 		});
+		const sms = await incoming;
 
-		assert.deepEqual(sent.smsIds, ['across-the-drop-1', 'across-the-drop-2', 'across-the-drop-3']);
+		assert.deepEqual(sent.smsIds, [1, 2, 3].map(part => `${sms.smsId}-${String(part)}`));
 
 		// Answered on the link that then drops, so an SMSC has no reason to ever send it again.
-		await sendReceipt(peerOf(smpp), 'across-the-drop-1');
+		await sendReceipt(peerOf(smpp), `${sms.smsId}-1`);
 
 		const reconnected = once<true>(resolve => { session.on('reconnected', () => { resolve(true); }); });
 
@@ -632,12 +636,12 @@ describe('reconnect', () => {
 
 		const merged = once<MessageDlr>(resolve => { session.on('messageDlr', resolve); });
 
-		await sendReceipt(peerOf(smpp), 'across-the-drop-2');
-		await sendReceipt(peerOf(smpp), 'across-the-drop-3');
+		await sendReceipt(peerOf(smpp), `${sms.smsId}-2`);
+		await sendReceipt(peerOf(smpp), `${sms.smsId}-3`);
 
 		const report = await merged;
 
-		assert.equal(report.smsId, 'across-the-drop');
+		assert.equal(report.smsId, sms.smsId);
 		assert.equal(report.segments.length, 3);
 	});
 
@@ -1450,21 +1454,110 @@ describe('reassembly bounds', () => {
 		reference: number,
 		part: number,
 		total: number,
-	): PduObject[] | undefined {
+	): Collected {
 		return reassembler.collect(segment(reference, part, total), { part, reference, total });
 	}
 
 	test('hands back every segment in order once the last one arrives', () => {
-		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
+		const second = collect(reassembler, 4, 2, 3);
+		const third = collect(reassembler, 4, 3, 3);
 
-		assert.equal(collect(reassembler, 4, 2, 3), undefined);
-		assert.equal(collect(reassembler, 4, 3, 3), undefined);
+		assert.ok(second.kept);
+		assert.ok(third.kept);
+		assert.equal(second.whole, undefined);
+		assert.equal(third.whole, undefined);
 
-		const whole = collect(reassembler, 4, 1, 3);
+		const collected = collect(reassembler, 4, 1, 3);
 
-		assert.ok(whole);
-		assert.deepEqual(whole.map(pduObj => pduObj.seqNr), [1, 2, 3]);
+		assert.ok(collected.kept);
+		assert.ok(collected.whole);
+		assert.deepEqual(collected.whole.map(pduObj => pduObj.seqNr), [1, 2, 3]);
 		assert.equal(reassembler.size, 0);
+
+		// One id base per group: every segment of it was answered with a part of that base.
+		assert.equal(second.smsId, collected.smsId);
+		assert.equal(third.smsId, collected.smsId);
+	});
+
+	// A group the store cannot hold at all is refused, not accepted and then thrown away.
+	test('refuses a lone segment whose own arrival overruns the octet cap', () => {
+		const lost: LostGroup[] = [];
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			maxOctets: 10,
+			now: () => 0,
+			onLost: one => { lost.push(one); },
+			timeout: 60_000,
+		});
+		const refused = collect(reassembler, 8, 1, 2);
+
+		assert.equal(refused.kept, false);
+		assert.equal(reassembler.size, 0);
+		assert.deepEqual(lost, [], 'the peer holds the only segment there was, so nothing was lost');
+	});
+
+	// The segments before it were answered ESME_ROK, so dropping those is not the same as refusing one.
+	test('reports the answered segments of a group that overruns the cap mid-message', () => {
+		const lost: LostGroup[] = [];
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			// One segment is 36 octets, so the second overruns a group already holding the first.
+			maxOctets: 50,
+			now: () => 0,
+			onLost: one => { lost.push(one); },
+			timeout: 60_000,
+		});
+
+		assert.equal(collect(reassembler, 8, 1, 3).kept, true);
+		assert.equal(collect(reassembler, 8, 2, 3).kept, false);
+		assert.equal(reassembler.size, 0);
+		// One of the two the group held is the refused segment, which the peer still has.
+		assert.deepEqual(
+			lost.map(one => ({ parts: one.parts, reason: one.reason, total: one.total })),
+			[{ parts: 1, reason: 'evicted', total: 3 }],
+		);
+	});
+
+	// Nothing else says a message the peer has already been answered for was thrown away.
+	test('names every group it gives up on, and why', () => {
+		let now = 0;
+		let issued = 0;
+		const ids = [
+			'0199e0eb-4c11-7a02-9f31-2b6d80c4e517',
+			'0199e0eb-9d42-7bc6-8e70-51af3c92d6b8',
+			'0199e0ec-0e73-7d18-bb29-7c04ea51f3a9',
+		];
+		const lost: LostGroup[] = [];
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 1,
+			newId: () => ids[issued++] ?? '',
+			now: () => now,
+			onLost: one => { lost.push(one); },
+			timeout: 60,
+		});
+
+		collect(reassembler, 1, 1, 2);
+		collect(reassembler, 2, 1, 3);
+
+		now = 61;
+		reassembler.sweep();
+		collect(reassembler, 3, 1, 2);
+		reassembler.clear();
+
+		assert.deepEqual(lost.map(one => one.reason), ['evicted', 'expired', 'linkGone']);
+		assert.deepEqual(lost.map(one => one.parts), [1, 1, 1]);
+		assert.deepEqual(lost.map(one => one.total), [2, 3, 2]);
+		assert.deepEqual(lost.map(one => one.smsId), ids, 'each group carries an id of its own');
 	});
 
 	// The UDH is peer-controlled, and the default authenticate() accepts every peer.
@@ -1478,21 +1571,38 @@ describe('reassembly bounds', () => {
 			verbose: noop,
 			warn: msg => { warnings.push(msg); },
 		};
-		const reassembler = new Reassembler({ log, max: 10, now: () => 0, timeout: 60_000 });
+		const reassembler = new Reassembler({
+			log,
+			max: 10,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
 
-		assert.equal(collect(reassembler, 1, 1, 0), undefined);
-		assert.equal(collect(reassembler, 2, 0, 3), undefined);
-		assert.equal(collect(reassembler, 3, 4, 3), undefined);
+		assert.deepEqual(
+			[collect(reassembler, 1, 1, 0), collect(reassembler, 2, 0, 3), collect(reassembler, 3, 4, 3)]
+				.map(one => (one.kept ? undefined : one.refusal)),
+			Array(3).fill('unplaceable'),
+		);
 		assert.equal(reassembler.size, 0);
 		assert.deepEqual(warnings, Array(3).fill('reassembler - dropping a segment the UDH numbers impossibly'));
 	});
 
 	// Parts 1/2 then 2/3 would otherwise complete the stored two-part group, truncating the message.
 	test('refuses a segment that renumbers how many parts the message has', () => {
-		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
 
-		assert.equal(collect(reassembler, 9, 1, 2), undefined);
-		assert.equal(collect(reassembler, 9, 2, 3), undefined);
+		const first = collect(reassembler, 9, 1, 2);
+
+		assert.ok(first.kept);
+		assert.equal(first.whole, undefined);
+		assert.equal(collect(reassembler, 9, 2, 3).kept, false);
 		assert.equal(reassembler.size, 1);
 
 		reassembler.clear();
@@ -1500,14 +1610,26 @@ describe('reassembly bounds', () => {
 
 	// 0.4.0 held incomplete groups without limit and swept them only when other traffic arrived.
 	test('drops the oldest incomplete message once the cap is reached', () => {
-		const reassembler = new Reassembler({ log: silentLog, max: 2, now: () => 0, timeout: 60_000 });
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 2,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
 
 		for (const reference of [1, 2, 3]) {
-			assert.equal(collect(reassembler, reference, 1, 2), undefined);
+			const collected = collect(reassembler, reference, 1, 2);
+
+			assert.ok(collected.kept);
+			assert.equal(collected.whole, undefined);
 		}
 
 		// Completing the first one must not produce a message: it was evicted.
-		assert.equal(collect(reassembler, 1, 2, 2), undefined);
+		const reopened = collect(reassembler, 1, 2, 2);
+
+		assert.ok(reopened.kept);
+		assert.equal(reopened.whole, undefined);
 		assert.equal(reassembler.size, 2);
 
 		reassembler.clear();
@@ -1520,51 +1642,319 @@ describe('reassembly bounds', () => {
 			// One segment is 36 octets: 14 of short_message plus the two 11-octet addresses.
 			maxOctets: 80,
 			now: () => 0,
+			onLost: () => undefined,
 			timeout: 60_000,
 		});
 
 		for (const reference of [1, 2, 3]) {
-			assert.equal(collect(reassembler, reference, 1, 2), undefined);
+			const collected = collect(reassembler, reference, 1, 2);
+
+			assert.ok(collected.kept);
+			assert.equal(collected.whole, undefined);
 		}
 
 		assert.equal(reassembler.size, 2);
-		assert.equal(collect(reassembler, 1, 2, 2), undefined);
+
+		const reopened = collect(reassembler, 1, 2, 2);
+
+		assert.ok(reopened.kept);
+		assert.equal(reopened.whole, undefined);
 
 		reassembler.clear();
 	});
 
 	// A retained subarray keeps its whole framed PDU alive, up to maxPduLength per segment.
 	test('copies a segment out of the buffer it arrived in', () => {
-		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
 		const framed = Buffer.alloc(1024);
 		const first = segment(6, 1, 2);
 
 		Buffer.concat([Buffer.from([0x05, 0x00, 0x03, 6, 2, 1]), Buffer.from('fragment')]).copy(framed);
 		first.params.short_message = framed.subarray(0, 14);
 
-		assert.equal(reassembler.collect(first, { part: 1, reference: 6, total: 2 }), undefined);
+		const held = reassembler.collect(first, { part: 1, reference: 6, total: 2 });
+
+		assert.ok(held.kept);
+		assert.equal(held.whole, undefined);
 
 		framed.fill(0x00);
 
-		const whole = collect(reassembler, 6, 2, 2);
+		const collected = collect(reassembler, 6, 2, 2);
 
-		assert.ok(whole);
-		assert.equal(decodeSegments(whole), 'fragmentfragment');
+		assert.ok(collected.kept);
+		assert.ok(collected.whole);
+		assert.equal(decodeSegments(collected.whole), 'fragmentfragment');
 	});
 
 	test('expires an incomplete message once its timeout has passed', () => {
 		let now = 0;
-		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => now, timeout: 60 });
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			now: () => now,
+			onLost: () => undefined,
+			timeout: 60,
+		});
+		const first = collect(reassembler, 9, 1, 2);
 
-		assert.equal(collect(reassembler, 9, 1, 2), undefined);
+		assert.ok(first.kept);
+		assert.equal(first.whole, undefined);
 
 		now = 61;
 
 		// The other half arrives after the group expired, so it starts a new, still-incomplete one.
-		assert.equal(collect(reassembler, 9, 2, 2), undefined);
+		const late = collect(reassembler, 9, 2, 2);
+
+		assert.ok(late.kept);
+		assert.equal(late.whole, undefined);
+		assert.notEqual(late.smsId, first.smsId);
 		assert.equal(reassembler.size, 1);
 
 		reassembler.clear();
+	});
+});
+
+// Jasmin dispatches one request per connector at a time: holding a group unanswered until it was
+// whole deadlocked every multi-segment message against it (interop-tests/findings/03-jasmin.md).
+describe('the status a refused segment is answered with', () => {
+	// SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another.
+	test('names one the command the segment arrived on defines', () => {
+		assert.equal(refusedSegmentStatus('submit_sm', 'full'), 'ESME_RMSGQFUL');
+		assert.equal(refusedSegmentStatus('deliver_sm', 'full'), 'ESME_RX_T_APPN');
+		assert.equal(refusedSegmentStatus('submit_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
+		assert.equal(refusedSegmentStatus('deliver_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
+	});
+});
+
+describe('a peer that sends the next segment only once the last one is answered', () => {
+	const text = 'A relay that waits for each response before it sends the next segment. '.repeat(4);
+
+	function segmentsOf(reference: number): Buffer[] {
+		const segments = splitMessage(text, { reference });
+
+		assert.ok(segments.length > 1, 'the fixture must need more than one segment');
+
+		return segments;
+	}
+
+	async function submit(session: Session, segment: Buffer): Promise<PduObject> {
+		const answered = await session.send({
+			cmdName: 'submit_sm',
+			params: submitSmParams(
+				{ from: '46701113311', message: text, to: '46709771337' },
+				segment,
+				{ encoding: 'ASCII', multipart: true },
+			),
+		});
+
+		assert.equal(answered.err, undefined);
+		assert.ok(answered.pduObj);
+
+		return answered.pduObj;
+	}
+
+	async function submitSerially(session: Session, reference: number): Promise<PduObject[]> {
+		const answers: PduObject[] = [];
+
+		for (const segment of segmentsOf(reference)) {
+			answers.push(await submit(session, segment));
+		}
+
+		return answers;
+	}
+
+	test('gets every segment answered as it arrives, and the application one whole message', async t => {
+		const smpp = await startServer(t);
+		const messages: Sms[] = [];
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', bound => bound.on('sms', sms => {
+				messages.push(sms);
+				resolve(sms);
+			}));
+		});
+		const { session } = await connect(t, smpp, { responseTimeout: 1000 });
+
+		assert.ok(session);
+
+		const answers = await submitSerially(session, 0x2A);
+		const sms = await incoming;
+
+		assert.equal(sms.message, text);
+		assert.equal(sms.pduObjs.length, answers.length);
+		assert.equal(messages.length, 1, 'the application sees one message, not one per segment');
+		assert.equal(sms.answeredOnArrival, true);
+		assert.deepEqual(answers.map(answer => answer.cmdStatus), answers.map(() => 'ESME_ROK'));
+		assert.deepEqual(
+			answers.map(answer => paramText(answer.params.message_id)),
+			answers.map((_answer, index) => `${sms.smsId}-${String(index + 1)}`),
+		);
+		assert.deepEqual(await sms.sendResp(), {});
+	});
+
+	// The documented single-segment contract, which the segment-by-segment answer must not touch.
+	test('answers a single-segment message only once the application does, with the id it chose', async t => {
+		const smpp = await startServer(t);
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', bound => bound.on('sms', resolve));
+		});
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const submitted = session.send({
+			cmdName: 'submit_sm',
+			params: {
+				destination_addr: '46709771337',
+				short_message: 'one segment, answered by the application',
+				source_addr: '46701113311',
+			},
+		});
+		const sms = await incoming;
+
+		assert.equal(await within(150, submitted), undefined, 'nothing may answer for the application');
+		assert.equal(sms.answeredOnArrival, false);
+		assert.deepEqual(await sms.sendResp({ smsId: '0199e0e9-4a3e-7c62-9a4b-1f0c5d7e8a21' }), {});
+
+		const answered = await submitted;
+
+		assert.ok(answered.pduObj);
+		assert.equal(
+			paramText(answered.pduObj.params.message_id),
+			'0199e0e9-4a3e-7c62-9a4b-1f0c5d7e8a21',
+		);
+	});
+
+	test('refuses an id and a refusing status for segments already on the wire', async t => {
+		const smpp = await startServer(t);
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', bound => bound.on('sms', resolve));
+		});
+		const { session } = await connect(t, smpp, { responseTimeout: 1000 });
+
+		assert.ok(session);
+
+		await submitSerially(session, 0x2B);
+
+		const sms = await incoming;
+		const named = await sms.sendResp({ smsId: '0199e0ea-1f3d-7ab4-8c21-6d4e5f0a9b73' });
+		const refused = await sms.sendResp({ status: 'ESME_RMSGQFUL' });
+
+		assert.match(named.err?.message ?? '', /fixed when its first segment arrived/);
+		assert.match(refused.err?.message ?? '', /onRequest/);
+		assert.deepEqual(await sms.sendResp({ status: 'ESME_ROK' }), {});
+		assert.equal(sms.answeredOnArrival, true);
+	});
+
+	test('reports a half-arrived message it has already answered, and holds nothing after', async t => {
+		const smpp = await startServer(t, { reassemblyTimeout: 60 });
+		const messages: Sms[] = [];
+		const lost = once<Error>(resolve => {
+			smpp.on('session', bound => {
+				bound.on('sessionError', resolve);
+				bound.on('sms', sms => { messages.push(sms); });
+			});
+		});
+		const { session } = await connect(t, smpp, { responseTimeout: 1000 });
+
+		assert.ok(session);
+
+		const [first] = segmentsOf(0x2C);
+
+		assert.ok(first);
+
+		const answered = await submit(session, first);
+
+		assert.equal(answered.cmdStatus, 'ESME_ROK');
+		assert.match((await lost).message, /Gave up 1 of \d+ segments/);
+		assert.equal(messages.length, 0);
+		assert.deepEqual(await peerOf(smpp).close(), {}, 'a group nothing completed is not held');
+	});
+
+	test('close() still waits for a concatenated message the application has not answered', async t => {
+		const smpp = await startServer(t, { shutdownTimeout: 50 });
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', bound => bound.on('sms', resolve));
+		});
+		const { session } = await connect(t, smpp, { responseTimeout: 1000 });
+
+		assert.ok(session);
+
+		await submitSerially(session, 0x2D);
+		await incoming;
+
+		const closed = await peerOf(smpp).close();
+
+		assert.ok(closed.err instanceof Error);
+		assert.match(closed.err.message, /1 message\(s\) unanswered/);
+	});
+
+	// pduObjs.length is 1 either way here, so answeredOnArrival is the only thing that can say.
+	test('marks a one-part concatenated message answered, as its segment count cannot', async t => {
+		const smpp = await startServer(t);
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', bound => bound.on('sms', resolve));
+		});
+		const { session } = await connect(t, smpp, { responseTimeout: 1000 });
+
+		assert.ok(session);
+
+		const answered = await session.send({
+			cmdName: 'submit_sm',
+			params: {
+				destination_addr: '46709771337',
+				esm_class: consts.ESM_CLASS.UDH_INDICATOR,
+				short_message: Buffer.concat([
+					Buffer.from([0x05, 0x00, 0x03, 0x2F, 0x01, 0x01]),
+					Buffer.from('one part of one'),
+				]),
+				source_addr: '46701113311',
+			},
+		});
+		const sms = await incoming;
+
+		assert.equal(answered.err, undefined);
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
+		assert.equal(paramText(answered.pduObj.params.message_id), sms.smsId);
+		assert.equal(sms.pduObjs.length, 1);
+		assert.equal(sms.answeredOnArrival, true);
+		assert.deepEqual(await sms.sendResp(), {});
+	});
+
+	// esm_class said there was a UDH, and there is no group its concatenation fields can join.
+	test('answers a segment whose UDH cannot be honoured rather than leaving the peer waiting', async t => {
+		const smpp = await startServer(t);
+		const messages: Sms[] = [];
+
+		smpp.on('session', bound => bound.on('sms', sms => { messages.push(sms); }));
+
+		const { session } = await connect(t, smpp, { responseTimeout: 1000 });
+
+		assert.ok(session);
+
+		const answered = await session.send({
+			cmdName: 'submit_sm',
+			params: {
+				destination_addr: '46709771337',
+				esm_class: consts.ESM_CLASS.UDH_INDICATOR,
+				short_message: Buffer.concat([
+					Buffer.from([0x05, 0x00, 0x03, 0x2E, 0x02, 0x09]),
+					Buffer.from('part nine of two'),
+				]),
+				source_addr: '46701113311',
+			},
+		});
+
+		assert.equal(answered.err, undefined);
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdStatus, 'ESME_RINVESMCLASS');
+		assert.deepEqual(messages, []);
 	});
 });
 
@@ -1735,10 +2125,10 @@ describe('graceful shutdown', () => {
 		});
 		const closing = peerOf(smpp).close();
 
-		await sms.sendResp({ smsId: 'held-through-the-drain' });
+		assert.deepEqual(await sms.sendResp(), {});
 
 		const receiptSent = await sms.sendDlr('DELIVERED');
-		const ids = ['held-through-the-drain-1', 'held-through-the-drain-2', 'held-through-the-drain-3'];
+		const ids = [1, 2, 3].map(part => `${sms.smsId}-${String(part)}`);
 
 		assert.equal(receiptSent.err, undefined);
 		assert.deepEqual((await receipts).map(dlr => dlr.smsId), ids);
@@ -1872,6 +2262,7 @@ describe('graceful shutdown', () => {
 
 	// The queued segments are the whole reason the drain waits on the window and not on the pending map.
 	test('counts the segments still queued behind a full window', async t => {
+		// No 'sms' listener, so the single-segment message holding the only slot is never answered.
 		const smpp = await startServer(t);
 		const onWire = once<PduObject>(resolve => {
 			smpp.on('session', bound => bound.on('incomingPduObj', resolve));
@@ -1880,7 +2271,12 @@ describe('graceful shutdown', () => {
 
 		assert.ok(session);
 
-		const sent = session.sendSms({
+		const holding = session.sendSms({
+			from: '46701113311',
+			message: 'holds the only slot',
+			to: '46709771337',
+		});
+		const queued = session.sendSms({
 			from: '46701113311',
 			message: 'x'.repeat(400),
 			to: '46709771337',
@@ -1891,8 +2287,9 @@ describe('graceful shutdown', () => {
 		const closed = await session.close();
 
 		assert.ok(closed.err instanceof Error);
-		assert.match(closed.err.message, /3 request\(s\)/);
-		assert.ok((await sent).err instanceof Error);
+		assert.match(closed.err.message, /4 request\(s\)/);
+		assert.ok((await holding).err instanceof Error);
+		assert.ok((await queued).err instanceof Error);
 	});
 
 	test('an aborted close tears down at once instead of waiting out the drain', async t => {
@@ -2048,11 +2445,12 @@ describe('message id notation', () => {
 
 	test('leaves the segment ids of a multipart send to merge as they are', async t => {
 		const smpp = await startServer(t);
-
-		smpp.on('session', bound => {
-			bound.on('sms', sms => { void sms.sendResp({ smsId: 'beef' }); });
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', bound => bound.on('sms', sms => {
+				resolve(sms);
+				void sms.sendResp();
+			}));
 		});
-
 		const { session } = await connect(t, smpp, {
 			smsIdFormat: { receipt: 'decimal', submitResp: 'hex' },
 		});
@@ -2061,14 +2459,15 @@ describe('message id notation', () => {
 
 		const merged = once<MessageDlr>(resolve => { session.on('messageDlr', resolve); });
 		const sent = await sendOne(session, 'x'.repeat(200));
+		const sms = await incoming;
 
-		assert.deepEqual(sent.smsIds, ['beef-1', 'beef-2']);
+		assert.deepEqual(sent.smsIds, [1, 2].map(part => `${sms.smsId}-${String(part)}`));
 
 		for (const smsId of sent.smsIds) {
 			await sendReceipt(peerOf(smpp), smsId);
 		}
 
-		assert.equal((await merged).smsId, 'beef');
+		assert.equal((await merged).smsId, sms.smsId);
 	});
 
 	test('refuses a notation it cannot apply', () => {

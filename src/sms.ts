@@ -7,6 +7,7 @@ import { UnansweredError } from './unanswered-error.ts';
 import { consts } from './defs/constants.ts';
 import { receiptCodes, transientStates } from './dlr.ts';
 import { smppDate } from './message.ts';
+import { respIdParams, segmentId } from './sms-id.ts';
 import { uuidv7 } from './uuid.ts';
 
 /** `pduObjs` holds what the peer took, so a partial failure names what is already receipted. */
@@ -28,6 +29,11 @@ export type SendRespOptions = {
  * every segment's PDU.
  */
 export type Sms = {
+	/**
+	 * Whether the peer was answered as the message's segments arrived, which is what a concatenated
+	 * message needs and a segment count cannot tell you. `sendResp()` then writes nothing.
+	 */
+	answeredOnArrival: boolean;
 	dlr: boolean;
 	flash: boolean;
 	from: string;
@@ -35,16 +41,22 @@ export type Sms = {
 	pduObjs: PduObject[];
 	/** Sends a delivery report back to the sender. Defaults to DELIVERED. */
 	sendDlr: (status?: MessageState) => Promise<SendDlrResult>;
-	/** Answers every segment. Part of the protocol, not optional. Defaults to ESME_ROK. */
+	/**
+	 * Answers the message, and says the application is done with it. A concatenated message was
+	 * answered segment by segment as it arrived, so there it only releases a shutdown's wait and
+	 * refuses an `smsId` or a refusing `status`. Part of the protocol, not optional.
+	 */
 	sendResp: (options?: SendRespOptions) => Promise<VoidResult>;
 	session: Session;
-	/** The id `sendResp()` was given, or a generated UUID v7. */
+	/** The id the segments were answered with, the id `sendResp()` was given, or a generated UUID v7. */
 	readonly smsId: string;
 	submitTime: Date;
 	to: string;
 };
 
 export type SmsInput = {
+	/** The id base the segments were already answered with; absent leaves the answer to `sendResp()`. */
+	answeredAs?: string | undefined;
 	from: string;
 	message: string;
 	pduObjs: PduObject[];
@@ -59,25 +71,23 @@ export type SmsHandlers = {
 	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 };
 
-/** Each segment of a multipart message gets its own message_id, as a separate submit_sm must. */
-function segmentId(smsId: string, index: number, total: number): string {
-	return total === 1 ? smsId : `${smsId}-${String(index + 1)}`;
-}
-
 export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 	const first = input.pduObjs[0];
 	const registered = first?.params.registered_delivery;
 	const dataCoding = first?.params.data_coding;
-	const answered = { smsId: uuidv7() };
+	const answered = { smsId: input.answeredAs ?? uuidv7() };
 
 	const sms: Sms = {
+		answeredOnArrival: input.answeredAs !== undefined,
 		dlr: typeof registered === 'number' && registered !== 0,
 		flash: typeof dataCoding === 'number' && (dataCoding & 0xF0) === 0x10,
 		from: input.from,
 		message: input.message,
 		pduObjs: input.pduObjs,
 		sendDlr: status => sendDlr(sms, handlers.send, status),
-		sendResp: options => sendResp(sms, answered, options ?? {}, handlers),
+		sendResp: options => (input.answeredAs === undefined
+			? sendResp(sms, answered, options ?? {}, handlers)
+			: alreadyAnswered(options ?? {}, handlers)),
 		session: input.session,
 		get smsId(): string {
 			return answered.smsId;
@@ -87,6 +97,28 @@ export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 	};
 
 	return sms;
+}
+
+/** Every segment went out answered, so the call is what the shutdown waits for and nothing else. */
+function alreadyAnswered(
+	options: SendRespOptions,
+	handlers: Pick<SmsHandlers, 'onAnswered'>,
+): Promise<VoidResult> {
+	if (options.smsId !== undefined) {
+		return Promise.resolve({
+			err: new Error('This message\'s id was fixed when its first segment arrived; read sms.smsId'),
+		});
+	}
+
+	if (options.status !== undefined && options.status !== 'ESME_ROK') {
+		return Promise.resolve({
+			err: new Error('Its segments were answered as they arrived, so there is nothing left to refuse; refuse a segment from onRequest instead'),
+		});
+	}
+
+	handlers.onAnswered();
+
+	return Promise.resolve({});
 }
 
 async function sendResp(
@@ -115,7 +147,7 @@ async function sendResp(
 	const results = await Promise.all(sms.pduObjs.map((pduObj, index) => sms.session.sendReturn(
 		pduObj,
 		options.status ?? 'ESME_ROK',
-		{ message_id: segmentId(answered.smsId, index, total) },
+		respIdParams(pduObj.cmdName, segmentId(answered.smsId, index, total)),
 	)));
 
 	const failure = results.find(result => result.err);
