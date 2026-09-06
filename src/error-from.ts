@@ -8,3 +8,8 @@ export function errorFrom(reason: unknown): Error {
 		return new Error('A thrown value that cannot be converted to a string');
 	}
 }
+
+/** What a refusal names a rejected option back as: the value where printing one helps, else its type. */
+export function namedValue(value: unknown): string {
+	return typeof value === 'string' || typeof value === 'number' ? String(value) : typeof value;
+}

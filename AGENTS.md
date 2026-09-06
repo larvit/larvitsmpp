@@ -76,7 +76,7 @@ src/
 	concat.ts            How a PDU says it is a segment: its UDH, or the sar_* TLVs
 	dlr.ts               Delivery receipts: text and TLV parsing, receipt status codes
 	dlr-merger.ts        DlrMerger: per-segment receipts counted into one MessageDlr
-	error-from.ts        errorFrom(): whatever was thrown or rejected, as an Error
+	error-from.ts        An untyped value as error material: errorFrom() an Error, namedValue() a name
 	expiring-groups.ts   ExpiringGroups: the capped, expiring store both of those share
 	held-messages.ts     HeldMessages: capped, expiring messages the application has not answered
 	idle-waiters.ts      IdleWaiters: waiting for a count to fall to zero, and what is left of a budget
@@ -375,8 +375,8 @@ Grouped by what each one constrains.
   refused, by name, before a segment goes out. Rejected: a session-level default with a per-send
   override; an operator's requirement is a property of the link, but the library can verify nothing
   the caller's own options object does not, and shipping both buys a precedence rule to document and
-  test for that. `SMSC_DEFAULT` is named so pinning today's behaviour deliberately is sayable, and is
-  byte-identical to the absent option, which `test/messaging-mode.test.ts` holds to the octet.
+  test for that. `SMSC_DEFAULT` is named so pinning the default deliberately is sayable, and
+  `test/messaging-mode.test.ts` holds it and the absent option to the same octets.
   Untouched: the message-type bits `sendDlr()` writes, which have a decision of their own here.
 
 - **An inbound `data_sm` stands in for whichever of `submit_sm` and `deliver_sm` its direction makes

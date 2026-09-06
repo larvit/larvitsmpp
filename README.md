@@ -553,6 +553,11 @@ promises and the rough edges taken off.
   for a status code the library does not know, with the raw number in `pduObj.cmdStatusId`.
 - **`defs.filters` is gone.** It was declared on every command and TLV but never invoked, so it did
   nothing. SMPP time formatting, the one part worth keeping, is exported as `smppTime`.
+- **`DATAGRAM`, `FORWARD` and `STORE_FORWARD` moved from `consts.ESM_CLASS` to
+  `consts.MESSAGING_MODE`**, which also names the fourth mode, `SMSC_DEFAULT`. They are bits 1-0 of
+  `esm_class` rather than whole values of it. Read them from the new group, or let `sendSms()` write
+  one for you as `messagingMode`; a stale `consts.ESM_CLASS.STORE_FORWARD` now reads `undefined`,
+  which OR-s into an `esm_class` that silently carries no mode at all.
 - **The `error` event is `sessionError`** (and `serverError` on the server handle).
 - **`log`** takes any object with `debug`, `error`, `info`, `verbose` and `warn` methods instead of a
   `larvitutils` one, and is silent by default. See [Logging](#logging).

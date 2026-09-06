@@ -124,33 +124,7 @@ describe('sendSms() with no messagingMode', () => {
 });
 
 describe('sendSms() messagingMode', () => {
-	test('sends store and forward alone on a single-segment message', async t => {
-		const peer = await boundToPeer(t);
-		const sent = await peer.session.sendSms({
-			from,
-			message: 'Hello world',
-			messagingMode: 'STORE_FORWARD',
-			to,
-		});
-
-		assert.equal(sent.err, undefined);
-		assert.deepEqual(esmClassesOf(peer.octets), [0x03]);
-	});
-
-	test('sends store and forward beside the UDH indicator on every segment of a long message', async t => {
-		const peer = await boundToPeer(t);
-		const sent = await peer.session.sendSms({
-			from,
-			message: longMessage,
-			messagingMode: 'STORE_FORWARD',
-			to,
-		});
-
-		assert.equal(sent.err, undefined);
-		assert.deepEqual(esmClassesOf(peer.octets), [0x43, 0x43, 0x43]);
-	});
-
-	test('gives every named mode its own bits, and no mode clears the UDH indicator', async t => {
+	test('gives each mode its own bits — store and forward alone is 0x03, and 0x43 per segment', async t => {
 		const modes: MessagingMode[] = ['DATAGRAM', 'FORWARD', 'SMSC_DEFAULT', 'STORE_FORWARD'];
 
 		assert.deepEqual(modes, messagingModes, 'every mode the constants name is covered here');
@@ -166,7 +140,7 @@ describe('sendSms() messagingMode', () => {
 			assert.deepEqual(
 				esmClassesOf(peer.octets),
 				[bits, bits | 0x40, bits | 0x40, bits | 0x40],
-				messagingMode,
+				`${messagingMode} keeps the UDH indicator on every segment carrying one`,
 			);
 		}
 	});

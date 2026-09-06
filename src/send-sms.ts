@@ -8,6 +8,7 @@ import type { SmsIdNotation } from './sms-id.ts';
 import { UnansweredError } from './unanswered-error.ts';
 import { consts, isMessagingMode, messagingModes } from './defs/constants.ts';
 import { detect } from './defs/encodings.ts';
+import { namedValue } from './error-from.ts';
 import { normaliseSmsId } from './sms-id.ts';
 import { paramText } from './defs/types.ts';
 import { maxSegments, smppTime, splitMessage } from './message.ts';
@@ -105,14 +106,10 @@ export function submitSmParams(
 	return params;
 }
 
-/** The mode is named, never written as bits: a number could clear the UDH indicator a segment needs. */
 export function checkMessagingMode(mode: unknown): Error | undefined {
 	if (mode === undefined || isMessagingMode(mode)) return undefined;
 
-	// String() throws on a null-prototype object, and this value is whatever the caller passed.
-	const got = typeof mode === 'string' || typeof mode === 'number' ? String(mode) : typeof mode;
-
-	return new Error(`messagingMode must be ${messagingModes.join(', ')}, got ${got}`);
+	return new Error(`messagingMode must be ${messagingModes.join(', ')}, got ${namedValue(mode)}`);
 }
 
 /** Nothing goes on the wire until the whole message fits: a half-sent message bills twice. */
