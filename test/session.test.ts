@@ -4,8 +4,8 @@ import test, { describe } from 'node:test';
 import type { Dlr } from '../src/dlr.ts';
 import type { PduObject, PduObjectInput } from '../src/pdu.ts';
 import type { Sms } from '../src/sms.ts';
+import type { ServerOptions, SmppServer } from '../src/server.ts';
 import type { SmppLog } from '../src/log.ts';
-import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
 import type { VoidResult } from '../src/result.ts';
 import { DlrMerger } from '../src/dlr-merger.ts';
@@ -1971,6 +1971,10 @@ describe('the server\'s onRequest hook', () => {
 		peer.write(bindOf(0x34));
 
 		const accepted = await peer.next();
+
+		peer.write(bindOf(0x34, 2));
+
+		const rebound = await peer.next();
 		const wrong = rawPeer(t, smpp.port);
 
 		wrong.write({
@@ -1980,11 +1984,18 @@ describe('the server\'s onRequest hook', () => {
 		});
 
 		const refused = await wrong.next();
+		const early = rawPeer(t, smpp.port);
+
+		early.write({ cmdName: 'unbind', seqNr: 1 });
+
+		const unbound = await early.next();
 
 		assert.equal(accepted.cmdName, 'bind_transceiver_resp');
 		assert.equal(accepted.cmdStatus, 'ESME_ROK');
+		assert.equal(rebound.cmdStatus, 'ESME_RALYBND');
 		assert.equal(refused.cmdStatus, 'ESME_RBINDFAIL');
-		assert.deepEqual(seen, [], 'the hook is never consulted for a bind');
+		assert.equal(unbound.cmdName, 'unbind_resp');
+		assert.deepEqual(seen, [], 'a bind, and everything a peer sends before one, is never the hook\'s');
 	});
 
 	test('passes a request the hook declines through to the sms event', async t => {
@@ -2281,6 +2292,23 @@ describe('option validation', () => {
 		if (smpp) await smpp.close();
 
 		assert.ok(err instanceof Error);
+	});
+
+	test('refuses a hook that is not a function at startup, rather than once per PDU', async () => {
+		const badAuth: ServerOptions = { port: 0 };
+		const badHook: ServerOptions = { port: 0 };
+
+		Object.assign(badAuth, { authenticate: 'yes please' });
+		Object.assign(badHook, { onRequest: 'refuse them all' });
+
+		const authRefused = await server(badAuth);
+		const hookRefused = await server(badHook);
+
+		if (authRefused.server) await authRefused.server.close();
+		if (hookRefused.server) await hookRefused.server.close();
+
+		assert.match(authRefused.err?.message ?? '', /authenticate must be a function/);
+		assert.match(hookRefused.err?.message ?? '', /onRequest must be a function/);
 	});
 
 	test('returns an error rather than rejecting on an impossible port', async () => {
