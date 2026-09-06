@@ -245,19 +245,15 @@ export function objToPdu<C extends CommandName>(obj: PduObjectInput<C>): Result<
 	);
 }
 
-function parseTlvs(
-	pdu: Buffer,
-	start: number,
-	cmdLength: number,
-): Result<{ offset: number; tlvs: Record<string, Tlv> }> {
+function parseTlvs(pdu: Buffer, start: number): Result<{ offset: number; tlvs: Record<string, Tlv> }> {
 	const tlvs: Record<string, Tlv> = {};
 	let offset = start;
 
-	while (offset + 4 <= cmdLength) {
+	while (offset + 4 <= pdu.length) {
 		const tagId = pdu.readUInt16BE(offset);
 		const tagLength = pdu.readUInt16BE(offset + 2);
 
-		if (offset + 4 + tagLength > cmdLength) {
+		if (offset + 4 + tagLength > pdu.length) {
 			return { err: new Error(`TLV ${String(tagId)} runs past the end of the PDU`) };
 		}
 
@@ -308,23 +304,22 @@ function readParams(
 function readOptionalParams(
 	pdu: Buffer,
 	start: number,
-	cmdLength: number,
 	afterShortMessage: boolean,
 ): Result<{ tlvs: Record<string, Tlv> }> {
-	const plain = parseTlvs(pdu, start, cmdLength);
+	const plain = parseTlvs(pdu, start);
 
-	if (!plain.err && plain.offset === cmdLength) return { tlvs: plain.tlvs };
+	if (!plain.err && plain.offset === pdu.length) return { tlvs: plain.tlvs };
 
 	// Some peers append a NULL octet after short_message; that octet, and no other, is skipped.
 	if (afterShortMessage && pdu[start] === 0) {
-		const padded = parseTlvs(pdu, start + 1, cmdLength);
+		const padded = parseTlvs(pdu, start + 1);
 
-		if (!padded.err && padded.offset === cmdLength) return { tlvs: padded.tlvs };
+		if (!padded.err && padded.offset === pdu.length) return { tlvs: padded.tlvs };
 	}
 
 	return {
 		err: plain.err ?? new Error(
-			`${String(cmdLength - plain.offset)} octets are left over after the optional parameters`,
+			`${String(pdu.length - plain.offset)} octets are left over after the optional parameters`,
 		),
 	};
 }
@@ -360,7 +355,7 @@ function parsePdu(pdu: Buffer): Result<{ pduObj: PduObject }> {
 	const params = read.params;
 	const message = params.short_message;
 	const octets = Buffer.isBuffer(message) ? message : undefined;
-	const parsed = readOptionalParams(declared, read.offset, cmdLength, read.lastParam === 'short_message');
+	const parsed = readOptionalParams(declared, read.offset, read.lastParam === 'short_message');
 
 	if (parsed.err) return { err: new PduRefusedError(header, 'tlvs', parsed.err) };
 
