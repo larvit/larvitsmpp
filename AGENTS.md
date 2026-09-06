@@ -517,6 +517,28 @@ Grouped by what each one constrains.
   in hand. The answer goes out before the `sms` event either way, so a listener's own receipt can
   never precede the acceptance of the message it reports on.
 
+- **`server()` composes the application's `onRequest` after its own bind handling, and offers it
+  every request that handling did not answer.** Maintainer's call, 2026-09-06, from a product review
+  of the multipart change: `server()` filled the session's only `onRequest` slot, so the escape hatch
+  the error above names was reachable only by hand-wiring a `Session` over a raw socket, giving up
+  bind acceptance, `authenticate`, the session set and the drain `close()` runs over it — which is
+  what goal 6 means by beating "the application can do this itself". What the library verifies is the
+  ordering rather than the hook's honesty about answering: a bind, and everything a peer sends before
+  one, is answered before the hook is consulted, so no hook can intercept a bind or the
+  authentication behind it however it is written. One `OnRequest` type on both option bags, because a
+  second contract under one name is two spellings of one goal; widened to accept a plain boolean, as
+  `authenticate` already is, so an observing hook need not be `async`. A hook that throws or rejects
+  reaches `sessionError` and the request falls through to the built-in handling — the answer the peer
+  would have had with no hook at all — where `authenticate` failing has no such fallback, since
+  accepting the bind would be the bypass. `sessionError` rather than `serverError` because the
+  failure belongs to one session's request, and that channel already carries every failure of one.
+  Nothing is held for a request the hook answered: `HeldMessages` is opened by the `sms` event the
+  hook skipped, so the drain waits on none of it. Rejected: consulting the hook first, which puts
+  bind and authentication inside the application's reach for nothing. Rejected: a narrower hook
+  returning a status for the library to write, which makes the answer verifiable but pays a second
+  contract under a second name for it, and leaves that error naming something only half the surface
+  can do.
+
 - **The drain waits on the messages the application holds, and `sendResp()` is what says it is done
   with one.** Maintainer's call, 2026-09-01: waiting on the send window alone tore a server session
   down while the application was still answering a `submit_sm`, so the peer timed out and re-sent —
