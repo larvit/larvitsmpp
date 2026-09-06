@@ -10,12 +10,10 @@ import type { SmsIdFormat } from './sms-id.ts';
 import { HeldMessages } from './held-messages.ts';
 import { Reassembler, decodeSegments } from './reassembly.ts';
 import { bindCommands, defaults, standsInFor } from './session-options.ts';
-import { concatInfo } from './udh.ts';
-import { hasUdh } from './defs/constants.ts';
+import { concatOf } from './concat.ts';
 import { createSms } from './sms.ts';
 import { dlrFromPdu } from './dlr.ts';
-import { messageOctets } from './message-body.ts';
-import { paramNumber, paramText } from './defs/types.ts';
+import { paramText } from './defs/types.ts';
 import { respIdParams, segmentId } from './sms-id.ts';
 
 /** SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another. */
@@ -197,9 +195,7 @@ export class IncomingRequests {
 	 * one request at a time never sends the second segment until the first has been answered.
 	 */
 	private async onMessage(pduObj: PduObject): Promise<void> {
-		const message = messageOctets(pduObj);
-		const carriesUdh = hasUdh(paramNumber(pduObj.params.esm_class, 0));
-		const concat = carriesUdh && message ? concatInfo(message) : undefined;
+		const concat = concatOf(pduObj);
 
 		if (!concat) {
 			this.emitSms([pduObj]);

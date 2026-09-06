@@ -1859,7 +1859,7 @@ describe('reassembly bounds', () => {
 		Buffer.concat([Buffer.from([0x05, 0x00, 0x03, 6, 2, 1]), Buffer.from('fragment')]).copy(framed);
 		first.params.short_message = framed.subarray(0, 14);
 
-		const held = reassembler.collect(first, { part: 1, reference: 6, total: 2 });
+		const held = collectPdu(reassembler, first);
 
 		assert.ok(held.kept);
 		assert.equal(held.whole, undefined);

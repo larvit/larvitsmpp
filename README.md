@@ -159,6 +159,12 @@ client reads one as a delivery, so a message on it arrives as `sms` and a receip
 `server()` session reads one as the submission it is and always hands it to you as `sms`. Either
 way it is answered `data_sm_resp`.
 
+Nor does the way a peer ties a long message's segments together. A user data header at the start of
+the body and the `sar_msg_ref_num`, `sar_total_segments` and `sar_segment_seqnum` TLVs are the two
+spellings of the same thing, and either reassembles into one `sms`. A segment carrying both is read
+from its header, and the two reference numbers are counters of their own — the same number in each
+is two different messages.
+
 Matching a receipt to a send means comparing `dlr.smsId` against the `smsIds` that `sendSms()`
 returned. Some SMSCs write the two in different notations — a hex `message_id` on the
 `submit_sm_resp` and a decimal `id:` in the receipt, or one of them zero-padded — and the comparison
@@ -228,8 +234,8 @@ await smpp.close();      // stop listening, then drain and close every live sess
 
 A message that arrived in several segments was already answered when you see it: each segment is
 answered as it lands, because a relaying SMSC will not send the next one until the last is answered.
-That answer is `ESME_ROK` unless the segment's header names no message this session can join, which
-refuses it, or the reassembly buffer is full, which asks the SMSC to keep it and try again.
+That answer is `ESME_ROK` unless the segment numbers itself into no message this session can join,
+which refuses it, or the reassembly buffer is full, which asks the SMSC to keep it and try again.
 `sms.answeredOnArrival` says whether the message you are holding was answered that way — a segment count cannot, since a peer
 may number a concatenated message one part of one. The id was fixed with the first segment, so
 `sendResp()` there only says you are done with the message, and returns an `err` for an `smsId` or a
@@ -576,6 +582,9 @@ have worked around any of these, remove the workaround:
   `data_sm` was answered `ESME_RINVCMDID`, so a receipt thrown on one was lost with nothing said.
   Both reach the application now — a receipt as `dlr`, answered for you, and a message as `sms` for
   you to answer like any other.
+- A long message whose segments were tied together by the `sar_msg_ref_num`, `sar_total_segments`
+  and `sar_segment_seqnum` TLVs rather than by a user data header was never reassembled, so each
+  segment arrived as its own message. Both spellings reassemble now.
 - Short or malformed PDUs threw out of the codec instead of being reported as a parse failure.
 - Binds now declare `interface_version` 0x34. 0.4.0 declared 0x00, which tells the SMSC the ESME
   speaks SMPP 3.3 or earlier — and a spec-following SMSC then withholds every optional parameter,

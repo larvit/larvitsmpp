@@ -1,4 +1,4 @@
-import type { ConcatInfo } from './udh.ts';
+import type { Concat } from './concat.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject } from './pdu.ts';
 import type { SmppLog } from './log.ts';
@@ -96,11 +96,11 @@ function octetsOf(pduObj: PduObject): number {
 	return octets;
 }
 
-function groupKey(pduObj: PduObject, reference: number): string {
+function groupKey(pduObj: PduObject, group: string): string {
 	return [
 		paramText(pduObj.params.source_addr),
 		paramText(pduObj.params.destination_addr),
-		String(reference),
+		group,
 	].join('_');
 }
 
@@ -152,10 +152,10 @@ export class Reassembler {
 	}
 
 	/** The group the segment joined, and always an answer for it: an unanswered one stalls a peer. */
-	collect(pduObj: PduObject, concat: ConcatInfo): Collected {
+	collect(pduObj: PduObject, concat: Concat): Collected {
 		this.sweep();
 
-		const key = groupKey(pduObj, concat.reference);
+		const key = groupKey(pduObj, concat.group);
 		const existing = this.groups.get(key);
 
 		if (!this.placeable(concat, existing)) return { kept: false, refusal: 'unplaceable' };
@@ -204,10 +204,10 @@ export class Reassembler {
 		}
 	}
 
-	/** Whether a segment's UDH can join a group at all: its own numbering, and the group's total. */
-	private placeable(concat: ConcatInfo, existing: Group | undefined): boolean {
+	/** Whether a segment can join a group at all: its own numbering, and the group's total. */
+	private placeable(concat: Concat, existing: Group | undefined): boolean {
 		if (concat.part < 1 || concat.total < 1 || concat.part > concat.total) {
-			this.log.warn('reassembler - dropping a segment the UDH numbers impossibly', {
+			this.log.warn('reassembler - dropping an impossibly numbered segment', {
 				part: concat.part,
 				total: concat.total,
 			});
@@ -217,7 +217,7 @@ export class Reassembler {
 
 		// Parts 1/2 and 2/3 would otherwise complete the stored two-part group as a truncated message.
 		if (existing && existing.total !== concat.total) {
-			this.log.warn('reassembler - dropping a segment with an inconsistent UDH total', {
+			this.log.warn('reassembler - dropping a segment with an inconsistent total', {
 				existingTotal: existing.total,
 				part: concat.part,
 				total: concat.total,
