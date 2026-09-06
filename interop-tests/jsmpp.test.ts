@@ -4,6 +4,7 @@ import test, { after, describe } from 'node:test';
 import type { Session } from '../src/session.ts';
 import type { Sms } from '../src/sms.ts';
 import { PduRefusedError } from '../src/index.ts';
+import { bareTlvHeader, pduBytes } from '../test/raw-pdus.ts';
 import { server } from '../src/server.ts';
 
 const JSMPP_HOST = process.env.JSMPP_HOST ?? 'jsmpp:8080';
@@ -269,43 +270,28 @@ describe('S3 - known-but-unhandled and malformed commands (targets 1, 6)', () =>
 	test('a deliver_sm ending in a bare TLV header gets ESME_RINVTLVSTREAM, and reaches no listener', async () => {
 		await waitForSessions(1);
 
-		function cstring(value: string): Buffer {
-			return Buffer.concat([Buffer.from(value, 'latin1'), Buffer.from([0])]);
-		}
-
-		const msg = Buffer.from('truncated tlv probe silent', 'latin1');
-		const body = Buffer.concat([
-			cstring(''), Buffer.from([0, 0]), cstring('raw2-from'),
-			Buffer.from([0, 0]), cstring('raw2-to'),
-			Buffer.from([0, 0, 0]), cstring(''), cstring(''),
-			Buffer.from([0, 0, 0, 0, msg.length]), msg,
-			// A bare 4-octet TLV header (tag 0x001D, declared length 200) with zero value octets.
-			Buffer.from([0x00, 0x1D, 0x00, 0xC8]),
-		]);
-		const header = Buffer.alloc(16);
-
-		header.writeUInt32BE(16 + body.length, 0);
-		header.writeUInt32BE(0x00000005, 4);
-		header.writeUInt32BE(0, 8);
-		header.writeUInt32BE(777, 12);
-
 		const sock = net.connect(SMPP_PORT, '127.0.0.1');
 
 		await new Promise<void>(resolve => { sock.once('connect', () => { resolve(); }); });
 
-		const bindBody = Buffer.concat([cstring('rawverify'), cstring('pw'), cstring(''), Buffer.from([0x34, 0, 0]), cstring('')]);
-		const bindHeader = Buffer.alloc(16);
-
-		bindHeader.writeUInt32BE(16 + bindBody.length, 0);
-		bindHeader.writeUInt32BE(0x00000009, 4);
-		bindHeader.writeUInt32BE(0, 8);
-		bindHeader.writeUInt32BE(1, 12);
-		sock.write(Buffer.concat([bindHeader, bindBody]));
+		sock.write(pduBytes({
+			cmdName: 'bind_transceiver',
+			params: { interface_version: 0x34, password: 'pw', system_id: 'rawverify' },
+			seqNr: 1,
+		}));
 		await new Promise<void>(resolve => { sock.once('data', () => { resolve(); }); });
 
 		const responsePromise = new Promise<Buffer>(resolve => { sock.once('data', data => { resolve(data); }); });
 
-		sock.write(Buffer.concat([header, body]));
+		sock.write(bareTlvHeader({
+			cmdName: 'deliver_sm',
+			params: {
+				destination_addr: 'raw2-to',
+				short_message: 'truncated tlv probe silent',
+				source_addr: 'raw2-from',
+			},
+			seqNr: 777,
+		}));
 
 		const response = await responsePromise;
 

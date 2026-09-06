@@ -150,9 +150,10 @@ target 1 otherwise closed, silently dropping a TLV the peer meant to send instea
 counting) the one malformed PDU.
 
 Fixed in [#87](https://github.com/larvit/larvitsmpp/pull/87): the optional parameters now have to end
-on `command_length`, so this PDU is refused `ESME_RINVTLVSTREAM` like the sibling case, and the
-reproducer above is asserted by `jsmpp.test.ts`, "a deliver_sm ending in a bare TLV header gets
-ESME_RINVTLVSTREAM, and reaches no listener".
+on `command_length`, so this PDU is refused `ESME_RINVTLVSTREAM` like the sibling case. The hex above
+is asserted octet for octet by `test/pdu.test.ts`, "refuses a bare TLV header the same way it refuses
+a truncated value"; the same shape over a socket is `jsmpp.test.ts`, "a deliver_sm ending in a bare
+TLV header gets ESME_RINVTLVSTREAM, and reaches no listener".
 
 ## Peer quirks
 

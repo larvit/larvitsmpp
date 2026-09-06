@@ -281,8 +281,9 @@ function parseTlvs(
 function readParams(
 	cmdName: CommandName,
 	pdu: Buffer,
-): Result<{ offset: number; params: Record<string, ParamValue> }> {
+): Result<{ lastParam: string | undefined; offset: number; params: Record<string, ParamValue> }> {
 	const params: Record<string, ParamValue> = {};
+	let lastParam: string | undefined;
 	let offset = 16;
 
 	for (const [name, type] of Object.entries(cmds[cmdName]?.params ?? {})) {
@@ -292,11 +293,12 @@ function readParams(
 			return { err: new Error(`Parameter "${name}" of "${cmdName}": ${read.err.message}`) };
 		}
 
+		lastParam = name;
 		params[name] = read.value;
 		offset += read.bytesRead;
 	}
 
-	return { offset, params };
+	return { lastParam, offset, params };
 }
 
 /**
@@ -351,7 +353,7 @@ function parsePdu(pdu: Buffer): Result<{ pduObj: PduObject }> {
 	const declared = pdu.subarray(0, cmdLength);
 	// SMPP 3.4 4.4.2 and friends: a response with a non-zero status carries no body at all.
 	const read = cmdStatusId !== 0 && cmdLength === 16
-		? { offset: 16, params: {} }
+		? { lastParam: undefined, offset: 16, params: {} }
 		: readParams(cmdName, declared);
 
 	if (read.err) return { err: new PduRefusedError(header, 'body', read.err) };
@@ -359,7 +361,7 @@ function parsePdu(pdu: Buffer): Result<{ pduObj: PduObject }> {
 	const params = read.params;
 	const message = params.short_message;
 	const octets = Buffer.isBuffer(message) ? message : undefined;
-	const parsed = readOptionalParams(declared, read.offset, cmdLength, message !== undefined);
+	const parsed = readOptionalParams(declared, read.offset, cmdLength, read.lastParam === 'short_message');
 
 	if (parsed.err) return { err: new PduRefusedError(header, 'tlvs', parsed.err) };
 

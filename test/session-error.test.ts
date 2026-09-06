@@ -3,8 +3,8 @@ import test, { describe } from 'node:test';
 import type { PduHeader, Session } from '../src/index.ts';
 import type { TestContext } from 'node:test';
 import { PduRefusedError, client, server } from '../src/index.ts';
-import { closeAfter } from './teardown.ts';
 import { bareTlvHeader, shortened, truncatedTlv, withUnknownCmdId } from './raw-pdus.ts';
+import { closeAfter } from './teardown.ts';
 
 const receipt = {
 	destination_addr: '46709771337',
