@@ -699,7 +699,9 @@ describe('receiving', () => {
 
 		assert.ok(answered.pduObj);
 		assert.equal(answered.pduObj.cmdName, 'deliver_sm_resp');
-		assert.equal(answered.pduObj.params.message_id, 'inbound-id');
+		// SMPP 3.4 4.6.2 makes the field unused: Jasmin FINs the link over a deliver_sm_resp carrying one.
+		assert.equal(paramText(answered.pduObj.params.message_id), '');
+		assert.equal(sms.smsId, 'inbound-id', 'the id the application chose is still its own handle');
 	});
 
 	test('hands a client a report as a dlr rather than as an sms', async t => {
@@ -806,14 +808,10 @@ describe('receiving', () => {
 
 		assert.deepEqual(await sms.sendResp(), {});
 
-		const ids: string[] = [];
-
 		for (const answered of await delivered) {
 			assert.ok(answered.pduObj);
-			ids.push(paramText(answered.pduObj.params.message_id));
+			assert.equal(paramText(answered.pduObj.params.message_id), '');
 		}
-
-		assert.deepEqual(ids, [1, 2].map(part => `${sms.smsId}-${String(part)}`));
 	});
 });
 
