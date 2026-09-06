@@ -194,7 +194,7 @@ document, library changes, and the AGENTS.md decision record each one needs.
 | 0 | done | [01-smscsim.md](findings/01-smscsim.md) |
 | 1 | done | [01-smscsim.md](findings/01-smscsim.md) |
 | 2 | done | [02-smppsim.md](findings/02-smppsim.md) |
-| 3 | not started | — |
+| 3 | done | [03-jasmin.md](findings/03-jasmin.md) |
 | 4 | done | [04-kannel.md](findings/04-kannel.md) |
 | 5–10 | not started | — |
 
