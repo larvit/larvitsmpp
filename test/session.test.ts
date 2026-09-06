@@ -514,6 +514,58 @@ describe('bind direction', () => {
 		assert.ok(report.err instanceof Error);
 		assert.match(report.err.message, /transmitter-bound/);
 	});
+
+	// data_sm carries a message either way, so which end this is decides which way it may travel.
+	test('refuses a data_sm sent to a peer that bound as a transmitter', async t => {
+		const smpp = await startServer(t);
+		const bound = once<Session>(resolve => { smpp.on('session', resolve); });
+		const { session } = await connect(t, smpp, { bindType: 'transmitter' });
+
+		assert.ok(session);
+
+		const peer = await bound;
+		const sent = await peer.send({
+			cmdName: 'data_sm',
+			params: { destination_addr: '46709771337', source_addr: '46701113311' },
+			tlvs: { message_payload: { tagValue: Buffer.from('nope') } },
+		});
+
+		assert.ok(sent.pduObj);
+		assert.equal(sent.pduObj.cmdName, 'data_sm_resp');
+		assert.equal(sent.pduObj.cmdStatus, 'ESME_RINVBNDSTS');
+	});
+
+	test('refuses a data_sm from a receiver-bound peer, and carries one from a transmitter', async t => {
+		const smpp = await startServer(t);
+
+		smpp.on('session', peer => peer.on('sms', sms => void sms.sendResp()));
+
+		const receiving = await connect(t, smpp, { bindType: 'receiver' });
+
+		assert.ok(receiving.session);
+
+		const refused = await receiving.session.send({
+			cmdName: 'data_sm',
+			params: { destination_addr: '46709771337', source_addr: '46701113311' },
+			tlvs: { message_payload: { tagValue: Buffer.from('nope') } },
+		});
+
+		assert.ok(refused.pduObj);
+		assert.equal(refused.pduObj.cmdStatus, 'ESME_RINVBNDSTS');
+
+		const sending = await connect(t, smpp, { bindType: 'transmitter' });
+
+		assert.ok(sending.session);
+
+		const carried = await sending.session.send({
+			cmdName: 'data_sm',
+			params: { destination_addr: '46709771337', source_addr: '46701113311' },
+			tlvs: { message_payload: { tagValue: Buffer.from('a submission the bind carries') } },
+		});
+
+		assert.ok(carried.pduObj);
+		assert.equal(carried.pduObj.cmdStatus, 'ESME_ROK');
+	});
 });
 
 describe('sending', () => {
@@ -705,6 +757,136 @@ describe('receiving', () => {
 			'SMPP 3.4 4.6.2 leaves deliver_sm_resp\'s message_id unused',
 		);
 		assert.equal(sms.smsId, 'inbound-id', 'the id the application chose is still its own handle');
+	});
+
+	// SMPP 3.4 5.3.2.32: up to 64 KB of body in a TLV, with sm_length 0 and short_message empty.
+	test('reads an inbound message the peer carried in message_payload', async t => {
+		const { peer, session } = await inbound(t);
+		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
+		const text = 'the whole body, carried in the TLV';
+		const delivered = peer.send({
+			cmdName: 'deliver_sm',
+			params: {
+				destination_addr: '46709771337',
+				short_message: Buffer.alloc(0),
+				source_addr: '46701113311',
+			},
+			tlvs: { message_payload: { tagValue: Buffer.from(text, 'latin1') } },
+		});
+		const sms = await raceWithin(2000, incoming);
+
+		assert.ok(sms, 'a body the peer put in message_payload is still a message');
+		assert.equal(sms.message, text);
+		assert.equal(sms.from, '46701113311');
+		assert.equal(sms.to, '46709771337');
+
+		await sms.sendResp();
+
+		const answered = await delivered;
+
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
+	});
+
+	test('hands a client a data_sm carrying a message as an sms, answered data_sm_resp', async t => {
+		const { peer, session } = await inbound(t);
+		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
+		const smsId = '0199e0f1-6c31-7a44-9d02-4b7e51c3a806';
+		const delivered = peer.send({
+			cmdName: 'data_sm',
+			params: { destination_addr: '46709771337', source_addr: '46701113311' },
+			tlvs: { message_payload: { tagValue: Buffer.from('a message on data_sm', 'latin1') } },
+		});
+		const sms = await raceWithin(2000, incoming);
+
+		assert.ok(sms, 'data_sm is a peer of deliver_sm, not a command to refuse');
+		assert.equal(sms.message, 'a message on data_sm');
+		assert.equal(sms.from, '46701113311');
+
+		await sms.sendResp({ smsId });
+
+		const answered = await delivered;
+
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdName, 'data_sm_resp');
+		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
+		// SMPP 3.4 4.7.2 gives data_sm_resp a message_id, where 4.6.2 leaves deliver_sm_resp's unused.
+		assert.equal(paramText(answered.pduObj.params.message_id), smsId);
+	});
+
+	test('hands a client a receipt carried on data_sm as a dlr', async t => {
+		const { peer, session } = await inbound(t);
+		const reported = once<Dlr>(resolve => { session.on('dlr', resolve); });
+		const smsId = '0199e0f1-b8a2-7f19-8c63-2d5041fb9e77';
+		let messages = 0;
+
+		session.on('sms', () => { messages++; });
+
+		const delivered = peer.send({
+			cmdName: 'data_sm',
+			params: {
+				destination_addr: '46709771337',
+				esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+				source_addr: '46701113311',
+			},
+			tlvs: {
+				message_payload: {
+					tagValue: Buffer.from(`id:${smsId} sub:001 dlvrd:001 stat:DELIVRD err:000 text:`, 'latin1'),
+				},
+			},
+		});
+		const dlr = await raceWithin(2000, reported);
+
+		assert.ok(dlr, 'a receipt thrown as data_sm is still a receipt');
+		assert.equal(dlr.smsId, smsId);
+		assert.equal(dlr.statusMsg, 'DELIVERED');
+		assert.equal(messages, 0);
+
+		const answered = await delivered;
+
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdName, 'data_sm_resp');
+		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
+	});
+
+	test('reassembles a concatenated message whose segments arrived in message_payload', async t => {
+		const { peer, session } = await inbound(t);
+		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
+		const text = 'A body in the TLV is still numbered by its UDH. '.repeat(6);
+		const segments = splitMessage(text, { reference: 0x3B });
+
+		assert.ok(segments.length > 1, 'the fixture must need more than one segment');
+
+		const answers: PduObject[] = [];
+
+		for (const segment of segments) {
+			const sent = await peer.send({
+				cmdName: 'deliver_sm',
+				params: {
+					destination_addr: '46709771337',
+					esm_class: consts.ESM_CLASS.UDH_INDICATOR,
+					short_message: Buffer.alloc(0),
+					source_addr: '46701113311',
+				},
+				tlvs: { message_payload: { tagValue: segment } },
+			});
+
+			assert.ok(sent.pduObj);
+			answers.push(sent.pduObj);
+		}
+
+		const sms = await raceWithin(2000, incoming);
+
+		assert.ok(sms, 'the segments join into one message wherever their bodies were carried');
+		assert.equal(sms.message, text);
+		assert.equal(sms.answeredOnArrival, true);
+		assert.deepEqual(answers.map(answer => answer.cmdStatus), answers.map(() => 'ESME_ROK'));
+		assert.deepEqual(
+			answers.map(answer => paramText(answer.params.message_id)),
+			answers.map(() => ''),
+			'SMPP 3.4 4.6.2 leaves deliver_sm_resp\'s message_id unused, segment by segment too',
+		);
+		assert.deepEqual(await sms.sendResp(), {});
 	});
 
 	test('hands a client a report as a dlr rather than as an sms', async t => {

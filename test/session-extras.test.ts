@@ -1449,6 +1449,21 @@ describe('reassembly bounds', () => {
 		};
 	}
 
+	/** The same segment with its body where SMPP 3.4 5.3.2.32 allows it instead. */
+	function payloadSegment(reference: number, part: number, total: number): PduObject {
+		const carried = segment(reference, part, total);
+		const body = carried.shortMessageOctets;
+
+		assert.ok(body);
+
+		return {
+			...carried,
+			params: { ...carried.params, short_message: Buffer.alloc(0) },
+			shortMessageOctets: Buffer.alloc(0),
+			tlvs: { message_payload: { tagId: 0x0424, tagName: 'message_payload', tagValue: body } },
+		};
+	}
+
 	function collect(
 		reassembler: Reassembler,
 		reference: number,
@@ -1502,6 +1517,25 @@ describe('reassembly bounds', () => {
 		assert.equal(refused.kept, false);
 		assert.equal(reassembler.size, 0);
 		assert.deepEqual(lost, [], 'the peer holds the only segment there was, so nothing was lost');
+	});
+
+	// The two addresses are 22 octets, so only the 14 the TLV carries can overrun a cap of 30.
+	test('counts a body carried in message_payload against the octet cap', () => {
+		function collectPayload(maxOctets: number): Collected {
+			const reassembler = new Reassembler({
+				log: silentLog,
+				max: 10,
+				maxOctets,
+				now: () => 0,
+				onLost: () => undefined,
+				timeout: 60_000,
+			});
+
+			return reassembler.collect(payloadSegment(9, 1, 2), { part: 1, reference: 9, total: 2 });
+		}
+
+		assert.equal(collectPayload(30).kept, false, 'a TLV body the cap cannot hold is refused, not dropped later');
+		assert.equal(collectPayload(40).kept, true);
 	});
 
 	// The segments before it were answered ESME_ROK, so dropping those is not the same as refusing one.
@@ -1726,8 +1760,10 @@ describe('the status a refused segment is answered with', () => {
 	// SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another.
 	test('names one the command the segment arrived on defines', () => {
 		assert.equal(refusedSegmentStatus('submit_sm', 'full'), 'ESME_RMSGQFUL');
+		assert.equal(refusedSegmentStatus('data_sm', 'full'), 'ESME_RX_T_APPN');
 		assert.equal(refusedSegmentStatus('deliver_sm', 'full'), 'ESME_RX_T_APPN');
 		assert.equal(refusedSegmentStatus('submit_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
+		assert.equal(refusedSegmentStatus('data_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
 		assert.equal(refusedSegmentStatus('deliver_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
 	});
 });

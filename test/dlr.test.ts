@@ -40,6 +40,32 @@ function deliverSm(
 	return pduObj;
 }
 
+/** SMPP 3.4 5.3.2.32 puts the body in a TLV instead, which is the only place a data_sm has for one. */
+function payloadPdu(
+	cmdName: 'data_sm' | 'deliver_sm',
+	body: string,
+	shortMessage = Buffer.alloc(0),
+): PduObject {
+	const params = {
+		data_coding: 0,
+		destination_addr: '46701113311',
+		esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+		source_addr: '46709771337',
+	};
+	const tlvs = { message_payload: { tagValue: Buffer.from(body, 'latin1') } };
+	const built = cmdName === 'deliver_sm'
+		? objToPdu({ cmdName, params: { ...params, short_message: shortMessage }, seqNr: 1, tlvs })
+		: objToPdu({ cmdName, params, seqNr: 1, tlvs });
+
+	assert.ok(built.buffer);
+
+	const { pduObj } = pduToObj(built.buffer);
+
+	assert.ok(pduObj);
+
+	return pduObj;
+}
+
 describe('parseReceipt()', () => {
 	test('pulls every standard field out of the receipt body', () => {
 		const receipt = parseReceipt(receiptText);
@@ -297,6 +323,25 @@ describe('dlrFromPdu()', () => {
 		assert.ok(scheduled);
 		assert.equal(scheduled.statusMsg, 'SCHEDULED');
 		assert.equal(scheduled.intermediate, true, 'an ordinary receipt reporting a transient state is not final either');
+	});
+
+	test('reads a receipt the peer carried in message_payload, on deliver_sm and on data_sm', () => {
+		for (const cmdName of ['data_sm', 'deliver_sm'] as const) {
+			const dlr = dlrFromPdu(payloadPdu(cmdName, textReceipt));
+
+			assert.ok(dlr, `expected a ${cmdName} carrying its receipt in message_payload to read as one`);
+			assert.equal(dlr.smsId, textReceiptId);
+			assert.equal(dlr.statusMsg, 'DELIVERED');
+			assert.equal(dlr.receipt?.stat, 'DELIVRD');
+		}
+	});
+
+	// The spec has the peer leave sm_length 0 when it uses the TLV, so a filled one is what it meant.
+	test('reads short_message where the peer filled both fields', () => {
+		const dlr = dlrFromPdu(payloadPdu('deliver_sm', textReceipt, Buffer.from(receiptText, 'latin1')));
+
+		assert.ok(dlr);
+		assert.equal(dlr.smsId, '0195f0c7');
 	});
 
 	test('exposes the raw receipt alongside the resolved fields', () => {
