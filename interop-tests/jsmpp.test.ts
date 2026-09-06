@@ -173,7 +173,7 @@ describe('S2 - long messages in every spelling (targets 2, 3, 5)', () => {
 		assert.equal(sms.answeredOnArrival, false);
 	});
 
-	test('sar_*: defect (target 3) - each segment reaches the application as its own sms, not one', async () => {
+	test('sar_* (target 3): one reassembled sms, each segment answered <base>-<n>', async () => {
 		await waitForSessions(1);
 
 		const text = 'sar-'.padEnd(200, 'c');
@@ -184,17 +184,13 @@ describe('S2 - long messages in every spelling (targets 2, 3, 5)', () => {
 
 		assert.equal(segments.length, 2);
 
-		// Neither segment ever arrives as the whole 200-char text: each is its own ordinary sms
-		// carrying only its own ~130-char slice, with its own unrelated (non-<base>-<n>) message id.
-		const first = await waitForSms(text.slice(0, 130), 15_000);
-		const second = await waitForSms(text.slice(130), 15_000);
+		const sms = await waitForSms(text, 15_000);
 
-		assert.equal(first.answeredOnArrival, false);
-		assert.equal(second.answeredOnArrival, false);
-		assert.notEqual(first.smsId, second.smsId);
-		assert.equal(allSms.some(entry => entry.sms.message === text), false);
-		void first;
-		void second;
+		assert.equal(sms.answeredOnArrival, true);
+		assert.equal(segments[0]?.messageId, `${sms.smsId}-1`);
+		assert.equal(segments[1]?.messageId, `${sms.smsId}-2`);
+		// Neither ~130-char slice ever reached the application on its own.
+		assert.equal(allSms.filter(entry => text.includes(entry.sms.message)).length, 1);
 	});
 });
 

@@ -27,6 +27,7 @@ import { objToPdu } from '../src/pdu.ts';
 import { checkSessionOptions, standsInFor } from '../src/session-options.ts';
 import { client } from '../src/client.ts';
 import { closeAfter, closeListenerAfter } from './teardown.ts';
+import { concatOf } from '../src/concat.ts';
 import { consts } from '../src/defs/constants.ts';
 import { errors } from '../src/defs/errors.ts';
 import { paramNumber, paramText } from '../src/defs/types.ts';
@@ -1470,52 +1471,137 @@ describe('sendDlr()', () => {
 	});
 });
 
-describe('reassembly bounds', () => {
-	function segment(reference: number, part: number, total: number): PduObject {
-		const udh = Buffer.from([0x05, 0x00, 0x03, reference, total, part]);
-		const body = Buffer.concat([udh, Buffer.from('fragment')]);
+function segment(reference: number, part: number, total: number): PduObject {
+	const udh = Buffer.from([0x05, 0x00, 0x03, reference, total, part]);
+	const body = Buffer.concat([udh, Buffer.from('fragment')]);
 
-		return {
-			cmdId: 0x00000004,
-			cmdLength: 0,
-			cmdName: 'submit_sm',
-			cmdStatus: 'ESME_ROK',
-			cmdStatusId: 0,
-			params: {
-				data_coding: 0,
-				destination_addr: '46709771337',
-				esm_class: 0x40,
-				short_message: body,
-				source_addr: '46701113311',
-			},
-			seqNr: part,
-			shortMessageOctets: body,
-			tlvs: {},
-		};
-	}
+	return {
+		cmdId: 0x00000004,
+		cmdLength: 0,
+		cmdName: 'submit_sm',
+		cmdStatus: 'ESME_ROK',
+		cmdStatusId: 0,
+		params: {
+			data_coding: 0,
+			destination_addr: '46709771337',
+			esm_class: 0x40,
+			short_message: body,
+			source_addr: '46701113311',
+		},
+		seqNr: part,
+		shortMessageOctets: body,
+		tlvs: {},
+	};
+}
 
-	/** The same segment with its body where SMPP 3.4 5.3.2.32 allows it instead. */
-	function payloadSegment(reference: number, part: number, total: number): PduObject {
-		const carried = segment(reference, part, total);
-		const body = carried.shortMessageOctets;
+/** The same segment with its body where SMPP 3.4 5.3.2.32 allows it instead. */
+function payloadSegment(reference: number, part: number, total: number): PduObject {
+	const carried = segment(reference, part, total);
+	const body = carried.shortMessageOctets;
 
-		assert.ok(body);
+	assert.ok(body);
 
-		return {
+	return {
+		...carried,
+		params: { ...carried.params, short_message: Buffer.alloc(0) },
+		shortMessageOctets: Buffer.alloc(0),
+		tlvs: { message_payload: { tagId: 0x0424, tagName: 'message_payload', tagValue: body } },
+	};
+}
+
+function sarTlvs(reference: number, part: number, total: number): PduObject['tlvs'] {
+	return {
+		sar_msg_ref_num: { tagId: 0x020c, tagName: 'sar_msg_ref_num', tagValue: reference },
+		sar_segment_seqnum: { tagId: 0x020f, tagName: 'sar_segment_seqnum', tagValue: part },
+		sar_total_segments: { tagId: 0x020e, tagName: 'sar_total_segments', tagValue: total },
+	};
+}
+
+/** The same segment numbered by the sar_* TLVs, which carry no UDH and set no esm_class bit. */
+function sarSegment(reference: number, part: number, total: number): PduObject {
+	const body = Buffer.from('fragment');
+	const carried = segment(reference, part, total);
+
+	return {
+		...carried,
+		params: { ...carried.params, esm_class: 0, short_message: body },
+		shortMessageOctets: body,
+		tlvs: sarTlvs(reference, part, total),
+	};
+}
+
+/** Reads the concatenation the way a session does, so no test can number a segment by hand. */
+function collectPdu(reassembler: Reassembler, pduObj: PduObject): Collected {
+	const concat = concatOf(pduObj);
+
+	assert.ok(concat, 'the fixture must number itself as a segment');
+
+	return reassembler.collect(pduObj, concat);
+}
+
+describe('where a segment says it is concatenated', () => {
+	// The UDH reference is 8 bits and sar_msg_ref_num 16, so one number is two unrelated counters.
+	test('names the spelling a segment was numbered by, alongside the reference', () => {
+		assert.deepEqual(concatOf(sarSegment(5, 2, 3)), { part: 2, reference: 5, spelling: 'sar', total: 3 });
+		assert.deepEqual(concatOf(segment(5, 2, 3)), { part: 2, reference: 5, spelling: 'udh', total: 3 });
+	});
+
+	test('reads a segment carrying both spellings from its UDH', () => {
+		const both = { ...segment(5, 1, 2), tlvs: sarTlvs(9, 2, 4) };
+
+		assert.deepEqual(concatOf(both), { part: 1, reference: 5, spelling: 'udh', total: 2 });
+	});
+
+	// A UDH carrying only an application port numbers nothing, so the TLVs are all there is to read.
+	test('reads the sar_* TLVs where the UDH names no concatenation', () => {
+		const carried = sarSegment(5, 1, 2);
+		const body = Buffer.concat([Buffer.from([0x04, 0x04, 0x02, 0x17, 0x00]), Buffer.from('fragment')]);
+		const ported = {
 			...carried,
-			params: { ...carried.params, short_message: Buffer.alloc(0) },
-			shortMessageOctets: Buffer.alloc(0),
-			tlvs: { message_payload: { tagId: 0x0424, tagName: 'message_payload', tagValue: body } },
+			params: { ...carried.params, esm_class: 0x40, short_message: body },
+			shortMessageOctets: body,
 		};
-	}
 
+		assert.deepEqual(concatOf(ported), { part: 1, reference: 5, spelling: 'sar', total: 2 });
+	});
+
+	test('reads a UDH carried in message_payload', () => {
+		assert.deepEqual(concatOf(payloadSegment(6, 1, 2)), { part: 1, reference: 6, spelling: 'udh', total: 2 });
+	});
+
+	test('reads no concatenation where a sar_* TLV is missing', () => {
+		const lone = {
+			...sarSegment(5, 1, 2),
+			tlvs: { sar_msg_ref_num: { tagId: 0x020c, tagName: 'sar_msg_ref_num', tagValue: 5 } },
+		};
+
+		assert.equal(concatOf(lone), undefined);
+	});
+
+	test('reads no concatenation from a message that is not a segment', () => {
+		const whole = { ...sarSegment(5, 1, 2), tlvs: {} };
+
+		assert.equal(concatOf(whole), undefined);
+	});
+});
+
+describe('reassembly bounds', () => {
 	function collect(
 		reassembler: Reassembler,
 		reference: number,
 		part: number,
 		total: number,
 	): Collected {
-		return reassembler.collect(segment(reference, part, total), { part, reference, total });
+		return collectPdu(reassembler, segment(reference, part, total));
+	}
+
+	function collectSar(
+		reassembler: Reassembler,
+		reference: number,
+		part: number,
+		total: number,
+	): Collected {
+		return collectPdu(reassembler, sarSegment(reference, part, total));
 	}
 
 	test('hands back every segment in order once the last one arrives', () => {
@@ -1576,7 +1662,7 @@ describe('reassembly bounds', () => {
 				timeout: 60_000,
 			});
 
-			return reassembler.collect(payloadSegment(9, 1, 2), { part: 1, reference: 9, total: 2 });
+			return collectPdu(reassembler, payloadSegment(9, 1, 2));
 		}
 
 		assert.equal(collectPayload(30).kept, false, 'a TLV body the cap cannot hold is refused, not dropped later');
@@ -1606,6 +1692,59 @@ describe('reassembly bounds', () => {
 		);
 	});
 
+	// An alphanumeric sender may carry the separator the key is built with, and two of them are two peers.
+	test('keeps two address pairs that differ only in where a separator sits apart', () => {
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
+		const addressed = (source: string, destination: string): PduObject => {
+			const carried = segment(3, 1, 2);
+
+			return {
+				...carried,
+				params: { ...carried.params, destination_addr: destination, source_addr: source },
+			};
+		};
+
+		assert.equal(collectPdu(reassembler, addressed('A_B', 'C')).kept, true);
+		assert.equal(collectPdu(reassembler, addressed('A', 'B_C')).kept, true);
+		assert.equal(reassembler.size, 2, 'two senders, so two groups, and neither completes the other');
+
+		reassembler.clear();
+	});
+
+	// Nothing about the bounds reads a UDH, and a group the TLVs numbered is bounded the same way.
+	test('bounds a sar_* group by the same count and octet caps', () => {
+		const counted = new Reassembler({
+			log: silentLog,
+			max: 1,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
+		const capped = (maxOctets: number): Reassembler => new Reassembler({
+			log: silentLog,
+			max: 10,
+			maxOctets,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
+
+		assert.equal(collectSar(counted, 1, 1, 2).kept, true);
+		assert.equal(collectSar(counted, 2, 1, 2).kept, true);
+		assert.equal(counted.size, 1, 'the second group evicted the first, as a UDH group would');
+		counted.clear();
+
+		// A sar_* segment is the two 11-octet addresses plus an 8-octet body, with no UDH to carry.
+		assert.equal(collectSar(capped(20), 3, 1, 2).kept, false);
+		assert.equal(collectSar(capped(30), 3, 1, 2).kept, true);
+	});
+
 	// Nothing else says a message the peer has already been answered for was thrown away.
 	test('names every group it gives up on, and why', () => {
 		let now = 0;
@@ -1626,7 +1765,8 @@ describe('reassembly bounds', () => {
 		});
 
 		collect(reassembler, 1, 1, 2);
-		collect(reassembler, 2, 1, 3);
+		// A group numbered by the TLVs is given up on, and reported, exactly as a UDH group is.
+		collectSar(reassembler, 2, 1, 3);
 
 		now = 61;
 		reassembler.sweep();
@@ -1664,7 +1804,7 @@ describe('reassembly bounds', () => {
 			Array(3).fill('unplaceable'),
 		);
 		assert.equal(reassembler.size, 0);
-		assert.deepEqual(warnings, Array(3).fill('reassembler - dropping a segment the UDH numbers impossibly'));
+		assert.deepEqual(warnings, Array(3).fill('reassembler - dropping an impossibly numbered segment'));
 	});
 
 	// Parts 1/2 then 2/3 would otherwise complete the stored two-part group, truncating the message.
@@ -1757,7 +1897,7 @@ describe('reassembly bounds', () => {
 		Buffer.concat([Buffer.from([0x05, 0x00, 0x03, 6, 2, 1]), Buffer.from('fragment')]).copy(framed);
 		first.params.short_message = framed.subarray(0, 14);
 
-		const held = reassembler.collect(first, { part: 1, reference: 6, total: 2 });
+		const held = collectPdu(reassembler, first);
 
 		assert.ok(held.kept);
 		assert.equal(held.whole, undefined);
@@ -1804,10 +1944,14 @@ describe('reassembly bounds', () => {
 describe('the status a refused segment is answered with', () => {
 	// SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another.
 	test('names one the command the segment arrived on defines', () => {
-		assert.equal(refusedSegmentStatus('submit_sm', 'full'), 'ESME_RMSGQFUL');
-		assert.equal(refusedSegmentStatus('deliver_sm', 'full'), 'ESME_RX_T_APPN');
-		assert.equal(refusedSegmentStatus('submit_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
-		assert.equal(refusedSegmentStatus('deliver_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
+		assert.equal(refusedSegmentStatus('submit_sm', 'full', 'udh'), 'ESME_RMSGQFUL');
+		assert.equal(refusedSegmentStatus('deliver_sm', 'full', 'udh'), 'ESME_RX_T_APPN');
+		assert.equal(refusedSegmentStatus('submit_sm', 'unplaceable', 'udh'), 'ESME_RINVESMCLASS');
+		assert.equal(refusedSegmentStatus('deliver_sm', 'unplaceable', 'udh'), 'ESME_RINVESMCLASS');
+		// esm_class is 0x00 on a sar_* segment and entirely valid: the TLV values are what cannot be honoured.
+		assert.equal(refusedSegmentStatus('submit_sm', 'unplaceable', 'sar'), 'ESME_RINVTLVVAL');
+		assert.equal(refusedSegmentStatus('deliver_sm', 'unplaceable', 'sar'), 'ESME_RINVTLVVAL');
+		assert.equal(refusedSegmentStatus('submit_sm', 'full', 'sar'), 'ESME_RMSGQFUL');
 	});
 
 	// Which command that is, for the one that travels both ways, is what the end it arrived at says.
@@ -1817,8 +1961,8 @@ describe('the status a refused segment is answered with', () => {
 		assert.equal(standsInFor('deliver_sm', 'esme'), 'deliver_sm');
 		assert.equal(standsInFor('submit_sm', 'smsc'), 'submit_sm');
 		assert.equal(standsInFor('enquire_link', 'smsc'), 'enquire_link');
-		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'smsc'), 'full'), 'ESME_RMSGQFUL');
-		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'esme'), 'full'), 'ESME_RX_T_APPN');
+		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'smsc'), 'full', 'udh'), 'ESME_RMSGQFUL');
+		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'esme'), 'full', 'udh'), 'ESME_RX_T_APPN');
 	});
 });
 
@@ -2044,6 +2188,37 @@ describe('a peer that sends the next segment only once the last one is answered'
 		assert.equal(answered.err, undefined);
 		assert.ok(answered.pduObj);
 		assert.equal(answered.pduObj.cmdStatus, 'ESME_RINVESMCLASS');
+		assert.deepEqual(messages, []);
+	});
+
+	// Its esm_class is 0x00 and correct, so the refusal names the optional parameters instead.
+	test('refuses a sar_* segment the TLVs number impossibly by naming those TLVs', async t => {
+		const smpp = await startServer(t);
+		const messages: Sms[] = [];
+
+		smpp.on('session', bound => bound.on('sms', sms => { messages.push(sms); }));
+
+		const { session } = await connect(t, smpp, { responseTimeout: 1000 });
+
+		assert.ok(session);
+
+		const answered = await session.send({
+			cmdName: 'submit_sm',
+			params: {
+				destination_addr: '46709771337',
+				short_message: 'part nine of two',
+				source_addr: '46701113311',
+			},
+			tlvs: {
+				sar_msg_ref_num: { tagValue: 0x2e },
+				sar_segment_seqnum: { tagValue: 9 },
+				sar_total_segments: { tagValue: 2 },
+			},
+		});
+
+		assert.equal(answered.err, undefined);
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdStatus, 'ESME_RINVTLVVAL');
 		assert.deepEqual(messages, []);
 	});
 });

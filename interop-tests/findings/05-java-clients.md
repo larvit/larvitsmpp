@@ -75,7 +75,7 @@ an independent dissector agreeing is the expected outcome, not a surprise.
 | S2 UDH 8-bit (targets 2, 5) | pass | `jsmpp.test.ts` "UDH, 8-bit reference": one reassembled `sms`, segments answered `<base>-1`/`<base>-2` |
 | S2 UDH 16-bit (target 5) | pass | `jsmpp.test.ts` "UDH, 16-bit reference": also reassembled - confirms both widths are read |
 | S2 `message_payload` (target 2) | pass | `jsmpp.test.ts` "message_payload: one sms, the full text" |
-| S2 `sar_*` (target 3) | defect confirmed, second peer | `jsmpp.test.ts` "sar_*: defect (target 3)": two independent `sms` events, not one |
+| S2 `sar_*` (target 3) | defect confirmed, second peer; fixed in [#91](https://github.com/larvit/larvitsmpp/pull/91) | `jsmpp.test.ts` "sar_* (target 3)": one reassembled `sms`, segments answered `<base>-1`/`<base>-2` |
 | S3 known-but-unhandled (targets 1, 6) | pass | `jsmpp.test.ts` "query_sm, cancel_sm, replace_sm": `ESME_RINVCMDID`, link survives, jsmpp raises `NegativeResponseException` and keeps going |
 | S3 unknown command id (target 1) | pass | `jsmpp.test.ts` "an unknown command id gets generic_nack..." |
 | S3 truncated TLV stream (target 1) | pass | `jsmpp.test.ts` "a deliver_sm with a truncated TLV stream..." |
@@ -100,10 +100,18 @@ Spec: SMPP 3.4 5.3.2.16-5.3.2.18 defines `sar_msg_ref_num`/`sar_total_segments`/
 as an alternative to the UDH for carrying concatenation; nothing in the spec says a receiver may
 ignore it.
 
-Reproducer: `jsmpp.test.ts`, "sar_\*: defect (target 3)" - two `submit_sm`s to the same
+Reproducer: `jsmpp.test.ts`, "sar_\* (target 3)" - two `submit_sm`s to the same
 `source_addr`/`destination_addr`, `esm_class` 0x00, one `sar_msg_ref_num` (0x77) across both, `1/2`
 then `2/2` in `sar_total_segments`/`sar_segment_seqnum`. Severity: as already scoped in PLAN.md
 target 3 / phase 10 - a known, tracked limitation, not new.
+
+**Fixed** in [#91](https://github.com/larvit/larvitsmpp/pull/91): `concatOf()` reads the
+concatenation from the UDH, or from the `sar_*` TLVs where the PDU declares none, and each spelling
+groups in a reference space of its own. The reproducer now asserts what a rerun shows - one `sms`
+carrying the whole 200-char text, its two `submit_sm`s answered `<base>-1` and `<base>-2`, and
+neither half ever reaching the application on its own. The rest of the suite is unchanged: 12/12,
+frames 37, `submit_sm` 8/8, malformed 2 and expert errors 2 - the two deliberately malformed PDUs
+the S3 scenarios send.
 
 ### A 4-octet truncated TLV tail is silently accepted rather than refused (target 1)
 

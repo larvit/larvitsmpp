@@ -716,8 +716,11 @@ describe('sending', () => {
 });
 
 describe('receiving', () => {
-	async function inbound(t: TestContext): Promise<{ peer: Session; session: Session }> {
-		const smpp = await startServer(t);
+	async function inbound(
+		t: TestContext,
+		options: ServerOptions = {},
+	): Promise<{ peer: Session; session: Session }> {
+		const smpp = await startServer(t, options);
 
 		const bound = once<Session>(resolve => { smpp.on('session', resolve); });
 		const { session } = await connect(t, smpp);
@@ -1060,6 +1063,239 @@ describe('receiving', () => {
 			assert.ok(answered.pduObj);
 			assert.equal(paramText(answered.pduObj.params.message_id), '');
 		}
+	});
+
+	/** SMPP 3.4 5.3.2.31-5.3.2.33: concatenation as optional parameters, with no UDH in the body. */
+	function sarTlvs(reference: number, part: number, total: number): PduObjectInput['tlvs'] {
+		return {
+			sar_msg_ref_num: { tagValue: reference },
+			sar_segment_seqnum: { tagValue: part },
+			sar_total_segments: { tagValue: total },
+		};
+	}
+
+	test('answers every sar_* segment on arrival and hands the application one message', async t => {
+		const smpp = await startServer(t);
+		const incoming = once<Sms>(resolve => { smpp.on('session', peer => peer.on('sms', resolve)); });
+		const { session } = await connect(t, smpp, { bindType: 'transmitter', responseTimeout: 1000 });
+
+		assert.ok(session);
+
+		const parts = ['sar one, ', 'sar two, ', 'sar three'];
+		const answers: PduObject[] = [];
+
+		// A 16-bit reference no 8-bit UDH could carry, which is the width the TLV exists for.
+		for (const [index, part] of parts.entries()) {
+			const sent = await session.send({
+				cmdName: 'submit_sm',
+				params: {
+					destination_addr: '46709771337',
+					short_message: part,
+					source_addr: '46701113311',
+				},
+				tlvs: sarTlvs(0x02b7, index + 1, parts.length),
+			});
+
+			assert.ok(sent.pduObj);
+			answers.push(sent.pduObj);
+		}
+
+		const sms = await raceWithin(2000, incoming);
+
+		assert.ok(sms, 'the sar_* TLVs tie the three submissions into one message');
+		assert.equal(sms.message, parts.join(''));
+		assert.equal(sms.answeredOnArrival, true);
+		assert.deepEqual(
+			answers.map(answer => paramText(answer.params.message_id)),
+			[1, 2, 3].map(part => `${sms.smsId}-${String(part)}`),
+		);
+	});
+
+	test('joins sar_* segments in the order they number themselves', async t => {
+		const { peer, session } = await inbound(t, { responseTimeout: 1000 });
+		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
+		const parts = ['first ', 'second ', 'third'];
+
+		for (const index of [2, 0, 1]) {
+			const sent = await peer.send({
+				cmdName: 'deliver_sm',
+				params: {
+					destination_addr: '46709771337',
+					short_message: parts[index],
+					source_addr: '46701113311',
+				},
+				tlvs: sarTlvs(0x11, index + 1, parts.length),
+			});
+
+			assert.ok(sent.pduObj);
+			assert.equal(sent.pduObj.cmdStatus, 'ESME_ROK');
+		}
+
+		const sms = await raceWithin(2000, incoming);
+
+		assert.ok(sms, 'the segments number themselves, so the order they arrive in is not the message');
+		assert.equal(sms.message, parts.join(''));
+	});
+
+	test('reassembles a sar_* segment whose body is in message_payload', async t => {
+		const { peer, session } = await inbound(t, { responseTimeout: 1000 });
+		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
+		const parts = ['in the mandatory field, ', 'and in the TLV'];
+
+		for (const [index, part] of parts.entries()) {
+			// The combination that needs no UDH at all: the numbering and the body are both optional
+			// parameters, so the second segment's short_message is empty.
+			const carried = index === 0
+				? { params: { short_message: part }, tlvs: {} }
+				: {
+					params: { short_message: Buffer.alloc(0) },
+					tlvs: { message_payload: { tagValue: Buffer.from(part, 'ascii') } },
+				};
+			const sent = await peer.send({
+				cmdName: 'deliver_sm',
+				params: {
+					destination_addr: '46709771337',
+					source_addr: '46701113311',
+					...carried.params,
+				},
+				tlvs: { ...sarTlvs(0x12, index + 1, parts.length), ...carried.tlvs },
+			});
+
+			assert.ok(sent.pduObj);
+			assert.equal(sent.pduObj.cmdStatus, 'ESME_ROK');
+		}
+
+		const sms = await raceWithin(2000, incoming);
+
+		assert.ok(sms, 'a segment carries its body where any other message may carry one');
+		assert.equal(sms.message, parts.join(''));
+		assert.equal(sms.answeredOnArrival, true);
+	});
+
+	// The UDH reference is 8 bits and sar_msg_ref_num is 16, so the same number is two messages.
+	test('keeps a UDH group and a sar_* group sharing a reference apart', async t => {
+		const { peer, session } = await inbound(t, { responseTimeout: 1000 });
+		const messages: Sms[] = [];
+
+		session.on('sms', sms => { messages.push(sms); });
+
+		const udhText = 'the message numbered by its user data header. '.repeat(5);
+		const udhSegments = splitMessage(udhText, { reference: 5 });
+		const sarParts = ['the message numbered by ', 'its optional parameters'];
+
+		assert.equal(udhSegments.length, 2);
+
+		const sends: PduObjectInput[] = [];
+
+		for (const [index, segment] of udhSegments.entries()) {
+			sends.push({
+				cmdName: 'deliver_sm',
+				params: {
+					destination_addr: '46709771337',
+					esm_class: consts.ESM_CLASS.UDH_INDICATOR,
+					short_message: segment,
+					source_addr: '46701113311',
+				},
+			});
+			sends.push({
+				cmdName: 'deliver_sm',
+				params: {
+					destination_addr: '46709771337',
+					short_message: sarParts[index],
+					source_addr: '46701113311',
+				},
+				tlvs: sarTlvs(5, index + 1, sarParts.length),
+			});
+		}
+
+		for (const input of sends) {
+			const sent = await peer.send(input);
+
+			assert.ok(sent.pduObj);
+			assert.equal(sent.pduObj.cmdStatus, 'ESME_ROK');
+		}
+
+		assert.ok(await waitFor(() => messages.length === 2));
+		assert.deepEqual(messages.map(sms => sms.message).sort(), [sarParts.join(''), udhText].sort());
+		assert.notEqual(messages[0]?.smsId, messages[1]?.smsId);
+	});
+
+	// Nothing compares the two references: each spelling counts in a space of its own.
+	test('groups a segment carrying both spellings by its UDH', async t => {
+		const { peer, session } = await inbound(t, { responseTimeout: 1000 });
+		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
+		const message = 'both spellings on every segment of it, and the UDH decides. '.repeat(4);
+		const segments = splitMessage(message, { reference: 7 });
+
+		assert.equal(segments.length, 2);
+
+		for (const [index, segment] of segments.entries()) {
+			const sent = await peer.send({
+				cmdName: 'deliver_sm',
+				params: {
+					destination_addr: '46709771337',
+					esm_class: consts.ESM_CLASS.UDH_INDICATOR,
+					short_message: segment,
+					source_addr: '46701113311',
+				},
+				// Numbering the same segments as a three-part message no third segment ever completes.
+				tlvs: sarTlvs(0x0207, index + 1, 3),
+			});
+
+			assert.ok(sent.pduObj);
+		}
+
+		const sms = await raceWithin(2000, incoming);
+
+		assert.ok(sms, 'the UDH says the message is whole at two segments, and the UDH is what is read');
+		assert.equal(sms.message, message);
+	});
+
+	test('reads a receipt carrying sar_* fields as a dlr, never as a segment', async t => {
+		const { peer, session } = await inbound(t, { responseTimeout: 1000 });
+		const reports: Dlr[] = [];
+		let messages = 0;
+
+		session.on('dlr', dlr => { reports.push(dlr); });
+		session.on('sms', () => { messages++; });
+
+		const marked = '0199e1a4-6c3f-7d21-9a80-5b1e2f7c4d63';
+		const unmarked = '0199e1a4-b70e-7c55-8f42-9d3a1c86e70b';
+		const body = (smsId: string): string =>
+			`id:${smsId} sub:001 dlvrd:001 submit date:2509061200 done date:2509061201 stat:DELIVRD err:000 text:`;
+		const receipts: PduObjectInput[] = [
+			{
+				cmdName: 'deliver_sm',
+				params: {
+					destination_addr: '46709771337',
+					esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+					short_message: body(marked),
+					source_addr: '46701113311',
+				},
+				tlvs: sarTlvs(0x21, 1, 2),
+			},
+			// esm_class marks nothing, so the receipted_message_id TLV is what says it is a report.
+			{
+				cmdName: 'deliver_sm',
+				params: {
+					destination_addr: '46709771337',
+					short_message: body(unmarked),
+					source_addr: '46701113311',
+				},
+				tlvs: { ...sarTlvs(0x21, 2, 2), receipted_message_id: { tagValue: unmarked } },
+			},
+		];
+
+		for (const receipt of receipts) {
+			const sent = await peer.send(receipt);
+
+			assert.ok(sent.pduObj);
+			assert.equal(sent.pduObj.cmdStatus, 'ESME_ROK');
+		}
+
+		assert.ok(await waitFor(() => reports.length === 2));
+		assert.deepEqual(reports.map(report => report.smsId), [marked, unmarked]);
+		assert.equal(messages, 0, 'a report is never a segment, however the peer numbered it');
 	});
 });
 

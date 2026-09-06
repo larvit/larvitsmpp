@@ -73,6 +73,7 @@ src/
 	server.ts            server() -> { err, server }, server owns the listener + close()
 	session.ts           Session: the socket's life, dispatch, events, and the collaborators below
 	sms.ts               The live handle emitted as the 'sms' event (sendResp/sendDlr)
+	concat.ts            How a PDU says it is a segment: its UDH, or the sar_* TLVs
 	dlr.ts               Delivery receipts: text and TLV parsing, receipt status codes
 	dlr-merger.ts        DlrMerger: per-segment receipts counted into one MessageDlr
 	error-from.ts        errorFrom(): whatever was thrown or rejected, as an Error
@@ -156,6 +157,7 @@ naming the behaviour.
 | Alphanumeric sender TON | `sendSms` hardcodes `source_addr_ton` to 1 (international) even for alphanumeric senders, which require TON 5 |
 | Text-only DLRs refused | `deliver_sm` without both `message_state` and `receipted_message_id` TLVs is rejected with `ESME_RINVTLVSTREAM`, so Kannel-style receipts are unusable |
 | Unbounded reassembly | Incomplete long-SMS groups are capped by nothing and swept only when other traffic arrives, after 24 hours |
+| `sar_*` segmentation unread | `session.js` reassembles on the UDH alone, so a message segmented with `sar_msg_ref_num`/`sar_total_segments`/`sar_segment_seqnum` — SMPP 3.4's other spelling, and Jasmin's documented default — reaches the application one fragment per segment |
 | Dead DLR aggregation | `longSmsDlrs` is allocated to merge per-segment receipts and then never used |
 | Trailing NULL truncation | `types.buffer.size()` subtracts one whenever the value's last octet is `0x00`, so the PDU is allocated one octet short while `sm_length` still reports the full length. Any UCS2 message ending in a character like U+4E00 or U+3000 goes out corrupt |
 | Dormant filters | `defs.filters` is declared on commands and TLVs but never invoked anywhere |
@@ -329,6 +331,33 @@ Grouped by what each one constrains.
   which discards a message that is almost certainly present twice over, where goal 3 keeps the
   traffic. The reassembler's octet cap already counts TLV values, so a 64 KB payload is bounded like
   any other segment.
+
+- **A segment's concatenation is read from its UDH, or from the `sar_*` TLVs where it declares none,
+  and each spelling groups in a reference space of its own.** Maintainer's call, 2026-09-06, from
+  the Jasmin and Java-client interoperability phases: SMPP 3.4 5.3.2.31-5.3.2.33 make
+  `sar_msg_ref_num`/`sar_total_segments`/`sar_segment_seqnum` the other way to say what a UDH says,
+  Jasmin documents it as its own segmentation and jsmpp writes it, and reading the UDH alone handed
+  the application one `sms` per fragment
+  ([interop-tests/findings/05-java-clients.md](interop-tests/findings/05-java-clients.md)).
+  `concatOf()` is the single answer to how a PDU says it is a segment, as `messageOctets()` is to
+  where a body is, and both are exported for the same reason: an application on the low-level
+  surfaces would otherwise rewrite the read this fixed. It carries the spelling beside the
+  reference, so the key is two tokens the reassembler joins and interprets neither of, and so the
+  refusal can name the field the peer got wrong — `ESME_RINVESMCLASS` for a UDH, `ESME_RINVTLVVAL`
+  for the TLVs, whose segment's `esm_class` is 0x00 and correct. Keying them together instead would
+  assemble two of a peer's messages into one, since a UDH reference is 8 bits and `sar_msg_ref_num`
+  is 16 and neither counts the other's messages; the two UDH widths share a space because they are
+  one sender's counter in one layer, where a `sar_*` reference is another layer's. A UDH that names
+  the concatenation wins over the TLVs — one carrying only a port leaves them to say — which keeps
+  the change additive for every message that reassembled before, and leaves the library nothing to
+  guess where the two disagree. Rejected: preferring the TLVs, which regroups every message a
+  gateway derived them from. Rejected: comparing the parts and reporting a disagreement: the
+  references are not comparable at all, and where the parts are, the UDH is still what the message
+  is assembled by, so the report would name a failure the application cannot act on. Accepted: a
+  peer that switches spelling mid-message now has two groups that expire rather than fragments that
+  arrive, which goal 2 prefers to a message assembled from two counters. Receive-only: `sendSms()`
+  goes on writing a UDH with an 8-bit reference, where a send-side `sar_*` would be a second
+  spelling of one message whose only difference is which peers accept it.
 
 - **An inbound `data_sm` stands in for whichever of `submit_sm` and `deliver_sm` its direction makes
   it, and none goes out.** Maintainer's call, 2026-09-06, from the Jasmin interoperability phase:
@@ -516,8 +545,8 @@ Grouped by what each one constrains.
   untouched, and is where a caller-chosen id and a refusal live; `onRequest` is the escape hatch for
   an application that must refuse a PDU the `sms` event could not have shown it yet. `collect()`
   answers every segment it will not carry rather than leaving it unanswered, which is the same stall
-  in miniature: `ESME_RINVESMCLASS` where the UDH belongs to no group, `ESME_RMSGQFUL` where the
-  segment's own arrival overran the octet cap, since a peer told that still holds it. Rejected:
+  in miniature: the field that numbered it where the segment belongs to no group, `ESME_RMSGQFUL`
+  where the segment's own arrival overran the octet cap, since a peer told that still holds it. Rejected:
   answering every segment but the one that completes the group, which leaves the peer holding some
   segments accepted and one refused with nothing in SMPP to retract the rest, and still cannot honour
   a caller's `smsId` on the segments already gone. Rejected: a hook that mints the id per segment,
@@ -608,7 +637,7 @@ Grouped by what each one constrains.
   `onDelivery()` answers each receipt before the group it belongs to is complete, and `teardown()`
   runs on every path — an idle timeout and a failed rebind, not only `close()` — so clearing the
   merges there loses receipts no peer has a reason to send again. They are cleared where the session
-  is over instead. Inbound segments stay in `teardown()`: an 8-bit concatenation reference is the
+  is over instead. Inbound segments stay in `teardown()`: a concatenation reference is the
   peer's own counter, so a half-arrived group kept across a drop would take a later message's
   segments as readily as the rest of its own, and goal 2 will not hand the application a message
   assembled that way. What goes there is traffic already answered, which is why each group reaches
