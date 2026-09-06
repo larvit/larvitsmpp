@@ -132,7 +132,9 @@ most handsets and SMSCs stop well short of 255, and refusing beats a message onl
 ### Receiving
 
 A `receiver` or `transceiver` client gets mobile-originated messages as `sms` events — the same
-handle the server side gets, answered the same way:
+handle the server side gets, answered the same way. That includes a multipart message: it was
+already answered segment by segment before you see it, which changes what `sendResp()` does there —
+see [Server](#server).
 
 ```javascript
 session.on('sms', async sms => {
@@ -207,11 +209,13 @@ if (err) throw err;
 
 smpp.on('session', session => {
 	session.on('sms', async sms => {
-		// Responding is part of the protocol, not optional. Without arguments it answers
-		// ESME_ROK with a generated id. On a message sendResp() still answers itself — see
-		// below — you may pass your own id, and a status to refuse the message:
-		// await sms.sendResp({ smsId: yourOwnId, status: 'ESME_RMSGQFUL' });
-		await sms.sendResp();
+		if (sms.answeredOnArrival) {
+			await sms.sendResp(); // multipart: already answered per segment; this only releases the shutdown drain
+		} else {
+			// Without arguments it answers ESME_ROK with a generated id; pass your own id, and
+			// a status to refuse the message: sendResp({ smsId: yourOwnId, status: 'ESME_RMSGQFUL' })
+			await sms.sendResp();
+		}
 
 		if (sms.dlr) {
 			await sms.sendDlr(); // same as sms.sendDlr('DELIVERED')
@@ -234,6 +238,38 @@ refusing `status`; choosing the id and refusing the message belong to a message 
 answers itself. `sms.smsId` is the base either way, and `sendDlr()` names `<smsId>-1`, `<smsId>-2`
 and so on — the ids a `submit_sm`'s responses carried. A `deliver_sm` is answered with no id at all,
 since SMPP marks that field unused, so an inbound message's base is a handle of your own only.
+
+A refusal that depends on the request rather than the reassembled message — a full queue, an unknown
+recipient, an unauthorised sender — needs to land before a segment is answered, which `sendResp()`
+can no longer do once it has. A hand-wired `Session` (see [Bind direction](#bind-direction)) decides
+there instead, at `onRequest`, which runs before any of the library's own handling:
+
+```javascript
+import net from 'node:net';
+import { isCommand, Session } from '@larvit/smpp';
+
+const knownRecipients = new Set(['46709771337']);
+
+net.createServer(sock => {
+	const session = new Session({
+		onRequest: async (bound, pduObj) => {
+			if (!isCommand(pduObj, 'submit_sm') || knownRecipients.has(pduObj.params.destination_addr)) {
+				return false;
+			}
+
+			await bound.sendReturn(pduObj, 'ESME_RINVDSTADR');
+
+			return true;
+		},
+		sock,
+	});
+
+	session.linkEnd = 'smsc';
+}).listen(2775);
+```
+
+Returning `true` means the hook has answered the PDU and the library leaves it alone; `false` lets
+the built-in handling — bind, reassembly, the `sms` event — run as usual.
 
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
 `ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`. `SCHEDULED` and `ENROUTE` go out as intermediate
