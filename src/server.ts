@@ -1,4 +1,4 @@
-import type { CloseOptions } from './session-options.ts';
+import type { CloseOptions, OnRequest } from './session-options.ts';
 import type { PduObject, TlvInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Server as NetServer, Socket } from 'node:net';
@@ -32,6 +32,8 @@ export type ServerOptions = {
 	maxOutstanding?: number;
 	maxOctets?: number;
 	maxReassembly?: number;
+	/** First refusal on every request the server's own bind handling did not answer. */
+	onRequest?: OnRequest;
 	port?: number;
 	reassemblyTimeout?: number;
 	responseTimeout?: number;
@@ -200,16 +202,39 @@ async function onBind(session: Session, pduObj: PduObject, options: ServerOption
 	log.verbose('server - bound', { systemId });
 }
 
+/** A hook that fails declines the request, so the built-in handling still answers the peer. */
+async function appRequest(
+	session: Session,
+	pduObj: PduObject,
+	options: ServerOptions,
+): Promise<boolean> {
+	if (!options.onRequest) return false;
+
+	try {
+		return await options.onRequest(session, pduObj);
+	} catch (thrown: unknown) {
+		const err = errorFrom(thrown);
+
+		guardedLog(options.log).error('server - the onRequest hook failed', {
+			cmdName: pduObj.cmdName,
+			message: err.message,
+		});
+		session.emit('sessionError', err);
+
+		return false;
+	}
+}
+
 /**
- * Handles everything a peer may send before it is bound. Returns true when it has answered, so the
- * session leaves the PDU alone.
+ * Handles everything a peer may send before it is bound, then offers the rest to the application.
+ * Returns true when it has answered, so the session leaves the PDU alone.
  */
 async function onRequest(
 	session: Session,
 	pduObj: PduObject,
 	options: ServerOptions,
 ): Promise<boolean> {
-	if (session.loggedIn || pduObj.cmdName === 'unbind') return false;
+	if (session.loggedIn || pduObj.cmdName === 'unbind') return appRequest(session, pduObj, options);
 
 	if (!bindCommands.includes(pduObj.cmdName)) {
 		const log = guardedLog(options.log);

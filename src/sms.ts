@@ -112,7 +112,7 @@ function answeredOnArrival(
 
 	if (options.status !== undefined && options.status !== 'ESME_ROK') {
 		return Promise.resolve({
-			err: new Error('Its segments were answered as they arrived, so there is nothing left to refuse; refuse a segment from onRequest instead'),
+			err: new Error('Its segments were answered as they arrived, so there is nothing left to refuse; refuse a segment from the onRequest option instead'),
 		});
 	}
 
