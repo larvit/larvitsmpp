@@ -174,8 +174,7 @@ naming the behaviour.
 `sendSms` puts every segment of a message on the wire together instead of waiting for each response
 in turn, so a long message costs one round trip rather than one per segment. Nothing on the
 receiving side forces the order either way: this library answers each inbound segment as it arrives,
-so a peer that dispatches one request at a time is never left waiting on us, and a message with more
-segments than `maxOutstanding` goes out a slot at a time and still completes.
+so a peer that dispatches one request at a time is never left waiting on us.
 
 ## GSM 7-bit is sent unpacked
 
@@ -643,16 +642,19 @@ Grouped by what each one constrains.
   Maintainer's call, 2026-09-06, from a review of PR #71: the hold above observes the signal and the
   `acquire()` on the next line did not, so a caller that aborted while the window was full waited for
   a slot it no longer wanted — at `responseTimeout: 0` for as long as the peer stayed quiet, which is
-  the deadline the README sends the caller to that signal for. `SendWindow.acquire()` takes the signal
-  and its waiter leaves the queue as it settles, so `release()` can only ever hand a slot to a waiter
-  still in it and one that gave up cannot strand the window below its capacity. The failure is a plain
-  `Error` rather than `UnansweredError`: nothing was written, so `sendSms()` reports it with
-  `unanswered: 0`, the same answer an abort at the gate already gives. Rejected: bounding this wait by
-  `responseTimeout` as the hold is bounded — a full window is this end's own concurrency draining as
-  the peer answers rather than a link going nowhere, and that bound would fail a message with more
-  segments than `maxOutstanding` partway through against a slow peer, which is the one thing the send
-  window is documented to survive. The drain half needs nothing: `close({ signal })` already hands the
-  signal to `window.idle()`, and `unbind()` taking none is the shape README states.
+  the deadline the README sends the caller to that signal for. Goal 4 is not re-opened by an
+  unbounded wait here: the queue is the application's own backlog, unbounded in depth as well as in
+  time because capping it would refuse a send the application asked for, and nothing in it keeps the
+  peer waiting — which is what separates it from the inbound stores capped on constants. Rejected:
+  having `release()` skip a waiter whose signal already fired, which leaves the departed waiter in
+  the queue where `unfinished()` still counts it and the drain waits on it; the waiter leaves as it
+  settles instead. Rejected: bounding this wait by `responseTimeout` as the hold is bounded — a full
+  window is this end's own concurrency draining as the peer answers rather than a link going nowhere,
+  and that bound would fail a message with more segments than `maxOutstanding` partway through
+  against a slow peer. The failure is a plain `Error` rather than `UnansweredError`: nothing was
+  written, so `sendSms()` reports it with `unanswered: 0`, the same answer an abort at the gate
+  already gives. The drain half needs nothing: `close({ signal })` already hands the signal to
+  `window.idle()`, and `unbind()` taking none is the shape README states.
 
 - **The gate decides whether a link can carry a request, and a bind is what makes it one.**
   Maintainer's call, 2026-09-01: `attach()` clears `closed` the moment a socket is handed over, one
@@ -680,6 +682,13 @@ Grouped by what each one constrains.
   forbids. A rejection reason is `unknown` and `String()` throws on a null-prototype object, so both
   handlers normalise through `errorFrom()` rather than inline — a route out of the handler would land
   on a bare `process.nextTick` with nothing to catch it.
+
+- **The four-line abort dance is copied across `LinkGate`, `IdleWaiters`, `PendingRequests` and
+  `SendWindow` rather than extracted.** Architecture review, 2026-09-06: pre-check `aborted`, attach
+  `{ once: true }`, detach on settle, leave the registry. What differs at each site is the registry
+  and what settling means — a FIFO handing over a slot, a set released together, a map keyed by
+  sequence number, a count recomputed at settle — so a shared `Waiters<T>` fits two of the four and
+  is a shallower module than the copies. Extract it once a fifth appears.
 
 - **`SmppLog` is a five-method contract this library declares, not a dependency.** `debug`, `error`,
   `info`, `verbose` and `warn` are what the code actually calls, so an application can satisfy it

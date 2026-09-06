@@ -1307,7 +1307,7 @@ describe('LinkGate', () => {
 
 describe('SendWindow', () => {
 	test('gives up a queued acquire the moment its signal fires', async () => {
-		const window = new SendWindow(1);
+		const window = new SendWindow({ limit: 1, log: silentLog });
 		const controller = new AbortController();
 
 		assert.deepEqual(await window.acquire(undefined), {});
@@ -1322,7 +1322,7 @@ describe('SendWindow', () => {
 
 	// release() hands the slot straight to the next waiter, so one nobody awaits loses it for good.
 	test('never hands a freed slot to a waiter that gave up', async () => {
-		const window = new SendWindow(1);
+		const window = new SendWindow({ limit: 1, log: silentLog });
 		const controller = new AbortController();
 
 		await window.acquire(undefined);
@@ -1338,7 +1338,7 @@ describe('SendWindow', () => {
 	});
 
 	test('takes no slot for a signal that was already aborted', async () => {
-		const window = new SendWindow(1);
+		const window = new SendWindow({ limit: 1, log: silentLog });
 
 		await window.acquire(undefined);
 
@@ -2136,19 +2136,20 @@ describe('AbortSignal on a send', () => {
 		const sent = await within(500, queued);
 
 		assert.ok(sent, 'the signal is the only bound this wait has');
+		assert.match(sent.err?.message ?? '', /Aborted while waiting for a send window slot/);
 		assert.equal(sent.unanswered, 0);
 	});
 
 	test('leaves the freed slot to the next send rather than to the waiter that gave up', async t => {
 		const smpp = await startServer(t);
 		const holding = once<Sms>(resolve => { smpp.on('session', bound => bound.on('sms', resolve)); });
-		let answering = false;
+		let firstTaken = false;
 
 		smpp.on('session', bound => {
 			bound.on('sms', async sms => {
-				if (answering) await sms.sendResp();
+				if (firstTaken) await sms.sendResp();
 
-				answering = true;
+				firstTaken = true;
 			});
 		});
 
@@ -2167,7 +2168,10 @@ describe('AbortSignal on a send', () => {
 		await delay(20);
 		controller.abort();
 
-		assert.ok((await within(500, abandoned))?.err instanceof Error);
+		const gaveUp = await within(500, abandoned);
+
+		// Any other error means it never reached the queue, so there was no waiter to strand.
+		assert.match(gaveUp?.err?.message ?? '', /Aborted while waiting for a send window slot/);
 		await held.sendResp();
 
 		const following = await within(1000, session.sendSms({

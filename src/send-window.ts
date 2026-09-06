@@ -1,5 +1,11 @@
+import type { SmppLog } from './log.ts';
 import type { VoidResult } from './result.ts';
 import { IdleWaiters } from './idle-waiters.ts';
+
+export type SendWindowOptions = {
+	limit: number;
+	log: SmppLog;
+};
 
 type Waiter = (result: VoidResult) => void;
 
@@ -11,11 +17,13 @@ function aborted(): Error {
 export class SendWindow {
 	private readonly idleWaiters = new IdleWaiters();
 	private readonly limit: number;
+	private readonly log: SmppLog;
 	private readonly waiting: Waiter[] = [];
 	private inFlight = 0;
 
-	constructor(limit: number) {
-		this.limit = limit;
+	constructor(options: SendWindowOptions) {
+		this.limit = options.limit;
+		this.log = options.log;
 	}
 
 	/** Resolves once a slot is the caller's, or with the reason it stopped waiting for one. */
@@ -59,6 +67,11 @@ export class SendWindow {
 
 	/** A waiter leaves the queue as it settles, so release() can only hand a slot to one still in it. */
 	private queue(signal: AbortSignal | undefined): Promise<VoidResult> {
+		this.log.verbose('sendWindow - queueing a request behind a full window', {
+			limit: this.limit,
+			queued: this.waiting.length + 1,
+		});
+
 		return new Promise<VoidResult>(resolve => {
 			const settle = (result: VoidResult): void => {
 				const index = this.waiting.indexOf(settle);

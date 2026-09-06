@@ -48,7 +48,7 @@ export class OutgoingRequests {
 		this.pending = new PendingRequests(options.log);
 		this.responseTimeout = options.responseTimeout;
 		this.transport = options.transport;
-		this.window = new SendWindow(options.maxOutstanding);
+		this.window = new SendWindow({ limit: options.maxOutstanding, log: options.log });
 	}
 
 	/** Read through a method: a drop can land while a request is awaiting. */
