@@ -264,11 +264,9 @@ describe('S3 - known-but-unhandled and malformed commands (targets 1, 6)', () =>
 		assert.equal(linkResponse.cmdStatusHex, '0x0');
 	});
 
-	// Not reachable through jsmpp's own typed API at all (it cannot construct wire garbage) - this is
-	// a raw fixture opened directly against our server(), discovered while building the reproducers
-	// above. Kept here rather than in test/ because it was found during, and belongs beside, this
-	// phase's malformed-PDU work.
-	test('defect: a 4-octet truncated TLV tail is silently accepted rather than refused', async () => {
+	// Not reachable through jsmpp's own typed API at all (it cannot construct wire garbage), so this
+	// is a raw fixture opened directly against our server().
+	test('a deliver_sm ending in a bare TLV header gets ESME_RINVTLVSTREAM, and reaches no listener', async () => {
 		await waitForSessions(1);
 
 		function cstring(value: string): Buffer {
@@ -310,15 +308,18 @@ describe('S3 - known-but-unhandled and malformed commands (targets 1, 6)', () =>
 		sock.write(Buffer.concat([header, body]));
 
 		const response = await responsePromise;
-		const cmdStatus = response.readUInt32BE(8);
 
-		// Defect: this should be ESME_RINVTLVSTREAM (0xC0); the codec's trailing-NUL retry instead
-		// treats the 4 leftover octets as unparsed slack and accepts the PDU as ESME_ROK.
-		assert.equal(cmdStatus, 0x00000000);
+		assert.equal(response.readUInt32BE(4), 0x80000005);
+		assert.equal(response.readUInt32BE(8), 0x000000C0);
+		assert.equal(response.readUInt32BE(12), 777);
 
-		const arrived = await waitForSms('truncated tlv probe silent');
+		const refused = await waitFor(() => allSessionErrors.find(e => e.err instanceof PduRefusedError
+			&& e.err.header.seqNr === 777));
 
-		assert.equal(arrived.from, 'raw2-from');
+		assert.ok(refused);
+		assert.ok(refused.err instanceof PduRefusedError);
+		assert.equal(refused.err.reason, 'tlvs');
+		assert.equal(allSms.some(entry => entry.sms.message === 'truncated tlv probe silent'), false);
 		sock.destroy();
 	});
 });
