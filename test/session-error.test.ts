@@ -3,8 +3,8 @@ import test, { describe } from 'node:test';
 import type { PduHeader, Session } from '../src/index.ts';
 import type { TestContext } from 'node:test';
 import { PduRefusedError, client, server } from '../src/index.ts';
+import { bareTlvHeader, shortened, truncatedTlv, withUnknownCmdId } from './raw-pdus.ts';
 import { closeAfter } from './teardown.ts';
-import { shortened, truncatedTlv, withUnknownCmdId } from './raw-pdus.ts';
 
 const receipt = {
 	destination_addr: '46709771337',
@@ -85,11 +85,12 @@ describe('telling a refused PDU from a failed session', () => {
 		peer.sock.write(withUnknownCmdId({ cmdName: 'enquire_link', seqNr: 9 }));
 		peer.sock.write(shortened({ cmdName: 'deliver_sm', params: receipt, seqNr: 6 }, 3));
 		peer.sock.write(truncatedTlv({ cmdName: 'deliver_sm', params: receipt, seqNr: 7 }));
+		peer.sock.write(bareTlvHeader({ cmdName: 'deliver_sm', params: receipt, seqNr: 8 }));
 
-		assert.ok(await waitFor(() => seen.length === 3), 'one sessionError per refused PDU');
+		assert.ok(await waitFor(() => seen.length === 4), 'one sessionError per refused PDU');
 		assert.deepEqual(
 			seen.map(err => (err instanceof PduRefusedError ? err.reason : err.message)),
-			['command', 'body', 'tlvs'],
+			['command', 'body', 'tlvs', 'tlvs'],
 		);
 	});
 

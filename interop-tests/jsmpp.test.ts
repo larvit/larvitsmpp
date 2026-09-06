@@ -4,6 +4,7 @@ import test, { after, describe } from 'node:test';
 import type { Session } from '../src/session.ts';
 import type { Sms } from '../src/sms.ts';
 import { PduRefusedError } from '../src/index.ts';
+import { bareTlvHeader, pduBytes } from '../test/raw-pdus.ts';
 import { server } from '../src/server.ts';
 
 const JSMPP_HOST = process.env.JSMPP_HOST ?? 'jsmpp:8080';
@@ -264,62 +265,48 @@ describe('S3 - known-but-unhandled and malformed commands (targets 1, 6)', () =>
 		assert.equal(linkResponse.cmdStatusHex, '0x0');
 	});
 
-	// Not reachable through jsmpp's own typed API at all (it cannot construct wire garbage) - this is
-	// a raw fixture opened directly against our server(), discovered while building the reproducers
-	// above. Kept here rather than in test/ because it was found during, and belongs beside, this
-	// phase's malformed-PDU work.
-	test('defect: a 4-octet truncated TLV tail is silently accepted rather than refused', async () => {
+	// Not reachable through jsmpp's own typed API at all (it cannot construct wire garbage), so this
+	// is a raw fixture opened directly against our server().
+	test('a deliver_sm ending in a bare TLV header gets ESME_RINVTLVSTREAM, and reaches no listener', async t => {
 		await waitForSessions(1);
-
-		function cstring(value: string): Buffer {
-			return Buffer.concat([Buffer.from(value, 'latin1'), Buffer.from([0])]);
-		}
-
-		const msg = Buffer.from('truncated tlv probe silent', 'latin1');
-		const body = Buffer.concat([
-			cstring(''), Buffer.from([0, 0]), cstring('raw2-from'),
-			Buffer.from([0, 0]), cstring('raw2-to'),
-			Buffer.from([0, 0, 0]), cstring(''), cstring(''),
-			Buffer.from([0, 0, 0, 0, msg.length]), msg,
-			// A bare 4-octet TLV header (tag 0x001D, declared length 200) with zero value octets.
-			Buffer.from([0x00, 0x1D, 0x00, 0xC8]),
-		]);
-		const header = Buffer.alloc(16);
-
-		header.writeUInt32BE(16 + body.length, 0);
-		header.writeUInt32BE(0x00000005, 4);
-		header.writeUInt32BE(0, 8);
-		header.writeUInt32BE(777, 12);
 
 		const sock = net.connect(SMPP_PORT, '127.0.0.1');
 
+		t.after(() => { sock.destroy(); });
 		await new Promise<void>(resolve => { sock.once('connect', () => { resolve(); }); });
 
-		const bindBody = Buffer.concat([cstring('rawverify'), cstring('pw'), cstring(''), Buffer.from([0x34, 0, 0]), cstring('')]);
-		const bindHeader = Buffer.alloc(16);
-
-		bindHeader.writeUInt32BE(16 + bindBody.length, 0);
-		bindHeader.writeUInt32BE(0x00000009, 4);
-		bindHeader.writeUInt32BE(0, 8);
-		bindHeader.writeUInt32BE(1, 12);
-		sock.write(Buffer.concat([bindHeader, bindBody]));
+		sock.write(pduBytes({
+			cmdName: 'bind_transceiver',
+			params: { interface_version: 0x34, password: 'pw', system_id: 'rawverify' },
+			seqNr: 1,
+		}));
 		await new Promise<void>(resolve => { sock.once('data', () => { resolve(); }); });
 
 		const responsePromise = new Promise<Buffer>(resolve => { sock.once('data', data => { resolve(data); }); });
 
-		sock.write(Buffer.concat([header, body]));
+		sock.write(bareTlvHeader({
+			cmdName: 'deliver_sm',
+			params: {
+				destination_addr: 'raw2-to',
+				short_message: 'truncated tlv probe silent',
+				source_addr: 'raw2-from',
+			},
+			seqNr: 777,
+		}));
 
 		const response = await responsePromise;
-		const cmdStatus = response.readUInt32BE(8);
 
-		// Defect: this should be ESME_RINVTLVSTREAM (0xC0); the codec's trailing-NUL retry instead
-		// treats the 4 leftover octets as unparsed slack and accepts the PDU as ESME_ROK.
-		assert.equal(cmdStatus, 0x00000000);
+		assert.equal(response.readUInt32BE(4), 0x80000005);
+		assert.equal(response.readUInt32BE(8), 0x000000C0);
+		assert.equal(response.readUInt32BE(12), 777);
 
-		const arrived = await waitForSms('truncated tlv probe silent');
+		const refused = await waitFor(() => allSessionErrors.find(e => e.err instanceof PduRefusedError
+			&& e.err.header.seqNr === 777));
 
-		assert.equal(arrived.from, 'raw2-from');
-		sock.destroy();
+		assert.ok(refused);
+		assert.ok(refused.err instanceof PduRefusedError);
+		assert.equal(refused.err.reason, 'tlvs');
+		assert.equal(allSms.some(entry => entry.sms.message === 'truncated tlv probe silent'), false);
 	});
 });
 

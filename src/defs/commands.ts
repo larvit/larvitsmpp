@@ -19,7 +19,8 @@ const bindParams = {
 
 /**
  * Key order inside each `params` object is the order the fields appear on the wire. Reordering
- * them corrupts every PDU of that command.
+ * them corrupts every PDU of that command, and moving a field after `short_message` also stops the
+ * codec skipping the NULL octet some peers append to it.
  */
 const specs = {
 	alert_notification: {

@@ -87,6 +87,46 @@ describe('parsing real PDUs', () => {
 		assert.equal(pduObj.params.short_message, 'test');
 		assert.equal(pduObj.cmdLength, 59);
 	});
+
+	// SMPP 3.4 4.6.2 leaves deliver_sm_resp's message_id unused and peers send the response with no
+	// body at all, so the last C-Octet String of a PDU is one a peer may leave out entirely.
+	test('reads a PDU whose trailing C-Octet String was left out altogether', () => {
+		const bind = encode({
+			cmdName: 'bind_transceiver',
+			params: { password: 'secret08', system_id: 'SMPP3TEST' },
+			seqNr: 1,
+		});
+		const withoutRange = bind.subarray(0, bind.length - 1);
+
+		withoutRange.writeUInt32BE(withoutRange.length, 0);
+
+		const bound = decode(withoutRange);
+
+		assert.equal(bound.params.system_id, 'SMPP3TEST');
+		assert.equal(bound.params.address_range, '');
+		assert.equal(decode(Buffer.from('00000010800000050000000000000007', 'hex')).params.message_id, '');
+		assert.equal(decode(Buffer.from('00000010800000040000000000000007', 'hex')).params.message_id, '');
+	});
+
+	// The padded read skips one NULL octet and no more: the body's own last octet is 0x00 here, and
+	// the optional parameters behind the padding still have to be read.
+	test('reads past that NULL octet to the optional parameters behind it', () => {
+		const padded = Buffer.concat([
+			encode({
+				cmdName: 'deliver_sm',
+				params: { destination_addr: '46709771337', short_message: 'hej 一', source_addr: '46701113311' },
+				seqNr: 41,
+			}),
+			Buffer.from('000427000102', 'hex'),
+		]);
+
+		padded.writeUInt32BE(padded.length, 0);
+
+		const pduObj = decode(padded);
+
+		assert.equal(pduObj.params.short_message, 'hej 一');
+		assert.equal(pduObj.tlvs.message_state?.tagValue, 2);
+	});
 });
 
 describe('encoding submit_sm', () => {
@@ -530,6 +570,37 @@ describe('malformed input', () => {
 			cmdName: 'deliver_sm_resp',
 			cmdStatus: 'ESME_RINVTLVSTREAM',
 		});
+	});
+
+	// interop-tests/findings/05-java-clients.md's reproducer, octet for octet.
+	test('refuses a bare TLV header the same way it refuses a truncated value', () => {
+		const refused = pduToObj(Buffer.from(
+			'000000460000000500000000000000630000007261772d66726f6d0000007261772d746f0000000000000000000013'
+			+ '7472756e636174656420746c762070726f6265001d00c8',
+			'hex',
+		)).err;
+
+		assert.ok(refused instanceof PduRefusedError);
+		assert.equal(refused.reason, 'tlvs');
+		assert.equal(refused.header.seqNr, 99);
+		assert.deepEqual(refusalAnswer(refused), {
+			cmdName: 'deliver_sm_resp',
+			cmdStatus: 'ESME_RINVTLVSTREAM',
+		});
+	});
+
+	test('refuses octets left over after the optional parameters', () => {
+		const slack = Buffer.concat([
+			encode({ cmdName: 'deliver_sm', params: { short_message: 'hello' }, seqNr: 13 }),
+			Buffer.from('4142', 'hex'),
+		]);
+
+		slack.writeUInt32BE(slack.length, 0);
+
+		const refused = pduToObj(slack).err;
+
+		assert.ok(refused instanceof PduRefusedError);
+		assert.equal(refused.reason, 'tlvs');
 	});
 
 	test('answers a command with no response of its own with generic_nack', () => {

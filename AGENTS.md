@@ -401,6 +401,24 @@ Grouped by what each one constrains.
   keeps that traffic and `PendingRequests.nextSeqNr()`, the only thing that invents one, is what
   holds our own sends inside the spec.
 
+- **The optional parameters run to `command_length` exactly, and the only slack tolerated is one
+  NULL octet where a peer padded `short_message`.** Maintainer's call, 2026-09-06, from the
+  Java-client interoperability phase: accepting any parse that merely did not error answered
+  `ESME_ROK` to a `deliver_sm` whose three trailing octets were never read, dropping the
+  `receipted_message_id` that makes a receipt a receipt
+  ([interop-tests/findings/05-java-clients.md](interop-tests/findings/05-java-clients.md)). Goal 2
+  settles it against goal 3: octets this codec cannot name are a PDU it did not read, so a region
+  that does not end on `command_length` — the padded read included — is refused with the `tlvs`
+  reason and `ESME_RINVTLVSTREAM` a truncated TLV value already gets. What the rule costs is paid
+  once, in `readCstring()`: a trailing C-Octet String a peer left out entirely consumes no octet,
+  where reporting the terminator it never sent puts every later offset past the declared end and
+  refuses a bind, and every bodyless response, that used to parse. That composes, so a run of them
+  at the tail all read empty — `outbind` is the only command with two, and an absent field and an
+  empty one say the same thing, so goal 2 is not at stake even there. Rejected: keeping the tolerance
+  for the one to three trailing octets too few to hold a TLV header, which no researched peer sends
+  and which cannot be told apart from the truncated tail this fixes. Rejected: refusing it as
+  `body`/`ESME_RINVCMDLEN`, which names the mandatory fields — the part the peer got right.
+
 - **`smsIdFormat` names a notation per place, and normalisation never reaches inside a `<base>-<n>`
   id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's `id:` in decimal, so one
   transform over both sides cannot make them equal. `submitResp` covers the `receipted_message_id`
