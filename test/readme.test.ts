@@ -139,6 +139,7 @@ describe('README: Client', () => {
 				flash: false,
 				from: 'MyBrand',
 				message: 'Hello world',
+				messagingMode: 'SMSC_DEFAULT',
 				scheduleDeliveryTime: new Date(Date.now() + 3600_000),
 				to: '46709771337',
 				validityPeriod: 3600,

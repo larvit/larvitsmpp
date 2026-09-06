@@ -101,6 +101,7 @@ await session.sendSms({
 	from:                 'MyBrand',   // alphanumeric -> TON 5, digits -> TON 1
 	maxSegments:          10,          // refuse a longer message instead of sending it
 	message:              'Hello world',
+	messagingMode:        'SMSC_DEFAULT', // or DATAGRAM, FORWARD, STORE_FORWARD
 	scheduleDeliveryTime: new Date(Date.now() + 3600_000),
 	sourceAddrNpi:        0,           // override the numbering plan of the sender
 	sourceAddrTon:        5,
@@ -111,6 +112,12 @@ await session.sendSms({
 
 `sourceAddrTon` and `destinationAddrTon` default to 5 for an alphanumeric address and 1 for a
 numeric one; the NPI fields default to 0. Set them for an operator that requires something else.
+
+`messagingMode` names the `esm_class` messaging mode: `SMSC_DEFAULT`, which is what an omitted option
+sends, or `DATAGRAM`, `FORWARD` or `STORE_FORWARD`. Every segment of a long message carries the user
+data header indicator beside it, so an operator that requires `esm_class` 0x43 on a concatenated
+message gets exactly that from `STORE_FORWARD`. Anything else is refused before a segment goes out,
+naming the four modes.
 
 Messages too long for one SMS are split automatically and sent as a concatenated message. You get
 one id per segment:
