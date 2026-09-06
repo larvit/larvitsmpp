@@ -21,6 +21,10 @@ PORT_BY_PEER = {
 	"smscsim": 2775,
 }
 
+# Every scenario in every peer's test file binds before doing anything else, so a capture missing
+# either side of that handshake never saw real traffic - the same signal as an empty capture.
+BIND_COMMANDS = ("bind_receiver", "bind_transmitter", "bind_transceiver")
+
 # The 33 SMPP commands (SMPP 3.4), by numeric command_id, for the tshark histogram.
 COMMAND_NAMES = {
 	0x00000001: "bind_receiver",
@@ -135,6 +139,9 @@ def analyse_capture(peer: str, port: int) -> tuple[int, dict[str, object]]:
 			1 for severity in collect(frame, "_ws.expert.severity") if severity == EXPERT_SEVERITY_ERROR
 		)
 
+	has_bind = any(histogram[name] for name in BIND_COMMANDS)
+	has_bind_resp = any(histogram[f"{name}_resp"] for name in BIND_COMMANDS)
+
 	print(f"frames: {len(frames)}")
 	print("commands:")
 	for name, count in sorted(histogram.items()):
@@ -142,7 +149,12 @@ def analyse_capture(peer: str, port: int) -> tuple[int, dict[str, object]]:
 	print(f"malformed: {malformed}")
 	print(f"expert errors: {expert_errors}")
 
-	status = 1 if malformed > 0 or expert_errors > 0 else 0
+	if not frames:
+		print("empty capture: no frames decoded", file=sys.stderr)
+	if not has_bind or not has_bind_resp:
+		print("no bind/bind_resp pair in capture", file=sys.stderr)
+
+	status = 1 if not frames or not has_bind or not has_bind_resp or malformed > 0 or expert_errors > 0 else 0
 
 	return status, {
 		"commands": dict(histogram),
@@ -177,10 +189,11 @@ def main() -> int:
 	sh(compose_cmd(args.peer, "stop", "capture"))
 	fix_capture_ownership()
 
-	analysis_status, _ = analyse_capture(args.peer, port)
-
-	if not args.keep:
-		sh(compose_cmd(args.peer, "down", "-v"))
+	try:
+		analysis_status, _ = analyse_capture(args.peer, port)
+	finally:
+		if not args.keep:
+			sh(compose_cmd(args.peer, "down", "-v"))
 
 	return 1 if tests.returncode != 0 else analysis_status
 
