@@ -35,16 +35,22 @@ export type Sms = {
 	pduObjs: PduObject[];
 	/** Sends a delivery report back to the sender. Defaults to DELIVERED. */
 	sendDlr: (status?: MessageState) => Promise<SendDlrResult>;
-	/** Answers every segment. Part of the protocol, not optional. Defaults to ESME_ROK. */
+	/**
+	 * Answers the message, and says the application is done with it. A concatenated message was
+	 * answered segment by segment as it arrived, so there it only releases a shutdown's wait and
+	 * refuses an `smsId` or a refusing `status`. Part of the protocol, not optional.
+	 */
 	sendResp: (options?: SendRespOptions) => Promise<VoidResult>;
 	session: Session;
-	/** The id `sendResp()` was given, or a generated UUID v7. */
+	/** The id the segments were answered with, the id `sendResp()` was given, or a generated UUID v7. */
 	readonly smsId: string;
 	submitTime: Date;
 	to: string;
 };
 
 export type SmsInput = {
+	/** The id base the segments were already answered with; absent leaves the answer to `sendResp()`. */
+	answeredAs?: string | undefined;
 	from: string;
 	message: string;
 	pduObjs: PduObject[];
@@ -60,7 +66,7 @@ export type SmsHandlers = {
 };
 
 /** Each segment of a multipart message gets its own message_id, as a separate submit_sm must. */
-function segmentId(smsId: string, index: number, total: number): string {
+export function segmentId(smsId: string, index: number, total: number): string {
 	return total === 1 ? smsId : `${smsId}-${String(index + 1)}`;
 }
 
@@ -68,7 +74,7 @@ export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 	const first = input.pduObjs[0];
 	const registered = first?.params.registered_delivery;
 	const dataCoding = first?.params.data_coding;
-	const answered = { smsId: uuidv7() };
+	const answered = { smsId: input.answeredAs ?? uuidv7() };
 
 	const sms: Sms = {
 		dlr: typeof registered === 'number' && registered !== 0,
@@ -77,7 +83,9 @@ export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 		message: input.message,
 		pduObjs: input.pduObjs,
 		sendDlr: status => sendDlr(sms, handlers.send, status),
-		sendResp: options => sendResp(sms, answered, options ?? {}, handlers),
+		sendResp: options => (input.answeredAs === undefined
+			? sendResp(sms, answered, options ?? {}, handlers)
+			: alreadyAnswered(options ?? {}, handlers)),
 		session: input.session,
 		get smsId(): string {
 			return answered.smsId;
@@ -87,6 +95,28 @@ export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 	};
 
 	return sms;
+}
+
+/** Every segment went out answered, so the call is what the shutdown waits for and nothing else. */
+function alreadyAnswered(
+	options: SendRespOptions,
+	handlers: Pick<SmsHandlers, 'onAnswered'>,
+): Promise<VoidResult> {
+	if (options.smsId !== undefined) {
+		return Promise.resolve({
+			err: new Error('The segments were answered as they arrived, so their ids are already on the wire; read sms.smsId'),
+		});
+	}
+
+	if (options.status !== undefined && options.status !== 'ESME_ROK') {
+		return Promise.resolve({
+			err: new Error('The segments were answered as they arrived, so there is nothing left to refuse; refuse a segment from onRequest instead'),
+		});
+	}
+
+	handlers.onAnswered();
+
+	return Promise.resolve({});
 }
 
 async function sendResp(

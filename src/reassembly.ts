@@ -6,6 +6,15 @@ import type { Tlv } from './defs/tlvs.ts';
 import { ExpiringGroups } from './expiring-groups.ts';
 import { decodeMessage } from './message.ts';
 import { paramNumber, paramText } from './defs/types.ts';
+import { uuidv7 } from './uuid.ts';
+
+/** A concatenated message given up on, whose segments the peer has already been answered for. */
+export type LostGroup = {
+	parts: number;
+	reason: 'evicted' | 'expired' | 'linkGone';
+	smsId: string;
+	total: number;
+};
 
 export type ReassemblerOptions = {
 	log: SmppLog;
@@ -13,7 +22,16 @@ export type ReassemblerOptions = {
 	maxOctets?: number | undefined;
 	/** Injected so expiry can be exercised without a wall clock. */
 	now?: (() => number) | undefined;
+	onLost?: ((lost: LostGroup) => void) | undefined;
 	timeout: number;
+};
+
+/** What a segment did to its group. */
+export type Collected = {
+	/** The id base every segment of the group is answered with. */
+	smsId: string;
+	/** Every segment in order, on the one that completes the message. */
+	whole?: PduObject[] | undefined;
 };
 
 const defaultMaxOctets = 64 * 1024 * 1024;
@@ -21,6 +39,7 @@ const defaultMaxOctets = 64 * 1024 * 1024;
 type Group = {
 	octets: number;
 	parts: Map<number, PduObject>;
+	smsId: string;
 	total: number;
 };
 
@@ -99,8 +118,8 @@ export function decodeSegments(pduObjs: PduObject[]): string {
 export class Reassembler {
 	private readonly groups: ExpiringGroups<Group>;
 	private readonly log: SmppLog;
-	private readonly max: number;
 	private readonly maxOctets: number;
+	private readonly onLost: (lost: LostGroup) => void;
 	private octets = 0;
 
 	constructor(options: ReassemblerOptions) {
@@ -111,16 +130,16 @@ export class Reassembler {
 			timeout: options.timeout,
 		});
 		this.log = options.log;
-		this.max = options.max;
 		this.maxOctets = options.maxOctets ?? defaultMaxOctets;
+		this.onLost = options.onLost ?? ((): void => undefined);
 	}
 
 	get size(): number {
 		return this.groups.size;
 	}
 
-	/** Every segment in order, on the one that completes the message; nothing while it is short. */
-	collect(pduObj: PduObject, concat: ConcatInfo): PduObject[] | undefined {
+	/** The group the segment joined; undefined where its UDH left it belonging to none. */
+	collect(pduObj: PduObject, concat: ConcatInfo): Collected | undefined {
 		this.sweep();
 
 		if (concat.part < 1 || concat.total < 1 || concat.part > concat.total) {
@@ -158,32 +177,38 @@ export class Reassembler {
 		if (group.parts.size < group.total) {
 			this.trim();
 
-			return undefined;
+			return { smsId: group.smsId };
 		}
 
 		this.groups.delete(key);
 		this.octets -= group.octets;
 
-		return [...group.parts.entries()].sort(([a], [b]) => a - b).map(([, part]) => part);
+		return {
+			smsId: group.smsId,
+			whole: [...group.parts.entries()].sort(([a], [b]) => a - b).map(([, part]) => part),
+		};
 	}
 
 	clear(): void {
-		this.groups.clear();
+		for (const [, group] of this.groups.takeAll()) {
+			this.lost(group, 'linkGone');
+		}
+
 		this.octets = 0;
 	}
 
 	/** Drops every group past its deadline. Runs before each collect and on its own timer. */
 	sweep(): void {
-		for (const [key, group] of this.groups.takeExpired()) {
-			this.log.info('reassembler - incomplete message expired', { key, total: group.total });
+		for (const [, group] of this.groups.takeExpired()) {
 			this.octets -= group.octets;
+			this.lost(group, 'expired');
 		}
 	}
 
 	private open(key: string, total: number): Group {
 		if (this.groups.full) this.dropOldest();
 
-		const group: Group = { octets: 0, parts: new Map(), total };
+		const group: Group = { octets: 0, parts: new Map(), smsId: uuidv7(), total };
 
 		this.groups.set(key, group);
 
@@ -204,11 +229,20 @@ export class Reassembler {
 
 		const [, group] = oldest;
 
-		this.log.warn('reassembler - buffer full, dropping the oldest message', {
-			max: this.max,
-			maxOctets: this.maxOctets,
-			octets: this.octets,
-		});
 		this.octets -= group.octets;
+		this.lost(group, 'evicted');
+	}
+
+	/** Its segments are answered, so the peer will not send them again: this is traffic gone. */
+	private lost(group: Group, reason: LostGroup['reason']): void {
+		const lost: LostGroup = {
+			parts: group.parts.size,
+			reason,
+			smsId: group.smsId,
+			total: group.total,
+		};
+
+		this.log.warn('reassembler - gave up a concatenated message', lost);
+		this.onLost(lost);
 	}
 }

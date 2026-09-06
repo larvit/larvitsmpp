@@ -76,7 +76,7 @@ export class HeldMessages {
 
 	/** Drops every message: their segments went with the link, so no answer of ours correlates now. */
 	clear(): void {
-		this.held.clear();
+		this.held.takeAll();
 		this.idleWaiters.settle();
 	}
 
