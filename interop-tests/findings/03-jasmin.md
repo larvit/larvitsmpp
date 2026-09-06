@@ -165,6 +165,10 @@ segment as they arrive rather than being a relay itself. Worth a decision record
 each segment as it's held, not only once the group completes; or document that a `server()` sitting
 behind a serializing relay needs its own segment-level ack), but not fixed here per the phase rules.
 
+**Fixed** in [#83](https://github.com/larvit/larvitsmpp/pull/83): every segment is answered as it
+arrives, with `<base>-<n>` off an id the group is opened with. All four multi-segment cases pass, in
+200-360 ms each, malformed 0 and expert errors 0.
+
 ## Peer quirks
 
 - **Jasmin's own `enquireLinkTimerSecs` (30, `[smpp-server]` default) is an idle timer, not a strict
