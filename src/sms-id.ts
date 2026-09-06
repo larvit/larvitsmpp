@@ -1,3 +1,4 @@
+import type { CommandName } from './defs/commands.ts';
 import type { ParamValue } from './defs/types.ts';
 
 const notations = {
@@ -55,6 +56,6 @@ export function parseSegmentId(smsId: string): { base: string; part: number } | 
 }
 
 /** SMPP 3.4 4.6.2 makes `deliver_sm_resp`'s `message_id` unused, and Jasmin FINs the link over one. */
-export function respIdParams(cmdName: string, smsId: string): Record<string, ParamValue> {
+export function respIdParams(cmdName: CommandName, smsId: string): Record<string, ParamValue> {
 	return cmdName === 'deliver_sm' ? {} : { message_id: smsId };
 }

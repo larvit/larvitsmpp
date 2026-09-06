@@ -1,5 +1,4 @@
 import type { ConcatInfo } from './udh.ts';
-import type { ErrorName } from './defs/errors.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject } from './pdu.ts';
 import type { SmppLog } from './log.ts';
@@ -29,14 +28,19 @@ export type ReassemblerOptions = {
 	timeout: number;
 };
 
-/** What a segment did to its group, and the answer the peer is owed for it. */
-export type Collected = {
-	/** The id base the group's segments are answered with; absent where the segment was refused. */
-	smsId?: string | undefined;
-	status: ErrorName;
-	/** Every segment in order, on the one that completes the message. */
-	whole?: PduObject[] | undefined;
-};
+/** Why a segment was not kept. The peer holds it either way, so both are answered as such. */
+export type Refusal = 'full' | 'unplaceable';
+
+/** What a segment did to its group. */
+export type Collected =
+	| { kept: false; refusal: Refusal }
+	| {
+		kept: true;
+		/** The id base the group's segments are answered with. */
+		smsId: string;
+		/** Every segment in order, on the one that completes the message. */
+		whole?: PduObject[] | undefined;
+	};
 
 const defaultMaxOctets = 64 * 1024 * 1024;
 
@@ -151,7 +155,7 @@ export class Reassembler {
 		const key = groupKey(pduObj, concat.reference);
 		const existing = this.groups.get(key);
 
-		if (!this.placeable(concat, existing)) return { status: 'ESME_RINVESMCLASS' };
+		if (!this.placeable(concat, existing)) return { kept: false, refusal: 'unplaceable' };
 
 		const group = existing ?? this.open(key, concat.total);
 		const replaced = group.parts.get(concat.part);
@@ -166,17 +170,17 @@ export class Reassembler {
 			this.trim(key);
 
 			// Its own arrival overran the octet cap, so the peer keeps it rather than being told we did.
-			if (this.groups.get(key) !== group) return { status: 'ESME_RMSGQFUL' };
+			if (this.groups.get(key) !== group) return { kept: false, refusal: 'full' };
 
-			return { smsId: group.smsId, status: 'ESME_ROK' };
+			return { kept: true, smsId: group.smsId };
 		}
 
 		this.groups.delete(key);
 		this.octets -= group.octets;
 
 		return {
+			kept: true,
 			smsId: group.smsId,
-			status: 'ESME_ROK',
 			whole: [...group.parts.entries()].sort(([a], [b]) => a - b).map(([, part]) => part),
 		};
 	}
@@ -239,8 +243,8 @@ export class Reassembler {
 
 			if (!oldest) return;
 
-			// The segment that overran the cap on its own is refused instead, so nothing of it is lost.
-			if (oldest[0] !== current) this.lost(oldest[1], 'evicted');
+			// Only a group that is nothing but the refused segment leaves nothing behind to report.
+			if (oldest[0] !== current || oldest[1].parts.size > 1) this.lost(oldest[1], 'evicted');
 		}
 	}
 

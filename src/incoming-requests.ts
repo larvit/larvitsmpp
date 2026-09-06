@@ -1,5 +1,7 @@
+import type { CommandName } from './defs/commands.ts';
 import type { DlrMerger } from './dlr-merger.ts';
-import type { LostGroup } from './reassembly.ts';
+import type { ErrorName } from './defs/errors.ts';
+import type { LostGroup, Refusal } from './reassembly.ts';
 import type { OnRequest } from './session-options.ts';
 import type { PduObject, PduObjectInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
@@ -15,6 +17,13 @@ import { createSms } from './sms.ts';
 import { dlrFromPdu } from './dlr.ts';
 import { paramNumber, paramText } from './defs/types.ts';
 import { respIdParams, segmentId } from './sms-id.ts';
+
+/** SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another. */
+export function refusalStatus(cmdName: CommandName, refusal: Refusal): ErrorName {
+	if (refusal === 'unplaceable') return 'ESME_RINVESMCLASS';
+
+	return cmdName === 'deliver_sm' ? 'ESME_RX_T_APPN' : 'ESME_RMSGQFUL';
+}
 
 const lostReasons: Record<LostGroup['reason'], string> = {
 	evicted: 'the reassembly buffer filled',
@@ -187,15 +196,20 @@ export class IncomingRequests {
 		}
 
 		const collected = this.reassembler.collect(pduObj, concat);
-		const smsId = collected.smsId;
+
+		if (!collected.kept) {
+			await this.session.sendReturn(pduObj, refusalStatus(pduObj.cmdName, collected.refusal));
+
+			return;
+		}
 
 		await this.session.sendReturn(
 			pduObj,
-			collected.status,
-			smsId === undefined ? {} : respIdParams(pduObj.cmdName, segmentId(smsId, concat.part - 1, concat.total)),
+			'ESME_ROK',
+			respIdParams(pduObj.cmdName, segmentId(collected.smsId, concat.part - 1, concat.total)),
 		);
 
-		if (collected.whole && smsId !== undefined) this.emitSms(collected.whole, smsId);
+		if (collected.whole) this.emitSms(collected.whole, collected.smsId);
 	}
 
 	private reportLost(lost: LostGroup): void {
