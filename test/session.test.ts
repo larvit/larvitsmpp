@@ -885,6 +885,33 @@ describe('receiving', () => {
 		assert.deepEqual(reports, [], 'an ESME submitting is never the network reporting');
 	});
 
+	// The refusal a submission gets is the one submit_sm_resp defines, whichever command carried it.
+	test('refuses a data_sm segment a server has no room for with the submit code', async t => {
+		// The two addresses are 22 octets, so the 6-octet UDH and its text are what overrun 30.
+		const smpp = await startServer(t, { maxOctets: 30 });
+		const { session } = await connect(t, smpp, { bindType: 'transmitter' });
+
+		assert.ok(session);
+
+		const segment = splitMessage('one of two, too big to hold. '.repeat(12), { reference: 0x5C })[0];
+
+		assert.ok(segment);
+
+		const refused = await session.send({
+			cmdName: 'data_sm',
+			params: {
+				destination_addr: '46709771337',
+				esm_class: consts.ESM_CLASS.UDH_INDICATOR,
+				source_addr: '46701113311',
+			},
+			tlvs: { message_payload: { tagValue: segment } },
+		});
+
+		assert.ok(refused.pduObj);
+		assert.equal(refused.pduObj.cmdName, 'data_sm_resp');
+		assert.equal(refused.pduObj.cmdStatus, 'ESME_RMSGQFUL');
+	});
+
 	test('reassembles a concatenated message whose segments arrived in message_payload', async t => {
 		const { peer, session } = await inbound(t);
 		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });

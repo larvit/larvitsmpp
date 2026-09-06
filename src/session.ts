@@ -35,7 +35,7 @@ export type {
 	SessionEvents,
 	SessionOptions,
 };
-export type { BindType, LinkEnd };
+export type { BindType };
 export { bindCommands, defaultSystemId };
 
 /** A listener may return a promise: an `async` one that rejects is routed like one that throws. */

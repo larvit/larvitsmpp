@@ -19,10 +19,10 @@ import { paramNumber, paramText } from './defs/types.ts';
 import { respIdParams, segmentId } from './sms-id.ts';
 
 /** SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another. */
-export function refusedSegmentStatus(cmdName: string, refusal: Refusal): ErrorName {
+export function refusedSegmentStatus(carriedAs: string, refusal: Refusal): ErrorName {
 	if (refusal === 'unplaceable') return 'ESME_RINVESMCLASS';
 
-	return cmdName === 'submit_sm' ? 'ESME_RMSGQFUL' : 'ESME_RX_T_APPN';
+	return carriedAs === 'submit_sm' ? 'ESME_RMSGQFUL' : 'ESME_RX_T_APPN';
 }
 
 const lostReasons: Record<LostGroup['reason'], string> = {
@@ -169,7 +169,6 @@ export class IncomingRequests {
 		await this.session.sendReturn(pduObj, 'ESME_RINVCMDID');
 	}
 
-	/** Which message-carrying command this one stands in for at this end of the link. */
 	private carriedAs(pduObj: PduObject): string {
 		return standsInFor(pduObj.cmdName, this.session.linkEnd);
 	}
