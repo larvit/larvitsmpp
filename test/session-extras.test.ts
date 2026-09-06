@@ -14,7 +14,7 @@ import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
 import { HeldMessages } from '../src/held-messages.ts';
-import { IncomingRequests, refusalStatus } from '../src/incoming-requests.ts';
+import { IncomingRequests, refusedSegmentStatus } from '../src/incoming-requests.ts';
 import { UnansweredError } from '../src/unanswered-error.ts';
 import { createSms } from '../src/sms.ts';
 import { LinkGate } from '../src/link-gate.ts';
@@ -1520,9 +1520,10 @@ describe('reassembly bounds', () => {
 		assert.equal(collect(reassembler, 8, 1, 3).kept, true);
 		assert.equal(collect(reassembler, 8, 2, 3).kept, false);
 		assert.equal(reassembler.size, 0);
+		// One of the two the group held is the refused segment, which the peer still has.
 		assert.deepEqual(
 			lost.map(one => ({ parts: one.parts, reason: one.reason, total: one.total })),
-			[{ parts: 2, reason: 'evicted', total: 3 }],
+			[{ parts: 1, reason: 'evicted', total: 3 }],
 		);
 	});
 
@@ -1724,10 +1725,10 @@ describe('reassembly bounds', () => {
 describe('the status a refused segment is answered with', () => {
 	// SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another.
 	test('names one the command the segment arrived on defines', () => {
-		assert.equal(refusalStatus('submit_sm', 'full'), 'ESME_RMSGQFUL');
-		assert.equal(refusalStatus('deliver_sm', 'full'), 'ESME_RX_T_APPN');
-		assert.equal(refusalStatus('submit_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
-		assert.equal(refusalStatus('deliver_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
+		assert.equal(refusedSegmentStatus('submit_sm', 'full'), 'ESME_RMSGQFUL');
+		assert.equal(refusedSegmentStatus('deliver_sm', 'full'), 'ESME_RX_T_APPN');
+		assert.equal(refusedSegmentStatus('submit_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
+		assert.equal(refusedSegmentStatus('deliver_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
 	});
 });
 
