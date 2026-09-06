@@ -171,6 +171,33 @@ fix before the next phase starts, per AGENTS.md.
 | 8 | Hosted, manual: Melrose and smpp.org (C1, C7, C8, C14, C15, C17) | 2 h |
 | 9 | Fixtures from the quirk list into `test/` (C8 UDH-16, C9, C10, C15, C16) | 1 day |
 | 10 | Decide 1.0 scope for targets 2–5: fix, or document as a limitation with the peers that refuse | — |
+| 11 | One product-owner pass over everything the fixes changed on the public surface — see below | 2 h |
+
+## The product-owner pass, phase 11
+
+Fixing what the peers found moved the published surface seven times in two days, and three separate
+reviews asked for a product-owner pass on their own change. One pass over all of it beats three
+narrow ones: the risk days before 1.0.0 is not any single option but the seams between them, and
+only a review that holds them together at once can see those.
+
+Run it once phases 6 to 10 are done, so nothing lands after it. Read-only, reporting findings; each
+one that earns a change ships as its own reviewed PR.
+
+**Already reviewed, and carried in only as context** — the refusal error class and what
+`sessionError` means (PRs #79 and #82), and the multipart answering contract (#83). Both passes'
+findings were documentation, fixed in #85. Do not re-litigate them; use them to judge whether the
+newer changes stayed consistent with them.
+
+**What the pass covers:**
+
+| Change | The question a consumer asks |
+| --- | --- |
+| `data_sm` and `message_payload` accepted (#84) | Traffic that used to be dropped now arrives. Does an application that never expected `data_sm` behave sensibly when one turns up as an `sms`? Is `messageOctets`, newly exported, something a consumer needs or something we leaked? |
+| The `server()` `onRequest` hook (#86) | A hook that throws answers nothing, so the peer waits for its own timeout. Is that discoverable before it happens in production, and is silence the right failure for the surface that owns refusing a message? |
+| `reconnect: { fromStart: true }` (#80) | `client()` resolves only once bound, and only the caller's signal ends the wait. Is that obvious enough that nobody ships a process that hangs at startup? |
+| A receipt's body read as octets (#81) | `dlr.receipt` now parses for peers where it used to be garbage. Anything an application could have been relying on in the broken case? |
+| The abortable send window (in flight) | What an aborted send returns, and whether it counts as `unanswered` — the field an application reads to decide whether resending risks a duplicate. |
+| All of them together | `sessionError` now carries refused PDUs, lost reassembly groups and failed hooks. Is one channel carrying too many meanings for an application to act on any of them? |
 
 ## Delegation
 
@@ -197,7 +224,7 @@ document, library changes, and the AGENTS.md decision record each one needs.
 | 3 | done | [03-jasmin.md](findings/03-jasmin.md) |
 | 4 | done | [04-kannel.md](findings/04-kannel.md) |
 | 5 | done | [05-java-clients.md](findings/05-java-clients.md) |
-| 6–10 | not started | — |
+| 6–11 | not started | — |
 
 Research notes behind this plan, 2026-09-05, are in `research/`: SMSC simulators, ESME clients
 and validators, and operator quirks with one source URL per claim. Ask before trusting a claim here
