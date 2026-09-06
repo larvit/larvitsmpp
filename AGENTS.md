@@ -458,9 +458,8 @@ Grouped by what each one constrains.
   generated when it opens and each segment is answered `<base>-<n>`, the notation `sms-id.ts` owns
   and `DlrMerger` reads back. The id is therefore fixed by the first segment, which is why an `smsId`
   or a refusing `status` passed to `sendResp()` on such a message is an error rather than a silent
-  no-op. `answeredOnArrival` is on `Sms` because nothing else can say: a peer may number a
-  concatenated message one part of one, so the segment count is not the discriminant a reader would
-  reach for and would be wrong when they did. A message `sendResp()` still answers itself is
+  no-op. `answeredOnArrival` is on `Sms` because nothing the application can compute says it, and the
+  discriminant a reader would reach for instead is wrong. A message `sendResp()` still answers itself is
   untouched, and is where a caller-chosen id and a refusal live; `onRequest` is the escape hatch for
   an application that must refuse a PDU the `sms` event could not have shown it yet. `collect()`
   answers every segment it will not carry rather than leaving it unanswered, which is the same stall
@@ -476,7 +475,10 @@ Grouped by what each one constrains.
   as well as the log. Rejected there: an exported `MessageLostError` carrying the group, on the
   `PduRefusedError` pattern — no `sms` ever fired for that group, so there is nothing in it the
   application could act on, and goal 6 does not buy a second exported class to make a count
-  distinguishable.
+  distinguishable. Accepted: a completing segment whose own answer the socket would not carry still
+  reaches the application, because the message is whole and correct and the failed answer is on
+  `sessionError` — a peer that re-sends after the drop is the smaller risk than dropping a message
+  in hand.
 
 - **The drain waits on the messages the application holds, and `sendResp()` is what says it is done
   with one.** Maintainer's call, 2026-09-01: waiting on the send window alone tore a server session

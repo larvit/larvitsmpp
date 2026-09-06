@@ -179,7 +179,7 @@ arrives, with `<base>-<n>` off an id the group is opened with. All four multi-se
   Every id the real client's `submit_sm_resp` carried matched exactly what the fake upstream's
   `sendResp()` assigned; the later receipt named the same id. Since the fake upstream here is this
   library's own `server()`, a multi-segment message's ids came back in this library's own
-  `<base>-<n>` shape - an artifact of the test rig (our own server reassembling before answering),
+  `<base>-<n>` shape - an artifact of the test rig (our own server minting one base per group),
   not evidence that Jasmin itself produces that convention; a real upstream SMSC would very likely
   hand back unrelated ids per segment, as the research notes expected.
 - **`smpps_throughput`, not the connector's `submit_throughput`, gates an ESME's own submission

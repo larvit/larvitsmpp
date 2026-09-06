@@ -199,9 +199,10 @@ if (err) throw err;
 smpp.on('session', session => {
 	session.on('sms', async sms => {
 		// Responding is part of the protocol, not optional. Without arguments it answers
-		// ESME_ROK with a generated id; pass your own, and a status to refuse the message.
-		await sms.sendResp();
+		// ESME_ROK with a generated id. On a message sendResp() still answers itself — see
+		// below — you may pass your own id, and a status to refuse the message:
 		// await sms.sendResp({ smsId: yourOwnId, status: 'ESME_RMSGQFUL' });
+		await sms.sendResp();
 
 		if (sms.dlr) {
 			await sms.sendDlr(); // same as sms.sendDlr('DELIVERED')
@@ -213,9 +214,11 @@ console.log(smpp.port);  // the port actually bound, useful when 0 was requested
 await smpp.close();      // stop listening, then drain and close every live session
 ```
 
-A message that arrived in several segments was already answered when you see it: each segment gets
-an `ESME_ROK` as it lands, because a relaying SMSC will not send the next one until the last is
-answered. `sms.answeredOnArrival` says whether that happened — a segment count cannot, since a peer
+A message that arrived in several segments was already answered when you see it: each segment is
+answered as it lands, because a relaying SMSC will not send the next one until the last is answered.
+That answer is `ESME_ROK` unless the segment's header names no message this session can join, or the
+reassembly buffer is full — either way the peer keeps it. `sms.answeredOnArrival` says whether the
+message you are holding was answered that way — a segment count cannot, since a peer
 may number a concatenated message one part of one. The id was fixed with the first segment, so
 `sendResp()` there only says you are done with the message, and returns an `err` for an `smsId` or a
 refusing `status`; choosing the id and refusing the message belong to a message `sendResp()` still
@@ -460,8 +463,8 @@ promises and the rough edges taken off.
 - **`server()` resolves once, when it is listening**, and gives you a handle with `close()`, `port`
   and a `session` event. It no longer calls your callback once per incoming connection.
 - **The id a message is answered with goes to `sendResp({ smsId })`**, and `sms.smsId` is read-only:
-  it reports the id `sendResp()` was given, or the UUID v7 generated instead. Delete any
-  `sms.smsId = …` line — assigning to it
+  it reports the id the segments were answered with, the id `sendResp()` was given, or the UUID v7
+  generated instead. Delete any `sms.smsId = …` line — assigning to it
   throws a `TypeError`, since modules are always strict mode — and pass the id to `sendResp()`.
 - **`checkuserpass` is now `authenticate`**, takes `{ password, session, systemId, systemType }` and
   returns `false` or `{ userData }`.
