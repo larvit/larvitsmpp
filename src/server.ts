@@ -32,7 +32,7 @@ export type ServerOptions = {
 	maxOutstanding?: number;
 	maxOctets?: number;
 	maxReassembly?: number;
-	/** First refusal on every request the server's own bind handling did not answer. */
+	/** First refusal on every request a bound peer sends. */
 	onRequest?: OnRequest;
 	port?: number;
 	reassemblyTimeout?: number;
@@ -201,29 +201,6 @@ async function onBind(session: Session, pduObj: PduObject, options: ServerOption
 	session.log.verbose('server - bound', { systemId });
 }
 
-/** A hook that fails declines the request, so the built-in handling still answers the peer. */
-async function onRequest(
-	session: Session,
-	pduObj: PduObject,
-	options: ServerOptions,
-): Promise<boolean> {
-	if (!options.onRequest) return false;
-
-	try {
-		return await options.onRequest(session, pduObj);
-	} catch (thrown: unknown) {
-		const err = errorFrom(thrown);
-
-		session.log.error('server - the onRequest hook failed', {
-			cmdName: pduObj.cmdName,
-			message: err.message,
-		});
-		session.emit('sessionError', err);
-
-		return false;
-	}
-}
-
 /**
  * Bind is the server's; a bound peer's other requests are offered to the application. Returns true
  * when it has answered, so the session leaves the PDU alone.
@@ -235,7 +212,11 @@ async function handleRequest(
 ): Promise<boolean> {
 	const isBind = bindCommands.includes(pduObj.cmdName);
 
-	if (session.loggedIn) return isBind ? false : onRequest(session, pduObj, options);
+	if (session.loggedIn) {
+		if (isBind || !options.onRequest) return false;
+
+		return options.onRequest(session, pduObj);
+	}
 
 	if (isBind) {
 		await onBind(session, pduObj, options);
