@@ -11,7 +11,7 @@ import { Reassembler, decodeSegments } from './reassembly.ts';
 import { bindCommands, defaults } from './session-options.ts';
 import { concatInfo } from './udh.ts';
 import { hasUdh } from './defs/constants.ts';
-import { createSms, segmentId } from './sms.ts';
+import { createSms, respMessageId, segmentId } from './sms.ts';
 import { dlrFromPdu } from './dlr.ts';
 import { paramNumber, paramText } from './defs/types.ts';
 
@@ -193,9 +193,11 @@ export class IncomingRequests {
 			return;
 		}
 
-		await this.session.sendReturn(pduObj, 'ESME_ROK', {
-			message_id: segmentId(collected.smsId, concat.part - 1, concat.total),
-		});
+		await this.session.sendReturn(
+			pduObj,
+			'ESME_ROK',
+			respMessageId(pduObj, segmentId(collected.smsId, concat.part - 1, concat.total)),
+		);
 
 		if (collected.whole) this.emitSms(collected.whole, collected.smsId);
 	}

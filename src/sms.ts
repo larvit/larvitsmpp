@@ -1,5 +1,6 @@
 import type { ErrorName } from './defs/errors.ts';
 import type { MessageState } from './defs/constants.ts';
+import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
@@ -68,6 +69,11 @@ export type SmsHandlers = {
 /** Each segment of a multipart message gets its own message_id, as a separate submit_sm must. */
 export function segmentId(smsId: string, index: number, total: number): string {
 	return total === 1 ? smsId : `${smsId}-${String(index + 1)}`;
+}
+
+/** SMPP 3.4 4.6.2 makes `deliver_sm_resp`'s `message_id` unused, and Jasmin FINs the link over one. */
+export function respMessageId(pduObj: PduObject, smsId: string): Record<string, ParamValue> {
+	return pduObj.cmdName === 'deliver_sm' ? {} : { message_id: smsId };
 }
 
 export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
@@ -145,7 +151,7 @@ async function sendResp(
 	const results = await Promise.all(sms.pduObjs.map((pduObj, index) => sms.session.sendReturn(
 		pduObj,
 		options.status ?? 'ESME_ROK',
-		{ message_id: segmentId(answered.smsId, index, total) },
+		respMessageId(pduObj, segmentId(answered.smsId, index, total)),
 	)));
 
 	const failure = results.find(result => result.err);
