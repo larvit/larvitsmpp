@@ -146,7 +146,6 @@ function wantUnsuccessSmes(value: ParamValue): Result<{ smes: UnsuccessSme[] }> 
 }
 
 function readCstring(buffer: Buffer, offset: number): Result<{ bytesRead: number; value: string }> {
-	// An offset at the end exactly is an absent trailing field, which real peers do send.
 	if (outOfRange(buffer, offset, 0)) {
 		return {
 			err: new Error(
@@ -154,6 +153,9 @@ function readCstring(buffer: Buffer, offset: number): Result<{ bytesRead: number
 			),
 		};
 	}
+
+	// An offset at the end exactly is an absent trailing field, which real peers do send.
+	if (offset === buffer.length) return { bytesRead: 0, value: '' };
 
 	let length = 0;
 

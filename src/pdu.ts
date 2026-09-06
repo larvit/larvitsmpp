@@ -349,7 +349,6 @@ function parsePdu(pdu: Buffer): Result<{ pduObj: PduObject }> {
 		return { err: new PduRefusedError(header, 'command', new Error('Unknown PDU command id')) };
 	}
 
-	// Every field is read from what command_length declares, never from octets buffered behind it.
 	const declared = pdu.subarray(0, cmdLength);
 	// SMPP 3.4 4.4.2 and friends: a response with a non-zero status carries no body at all.
 	const read = cmdStatusId !== 0 && cmdLength === 16
