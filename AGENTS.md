@@ -523,21 +523,29 @@ Grouped by what each one constrains.
   the error above names was reachable only by hand-wiring a `Session` over a raw socket, giving up
   bind acceptance, `authenticate`, the session set and the drain `close()` runs over it — which is
   what goal 6 means by beating "the application can do this itself". What the library verifies is the
-  ordering rather than the hook's honesty about answering: a bind, and everything a peer sends before
-  one, is answered before the hook is consulted, so no hook can intercept a bind or the
-  authentication behind it however it is written. One `OnRequest` type on both option bags, because a
-  second contract under one name is two spellings of one goal; widened to accept a plain boolean, as
-  `authenticate` already is, so an observing hook need not be `async`. A hook that throws or rejects
-  reaches `sessionError` and the request falls through to the built-in handling — the answer the peer
-  would have had with no hook at all — where `authenticate` failing has no such fallback, since
+  ordering rather than the hook's honesty about answering: the hook is consulted only for a non-bind
+  request on a session already bound, so no bind — a second one on a live session included — and
+  nothing a peer sends before one can be intercepted however the hook is written. Testing the command
+  before `loggedIn` is what keeps that absolute; the earlier cut gated on `loggedIn` alone and let a
+  re-bind and a pre-bind `unbind` through, by reusing one condition for two intentions. One
+  `OnRequest` type on both option bags, because a second contract under one name is two spellings of
+  one goal; widened to accept a plain boolean, as `authenticate` already is, so an observing hook need
+  not be `async`. The failure policy belongs to the composition and not to the type: a hook that
+  throws or rejects reaches `sessionError` and `server()` falls the request through to the built-in
+  handling — the answer the peer would have had with no hook at all — while the same hook on a
+  hand-wired `Session` is reported and the request left unanswered, which is goal 6's passthrough
+  seam holding no policy of the caller's. `authenticate` failing has no fallback either way, since
   accepting the bind would be the bypass. `sessionError` rather than `serverError` because the
   failure belongs to one session's request, and that channel already carries every failure of one.
   Nothing is held for a request the hook answered: `HeldMessages` is opened by the `sms` event the
   hook skipped, so the drain waits on none of it. Rejected: consulting the hook first, which puts
   bind and authentication inside the application's reach for nothing. Rejected: a narrower hook
   returning a status for the library to write, which makes the answer verifiable but pays a second
-  contract under a second name for it, and leaves that error naming something only half the surface
-  can do.
+  contract under a second name for it, and could not express what the session-level hook already
+  does — answer a bind, a vendor command, a `data_sm` — leaving that error naming something only
+  half the surface can do. Accepted: falling through is fail-open, so a filter that must not be is
+  the application's to close; refusing instead would give `enquire_link` per-command failure
+  semantics for the sake of one command class.
 
 - **The drain waits on the messages the application holds, and `sendResp()` is what says it is done
   with one.** Maintainer's call, 2026-09-01: waiting on the send window alone tore a server session
@@ -642,3 +650,9 @@ Grouped by what each one constrains.
   `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI and
   fail on every developer machine, and a committed key leaks in a public repository. Valid while the
   dev image has no openssl.
+
+- **`src/` stays flat until a module has to move for another reason.** Architecture review,
+  2026-09-06: the grouping the file map above already implies — `wire/` for `pdu*` and `defs`,
+  `link/` for `link-*`, `reconnect-*`, `pdu-transport` and `send-window`, `messages/` for `sms*`,
+  `dlr*`, `message*`, `reassembly` and `udh` — rewrites every import for no change to
+  `dist/index.js`, the one published entry. Valid while that map is what a reader navigates by.

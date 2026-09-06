@@ -240,8 +240,8 @@ since SMPP marks that field unused, so an inbound message's base is a handle of 
 
 A refusal that depends on the request rather than the reassembled message — a full queue, an unknown
 recipient, an unauthorised sender — needs to land before a segment is answered, which `sendResp()`
-can no longer do once it has. `onRequest` decides there instead, on every request the peer sends,
-before reassembly and before the `sms` event:
+can no longer do once it has. `onRequest` decides there instead, on every request a bound peer
+sends, before reassembly and before the `sms` event:
 
 ```javascript
 import { isCommand, server } from '@larvit/smpp';
@@ -265,13 +265,18 @@ if (err) throw err;
 Returning `true` means the hook has answered the PDU and the library leaves it alone; `false` lets
 the built-in handling — reassembly, the `sms` event — run as usual. Every segment of a concatenated
 message is a request of its own, so the hook sees each one while refusing it still means something.
-A bind never reaches it: `server()` answers those and runs `authenticate` first, so a hook cannot
-intercept one however it is written. A hook that throws or rejects reaches `sessionError`, and the
-request takes the built-in handling as though the hook had returned `false`.
+No bind reaches it, and neither does anything a peer sends before one: `server()` answers those and
+runs `authenticate` itself, so a hook cannot intercept a bind however it is written.
+
+A hook that throws or rejects reaches `sessionError`, and the request then takes the built-in
+handling as though the hook had returned `false`. A hook that fails is therefore not a refusal — the
+message is accepted and reaches the `sms` event — so a filter that must not fail open catches its
+own errors and answers the PDU itself.
 
 A `Session` you construct yourself (see [Bind direction](#bind-direction)) takes the same hook as a
 session option, where it is also how a peer's bind gets accepted: a hand-wired session has no bind
-handling of its own.
+handling of its own, and no fallback either — a hook that throws there is reported and the request
+is left unanswered.
 
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
 `ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`. `SCHEDULED` and `ENROUTE` go out as intermediate
@@ -286,7 +291,7 @@ A message whose `data_coding` says 8-bit binary arrives as Latin-1, so `Buffer.f
 | --- | --- | --- |
 | `host` / `port` | all interfaces / `2775` | Where to listen. Pass `0` for any free port. |
 | `authenticate` | accept everything | `({ password, session, systemId, systemType }) => false \| { userData }`, sync or async. |
-| `onRequest` | none | `(session, pduObj) => true \| false`, sync or async. First refusal on every request the peer sends, bind excepted. |
+| `onRequest` | none | `(session, pduObj) => true \| false`, sync or async. First refusal on every request a bound peer sends; no bind, and nothing before one, reaches it. |
 | `systemId` | `''` | The SMSC identity returned to the ESME in the bind response. |
 | `interfaceVersion` | `0x34` | The SMPP version advertised in the bind response. The floor for sending a peer optional parameters stays `0x34`, whatever this is set to. |
 | `tls` | `false` | A `tls.TlsOptions` object with your certificate and key. |
