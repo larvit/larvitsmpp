@@ -2023,56 +2023,89 @@ describe('the server\'s onRequest hook', () => {
 		assert.deepEqual(seen, ['submit_sm']);
 	});
 
-	test('reports a hook that throws and leaves the request to the built-in handling', async t => {
+	test('reports a hook that throws and answers nothing for it', async t => {
 		const smpp = await startServer(t, {
 			onRequest: () => { throw new Error('the onRequest hook exploded'); },
 		});
 		const failed = once<Error>(resolve => {
 			smpp.on('session', bound => { bound.on('sessionError', resolve); });
 		});
+		let messages = 0;
 
-		smpp.on('session', bound => bound.on('sms', async sms => {
-			await sms.sendResp({ smsId: answeredId });
-		}));
+		smpp.on('session', bound => bound.on('sms', () => { messages++; }));
 
-		const { session } = await connect(t, smpp);
+		const { session } = await connect(t, smpp, { responseTimeout: 300 });
 
 		assert.ok(session);
 
 		const answered = await submitTo(session, '46709771337');
 		const reported = await failed;
 
-		assert.ok(answered.pduObj);
-		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
-		assert.equal(paramText(answered.pduObj.params.message_id), answeredId);
+		assert.ok(answered.err instanceof Error);
 		assert.equal(reported.message, 'the onRequest hook exploded');
+		assert.equal(messages, 0, 'a hook that failed decided nothing, so nothing may decide for it');
 	});
 
-	test('reports a hook that rejects and leaves the request to the built-in handling', async t => {
+	test('reports a hook that rejects and answers nothing for it', async t => {
 		const smpp = await startServer(t, {
 			onRequest: () => Promise.reject(new Error('the onRequest hook rejected')),
 		});
 		const failed = once<Error>(resolve => {
 			smpp.on('session', bound => { bound.on('sessionError', resolve); });
 		});
+		let messages = 0;
 
-		smpp.on('session', bound => bound.on('sms', async sms => {
-			await sms.sendResp({ smsId: answeredId });
-		}));
+		smpp.on('session', bound => bound.on('sms', () => { messages++; }));
 
-		const { session } = await connect(t, smpp);
+		const { session } = await connect(t, smpp, { responseTimeout: 300 });
 
 		assert.ok(session);
 
 		const answered = await submitTo(session, '46709771337');
 		const reported = await failed;
 
-		assert.ok(answered.pduObj);
-		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
+		assert.ok(answered.err instanceof Error);
 		assert.equal(reported.message, 'the onRequest hook rejected');
+		assert.equal(messages, 0);
 	});
 
-	// Nothing is held for a message the hook took, so the drain waits on none of the application's.
+	// Two responses on one sequence number is the wire violation an unconditional fall-through made.
+	test('writes nothing more for a segment the hook answered before it failed', async t => {
+		const smpp = await startServer(t, {
+			onRequest: async (bound, pduObj) => {
+				await bound.sendReturn(pduObj, 'ESME_RINVDSTADR');
+
+				throw new Error('the onRequest hook exploded after answering');
+			},
+		});
+		const failed = once<Error>(resolve => {
+			smpp.on('session', bound => { bound.on('sessionError', resolve); });
+		});
+		const peer = rawPeer(t, smpp.port);
+		const segment = splitMessage('one segment of a longer message. '.repeat(8), { reference: 0x6D })[0];
+
+		assert.ok(segment);
+		peer.write(bindOf(0x34));
+		await peer.next();
+		peer.write({
+			cmdName: 'submit_sm',
+			params: {
+				destination_addr: '46709771337',
+				esm_class: consts.ESM_CLASS.UDH_INDICATOR,
+				short_message: segment,
+				source_addr: '46701113311',
+			},
+			seqNr: 2,
+		});
+
+		const refused = await peer.next();
+		const reported = await failed;
+
+		assert.equal(refused.cmdStatus, 'ESME_RINVDSTADR');
+		assert.equal(await raceWithin(200, peer.next()), false, 'the peer gets one answer, not two');
+		assert.equal(reported.message, 'the onRequest hook exploded after answering');
+	});
+
 	test('closes without waiting out the shutdown for a message the hook answered itself', async t => {
 		const smpp = await startServer(t, {
 			onRequest: async (bound, pduObj) => {
