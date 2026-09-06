@@ -132,6 +132,21 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
+- [ ] **A gate that refuses a floating version anywhere in the repo.** Maintainer's ask on
+      [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the `release.yaml`
+      pinning thread, which stays open until this lands. Pinning every action and runner by hand is
+      what the ask followed; the gate is what keeps them pinned. It has to cover workflow `uses:`
+      and `runs-on:`, compose `image:`, and Dockerfile `FROM`, and the conventions differ per kind —
+      actions take a semver tag, images the full patch version — so one grep for `latest` is not it.
+
+- [ ] **A gate that fails when the test matrix misses the current Node.** Maintainer's ask on
+      [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the Node 26 thread, which
+      stays open until this lands. Node 26 was added by hand; nothing notices when 27 ships. Needs a
+      source for what Current is — the Node release schedule is published as JSON — and a decision
+      on whether a new Current fails the build or opens a PR, which is what Renovate already does
+      for everything else here.
+
+
 - [ ] **Group the session's collaborators under `src/session/`.** `session.ts` imports
       `dlr-merger`, `incoming-requests`, `link-timers`, `outgoing-requests`, `pdu-transport`,
       `reconnect-loop` and `send-sms`, and nothing else does, so the directory would make that
