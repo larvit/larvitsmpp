@@ -115,7 +115,9 @@ export class OutgoingRequests {
 
 			if (held.err) return { err: held.err };
 
-			await this.window.acquire();
+			const slot = await this.window.acquire(options.signal);
+
+			if (slot.err) return { err: slot.err };
 
 			const attempt = await this.attempt(input, options).finally(() => { this.window.release(); });
 

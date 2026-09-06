@@ -639,6 +639,21 @@ Grouped by what each one constrains.
   is awaited with the socket already destroyed, so an unref'd one lets a process whose only remaining
   work is that send exit without settling it.
 
+- **A send queued for a send-window slot is bounded by the caller's `signal`, and by nothing else.**
+  Maintainer's call, 2026-09-06, from a review of PR #71: the hold above observes the signal and the
+  `acquire()` on the next line did not, so a caller that aborted while the window was full waited for
+  a slot it no longer wanted — at `responseTimeout: 0` for as long as the peer stayed quiet, which is
+  the deadline the README sends the caller to that signal for. `SendWindow.acquire()` takes the signal
+  and its waiter leaves the queue as it settles, so `release()` can only ever hand a slot to a waiter
+  still in it and one that gave up cannot strand the window below its capacity. The failure is a plain
+  `Error` rather than `UnansweredError`: nothing was written, so `sendSms()` reports it with
+  `unanswered: 0`, the same answer an abort at the gate already gives. Rejected: bounding this wait by
+  `responseTimeout` as the hold is bounded — a full window is this end's own concurrency draining as
+  the peer answers rather than a link going nowhere, and that bound would fail a message with more
+  segments than `maxOutstanding` partway through against a slow peer, which is the one thing the send
+  window is documented to survive. The drain half needs nothing: `close({ signal })` already hands the
+  signal to `window.idle()`, and `unbind()` taking none is the shape README states.
+
 - **The gate decides whether a link can carry a request, and a bind is what makes it one.**
   Maintainer's call, 2026-09-01: `attach()` clears `closed` the moment a socket is handed over, one
   round trip before the bind is answered, so gating on `closed` let a send arriving in that window go
