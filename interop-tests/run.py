@@ -23,7 +23,7 @@ PORT_BY_PEER = {
 
 # Every scenario in every peer's test file binds before doing anything else, so a capture missing
 # either side of that handshake never saw real traffic - the same signal as an empty capture.
-BIND_COMMANDS = ("bind_receiver", "bind_transmitter", "bind_transceiver")
+BIND_COMMANDS = ("bind_receiver", "bind_transceiver", "bind_transmitter")
 
 # The 33 SMPP commands (SMPP 3.4), by numeric command_id, for the tshark histogram.
 COMMAND_NAMES = {
@@ -154,7 +154,13 @@ def analyse_capture(peer: str, port: int) -> tuple[int, dict[str, object]]:
 	if not has_bind or not has_bind_resp:
 		print("no bind/bind_resp pair in capture", file=sys.stderr)
 
-	status = 1 if not frames or not has_bind or not has_bind_resp or malformed > 0 or expert_errors > 0 else 0
+	status = 1 if any((
+		not frames,
+		not has_bind,
+		not has_bind_resp,
+		malformed > 0,
+		expert_errors > 0,
+	)) else 0
 
 	return status, {
 		"commands": dict(histogram),
@@ -179,8 +185,11 @@ def main() -> int:
 
 	# dumpcap can't be given 1000:1000 (see fix_capture_ownership), so it creates this file as
 	# root; overwriting one from a previous run then fails, since root here has no DAC override
-	# either - so the stale file has to go before a fresh one can be written in its place.
+	# either - so the stale file has to go before a fresh one can be written in its place. Also
+	# clears smppsim's second capture-textdlr.pcapng file, whose healthcheck (compose.smppsim.yaml)
+	# would otherwise pass against a leftover file instead of proving this run's capture started.
 	(CAPTURES_DIR / f"{args.peer}.pcapng").unlink(missing_ok=True)
+	(CAPTURES_DIR / f"{args.peer}-textdlr.pcapng").unlink(missing_ok=True)
 
 	tests = sh(compose_cmd(
 		args.peer, "run", "--rm", "--use-aliases", "node",
