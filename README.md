@@ -212,8 +212,7 @@ smpp.on('session', session => {
 		if (sms.answeredOnArrival) {
 			await sms.sendResp(); // multipart: already answered per segment; this only releases the shutdown drain
 		} else {
-			// Without arguments it answers ESME_ROK with a generated id; pass your own id, and
-			// a status to refuse the message: sendResp({ smsId: yourOwnId, status: 'ESME_RMSGQFUL' })
+			// no args: ESME_ROK + generated id; or sendResp({ smsId, status: 'ESME_RMSGQFUL' })
 			await sms.sendResp();
 		}
 
@@ -269,7 +268,9 @@ net.createServer(sock => {
 ```
 
 Returning `true` means the hook has answered the PDU and the library leaves it alone; `false` lets
-the built-in handling — bind, reassembly, the `sms` event — run as usual.
+the built-in handling — reassembly, the `sms` event — run as usual. A hand-wired `Session` has no
+bind handling of its own, though: `onRequest` is where a peer's bind gets accepted too, the way
+`server()` does it.
 
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
 `ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`. `SCHEDULED` and `ENROUTE` go out as intermediate

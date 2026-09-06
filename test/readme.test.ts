@@ -287,13 +287,14 @@ describe('README: Server', () => {
 			closeAfter(t, session);
 		});
 
+		closeListenerAfter(t, listener, accepted);
+
 		await new Promise<void>(resolve => { listener.listen(0, resolve); });
 
 		const address = listener.address();
 		const port = typeof address === 'object' && address !== null ? address.port : 0;
 		const peer = net.connect({ port });
 
-		closeListenerAfter(t, listener, accepted);
 		t.after(() => { peer.destroy(); });
 
 		const framer = new PduFramer();
