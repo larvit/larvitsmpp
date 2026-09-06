@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import test, { describe } from 'node:test';
-import type { MessagingMode } from '../src/defs/constants.ts';
+import type { PduObjectInput } from '../src/pdu.ts';
+import type { SendSmsDeps } from '../src/send-sms.ts';
 import type { Session } from '../src/session.ts';
+import type { SubmitMessagingMode } from '../src/defs/constants.ts';
 import type { TestContext } from 'node:test';
 import { PduFramer } from '../src/pdu-framer.ts';
-import { checkMessagingMode } from '../src/send-sms.ts';
 import { client } from '../src/client.ts';
 import { closeAfter, closeListenerAfter } from './teardown.ts';
-import { consts, messagingModes } from '../src/defs/constants.ts';
+import { consts, submitMessagingModes } from '../src/defs/constants.ts';
 import { paramNumber } from '../src/defs/types.ts';
 import { pduReturn, pduToObj } from '../src/pdu.ts';
+import { silentLog } from '../src/log.ts';
+import { submitSms } from '../src/send-sms.ts';
 import { uuidv7 } from '../src/uuid.ts';
 
 const from = '46701113311';
@@ -80,6 +83,19 @@ function hexOf(octets: Buffer[]): string[] {
 	return octets.map(pdu => pdu.toString('hex'));
 }
 
+/** A send that records what it is handed, so a refusal shows up as an empty attempt log. */
+function recordingDeps(attempts: PduObjectInput[]): SendSmsDeps {
+	return {
+		log: silentLog,
+		reference: 1,
+		send: input => {
+			attempts.push(input);
+
+			return Promise.resolve({ err: new Error('nothing should reach the wire') });
+		},
+	};
+}
+
 function esmClassesOf(octets: Buffer[]): number[] {
 	return octets.map(pdu => {
 		const { pduObj } = pduToObj(pdu);
@@ -125,9 +141,10 @@ describe('sendSms() with no messagingMode', () => {
 
 describe('sendSms() messagingMode', () => {
 	test('gives each mode its own bits — store and forward alone is 0x03, and 0x43 per segment', async t => {
-		const modes: MessagingMode[] = ['DATAGRAM', 'FORWARD', 'SMSC_DEFAULT', 'STORE_FORWARD'];
+		const modes: SubmitMessagingMode[] = ['DATAGRAM', 'SMSC_DEFAULT', 'STORE_FORWARD'];
 
-		assert.deepEqual(modes, messagingModes, 'every mode the constants name is covered here');
+		assert.deepEqual(modes, submitMessagingModes, 'every mode submit_sm carries is covered here');
+		assert.equal(consts.MESSAGING_MODE.FORWARD, 0x02, 'the spec table still names the fourth mode');
 
 		for (const messagingMode of modes) {
 			const peer = await boundToPeer(t);
@@ -145,21 +162,64 @@ describe('sendSms() messagingMode', () => {
 		}
 	});
 
-	test('refuses a value naming no messaging mode, and names the four it takes', () => {
-		const named = /messagingMode must be DATAGRAM, FORWARD, SMSC_DEFAULT, STORE_FORWARD/;
+	test('refuses a value naming no messaging mode before a segment reaches the wire', async () => {
+		const attempts: PduObjectInput[] = [];
+		const deps = recordingDeps(attempts);
+		const named = /messagingMode must be DATAGRAM, SMSC_DEFAULT, STORE_FORWARD/;
+		// The bits themselves, the whole esm_class an operator documents, and an esm_class name that
+		// is no mode at all — the one that would clear the UDH indicator if a number were taken.
+		const refused = [3, 0x43, 'UDH_INDICATOR', 'store_forward', {}];
 
-		// The bits themselves, and the whole esm_class an operator documents for concatenation.
-		assert.match(checkMessagingMode(3)?.message ?? '', named);
-		assert.match(checkMessagingMode(3)?.message ?? '', /got 3/);
-		assert.match(checkMessagingMode(0x43)?.message ?? '', /got 67/);
-		// UDH_INDICATOR is an esm_class name rather than a mode, so no spelling can clear that bit.
-		assert.match(checkMessagingMode('UDH_INDICATOR')?.message ?? '', named);
-		assert.match(checkMessagingMode('store_forward')?.message ?? '', named);
-		assert.match(checkMessagingMode({})?.message ?? '', /got object/);
-		assert.equal(checkMessagingMode(undefined), undefined);
+		for (const messagingMode of refused) {
+			const sent = await submitSms(deps, { from, message: 'Hello world', messagingMode, to });
 
-		for (const mode of messagingModes) {
-			assert.equal(checkMessagingMode(mode), undefined, mode);
+			assert.ok(sent.err instanceof Error, JSON.stringify(messagingMode));
+			assert.match(sent.err.message, named);
+			assert.deepEqual(sent.smsIds, []);
+			assert.equal(sent.unanswered, 0);
 		}
+
+		assert.match((await submitSms(deps, { from, message: 'x', messagingMode: 3, to })).err?.message ?? '', /got 3/);
+		assert.match((await submitSms(deps, { from, message: 'x', messagingMode: {}, to })).err?.message ?? '', /got object/);
+		assert.equal(attempts.length, 0, 'a refused mode puts nothing on the wire');
+	});
+
+	test('refuses transaction mode, which SMPP carries on data_sm and this never sends', async () => {
+		const attempts: PduObjectInput[] = [];
+		const sent = await submitSms(recordingDeps(attempts), {
+			from,
+			message: 'Hello world',
+			messagingMode: 'FORWARD',
+			to,
+		});
+
+		assert.ok(sent.err instanceof Error);
+		assert.match(sent.err.message, /FORWARD is data_sm only/);
+		assert.match(sent.err.message, /name DATAGRAM, SMSC_DEFAULT, STORE_FORWARD/);
+		assert.equal(attempts.length, 0);
+	});
+
+	test('refuses a delivery report under datagram mode, which defines one away', async () => {
+		const attempts: PduObjectInput[] = [];
+		const deps = recordingDeps(attempts);
+		const sent = await submitSms(deps, {
+			dlr: true,
+			from,
+			message: 'Hello world',
+			messagingMode: 'DATAGRAM',
+			to,
+		});
+
+		assert.ok(sent.err instanceof Error);
+		assert.match(sent.err.message, /DATAGRAM has no delivery report/);
+		assert.equal(attempts.length, 0);
+
+		// The mode alone is fine, and so is a report under any mode that has one.
+		const datagram = await submitSms(deps, { from, message: 'Hello world', messagingMode: 'DATAGRAM', to });
+		const reported = await submitSms(deps, { dlr: true, from, message: 'Hello world', to });
+
+		assert.equal(datagram.err?.message, 'nothing should reach the wire');
+		assert.equal(reported.err?.message, 'nothing should reach the wire');
+		assert.equal(attempts.length, 2);
 	});
 });
