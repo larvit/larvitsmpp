@@ -11,7 +11,7 @@ import { client } from '../src/client.ts';
 import { closeAfter } from '../test/teardown.ts';
 import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
-import { splitMessage } from '../src/message.ts';
+import { encodeMessage, splitMessage } from '../src/message.ts';
 import { submitSmParams } from '../src/send-sms.ts';
 
 const PEER_HOST = process.env.PEER_HOST ?? 'jasmin';
@@ -246,7 +246,8 @@ async function sendMessagePayloadMo(session: Session, opts: { from: string; mess
 			source_addr: opts.from,
 		},
 		tlvs: {
-			message_payload: { tagValue: Buffer.from(opts.message, 'latin1') },
+			// The body is octets under the PDU's own data_coding wherever it is carried, and 0 is GSM.
+			message_payload: { tagValue: encodeMessage(opts.message, 'ASCII').buffer },
 		},
 	});
 }
@@ -565,20 +566,20 @@ describe('C8 (target 2) - message_payload with sm_length 0', () => {
 
 		assert.equal(pushed.err, undefined, 'expected Jasmin to accept a message_payload-only deliver_sm from its connector');
 
-		const arrived = await waitFor(() => sms.find(s => s.message === ''), 5000);
+		const arrived = await waitFor(() => sms.find(s => s.message === text), 5000);
 
 		await session.close({ signal: AbortSignal.abort() });
 
-		// Confirmed (target 2): Jasmin relays message_payload faithfully (sm_length 0, the real text
-		// in the TLV) - our own incoming-requests.ts reads short_message only, so the sms that arrives
-		// here has the right envelope (from/to) but an empty message, never the text carried in the
-		// TLV. See findings/03-jasmin.md for the reproducer.
-		assert.ok(arrived, 'expected an sms to arrive (with an empty message, per target 2) for the message_payload push');
+		// Jasmin relays message_payload faithfully (sm_length 0, the real text in the TLV), so the
+		// whole body has to reach the application from there.
+		assert.ok(arrived, 'expected the message_payload body to arrive as the sms text');
+		assert.equal(arrived.from, TO);
+		assert.equal(arrived.to, FROM);
 	});
 });
 
 describe('C9 (target 4) - DLR as data_sm against the jasmin-datasm instance', () => {
-	test('a receipt thrown as data_sm is not read as a dlr; the raw PDU still arrives', async t => {
+	test('a receipt thrown as data_sm reaches the dlr event', async t => {
 		await waitForUpstreamSession('datasm');
 
 		const { err, session } = await client({ host: DATASM_HOST, password: PASSWORD, port: PEER_PORT, username: USERNAME });
@@ -597,12 +598,16 @@ describe('C9 (target 4) - DLR as data_sm against the jasmin-datasm instance', ()
 
 		assert.equal(sent.err, undefined);
 
+		const [smsId] = sent.smsIds;
 		const arrived = await waitFor(() => incomingDataSm[0], 15_000);
 
+		assert.ok(smsId);
 		assert.ok(arrived, 'expected Jasmin to throw the receipt as data_sm (dlr_pdu = data_sm)');
 
-		await delay(2000);
-		assert.deepEqual(dlrs, [], 'data_sm is answered ESME_RINVCMDID and never reaches the dlr event (target 4)');
+		const dlr = await waitFor(() => dlrs.find(one => one.smsId === smsId), 10_000);
+
+		assert.ok(dlr, `no dlr for the receipt Jasmin threw as data_sm, id ${smsId}`);
+		assert.equal(dlr.statusMsg, 'DELIVERED');
 	});
 });
 
