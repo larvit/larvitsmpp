@@ -11,9 +11,10 @@ import { Reassembler, decodeSegments } from './reassembly.ts';
 import { bindCommands, defaults } from './session-options.ts';
 import { concatInfo } from './udh.ts';
 import { hasUdh } from './defs/constants.ts';
-import { createSms, respMessageId, segmentId } from './sms.ts';
+import { createSms } from './sms.ts';
 import { dlrFromPdu } from './dlr.ts';
 import { paramNumber, paramText } from './defs/types.ts';
+import { respIdParams, segmentId } from './sms-id.ts';
 
 const lostReasons: Record<LostGroup['reason'], string> = {
 	evicted: 'the reassembly buffer filled',
@@ -186,25 +187,20 @@ export class IncomingRequests {
 		}
 
 		const collected = this.reassembler.collect(pduObj, concat);
-
-		if (!collected) {
-			await this.session.sendReturn(pduObj, 'ESME_RINVESMCLASS');
-
-			return;
-		}
+		const smsId = collected.smsId;
 
 		await this.session.sendReturn(
 			pduObj,
-			'ESME_ROK',
-			respMessageId(pduObj, segmentId(collected.smsId, concat.part - 1, concat.total)),
+			collected.status,
+			smsId === undefined ? {} : respIdParams(pduObj.cmdName, segmentId(smsId, concat.part - 1, concat.total)),
 		);
 
-		if (collected.whole) this.emitSms(collected.whole, collected.smsId);
+		if (collected.whole && smsId !== undefined) this.emitSms(collected.whole, smsId);
 	}
 
 	private reportLost(lost: LostGroup): void {
 		this.session.emit('sessionError', new Error(
-			`Gave up ${String(lost.parts)} of ${String(lost.total)} segments of a message the peer was already answered for: ${lostReasons[lost.reason]}`,
+			`Gave up ${String(lost.parts)} of ${String(lost.total)} segments of an incomplete concatenated message: ${lostReasons[lost.reason]}`,
 		));
 	}
 

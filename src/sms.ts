@@ -1,6 +1,5 @@
 import type { ErrorName } from './defs/errors.ts';
 import type { MessageState } from './defs/constants.ts';
-import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
@@ -8,6 +7,7 @@ import { UnansweredError } from './unanswered-error.ts';
 import { consts } from './defs/constants.ts';
 import { receiptCodes, transientStates } from './dlr.ts';
 import { smppDate } from './message.ts';
+import { respIdParams, segmentId } from './sms-id.ts';
 import { uuidv7 } from './uuid.ts';
 
 /** `pduObjs` holds what the peer took, so a partial failure names what is already receipted. */
@@ -29,6 +29,11 @@ export type SendRespOptions = {
  * every segment's PDU.
  */
 export type Sms = {
+	/**
+	 * Whether the peer was answered as the message's segments arrived, which is what a concatenated
+	 * message needs and a segment count cannot tell you. `sendResp()` then writes nothing.
+	 */
+	answeredOnArrival: boolean;
 	dlr: boolean;
 	flash: boolean;
 	from: string;
@@ -66,16 +71,6 @@ export type SmsHandlers = {
 	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 };
 
-/** Each segment of a multipart message gets its own message_id, as a separate submit_sm must. */
-export function segmentId(smsId: string, index: number, total: number): string {
-	return total === 1 ? smsId : `${smsId}-${String(index + 1)}`;
-}
-
-/** SMPP 3.4 4.6.2 makes `deliver_sm_resp`'s `message_id` unused, and Jasmin FINs the link over one. */
-export function respMessageId(pduObj: PduObject, smsId: string): Record<string, ParamValue> {
-	return pduObj.cmdName === 'deliver_sm' ? {} : { message_id: smsId };
-}
-
 export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 	const first = input.pduObjs[0];
 	const registered = first?.params.registered_delivery;
@@ -83,6 +78,7 @@ export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 	const answered = { smsId: input.answeredAs ?? uuidv7() };
 
 	const sms: Sms = {
+		answeredOnArrival: input.answeredAs !== undefined,
 		dlr: typeof registered === 'number' && registered !== 0,
 		flash: typeof dataCoding === 'number' && (dataCoding & 0xF0) === 0x10,
 		from: input.from,
@@ -110,13 +106,13 @@ function alreadyAnswered(
 ): Promise<VoidResult> {
 	if (options.smsId !== undefined) {
 		return Promise.resolve({
-			err: new Error('The segments were answered as they arrived, so their ids are already on the wire; read sms.smsId'),
+			err: new Error('This message\'s id was fixed when its first segment arrived; read sms.smsId'),
 		});
 	}
 
 	if (options.status !== undefined && options.status !== 'ESME_ROK') {
 		return Promise.resolve({
-			err: new Error('The segments were answered as they arrived, so there is nothing left to refuse; refuse a segment from onRequest instead'),
+			err: new Error('Its segments were answered as they arrived, so there is nothing left to refuse; refuse a segment from onRequest instead'),
 		});
 	}
 
@@ -151,7 +147,7 @@ async function sendResp(
 	const results = await Promise.all(sms.pduObjs.map((pduObj, index) => sms.session.sendReturn(
 		pduObj,
 		options.status ?? 'ESME_ROK',
-		respMessageId(pduObj, segmentId(answered.smsId, index, total)),
+		respIdParams(pduObj.cmdName, segmentId(answered.smsId, index, total)),
 	)));
 
 	const failure = results.find(result => result.err);

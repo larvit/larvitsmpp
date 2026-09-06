@@ -1,4 +1,5 @@
 import type { ConcatInfo } from './udh.ts';
+import type { ErrorName } from './defs/errors.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject } from './pdu.ts';
 import type { SmppLog } from './log.ts';
@@ -20,16 +21,19 @@ export type ReassemblerOptions = {
 	log: SmppLog;
 	max: number;
 	maxOctets?: number | undefined;
+	/** Injected so the ids a group is answered with can be read back in a test. */
+	newId?: (() => string) | undefined;
 	/** Injected so expiry can be exercised without a wall clock. */
 	now?: (() => number) | undefined;
-	onLost?: ((lost: LostGroup) => void) | undefined;
+	onLost: (lost: LostGroup) => void;
 	timeout: number;
 };
 
-/** What a segment did to its group. */
+/** What a segment did to its group, and the answer the peer is owed for it. */
 export type Collected = {
-	/** The id base every segment of the group is answered with. */
-	smsId: string;
+	/** The id base the group's segments are answered with; absent where the segment was refused. */
+	smsId?: string | undefined;
+	status: ErrorName;
 	/** Every segment in order, on the one that completes the message. */
 	whole?: PduObject[] | undefined;
 };
@@ -119,6 +123,7 @@ export class Reassembler {
 	private readonly groups: ExpiringGroups<Group>;
 	private readonly log: SmppLog;
 	private readonly maxOctets: number;
+	private readonly newId: () => string;
 	private readonly onLost: (lost: LostGroup) => void;
 	private octets = 0;
 
@@ -131,39 +136,22 @@ export class Reassembler {
 		});
 		this.log = options.log;
 		this.maxOctets = options.maxOctets ?? defaultMaxOctets;
-		this.onLost = options.onLost ?? ((): void => undefined);
+		this.newId = options.newId ?? uuidv7;
+		this.onLost = options.onLost;
 	}
 
 	get size(): number {
 		return this.groups.size;
 	}
 
-	/** The group the segment joined; undefined where its UDH left it belonging to none. */
-	collect(pduObj: PduObject, concat: ConcatInfo): Collected | undefined {
+	/** The group the segment joined, and always an answer for it: an unanswered one stalls a peer. */
+	collect(pduObj: PduObject, concat: ConcatInfo): Collected {
 		this.sweep();
-
-		if (concat.part < 1 || concat.total < 1 || concat.part > concat.total) {
-			this.log.warn('reassembler - dropping a segment the UDH numbers impossibly', {
-				part: concat.part,
-				total: concat.total,
-			});
-
-			return undefined;
-		}
 
 		const key = groupKey(pduObj, concat.reference);
 		const existing = this.groups.get(key);
 
-		// Parts 1/2 and 2/3 would otherwise complete the stored two-part group as a truncated message.
-		if (existing && existing.total !== concat.total) {
-			this.log.warn('reassembler - dropping a segment with an inconsistent UDH total', {
-				existingTotal: existing.total,
-				part: concat.part,
-				total: concat.total,
-			});
-
-			return undefined;
-		}
+		if (!this.placeable(concat, existing)) return { status: 'ESME_RINVESMCLASS' };
 
 		const group = existing ?? this.open(key, concat.total);
 		const replaced = group.parts.get(concat.part);
@@ -175,9 +163,12 @@ export class Reassembler {
 		this.octets += delta;
 
 		if (group.parts.size < group.total) {
-			this.trim();
+			this.trim(key);
 
-			return { smsId: group.smsId };
+			// Its own arrival overran the octet cap, so the peer keeps it rather than being told we did.
+			if (this.groups.get(key) !== group) return { status: 'ESME_RMSGQFUL' };
+
+			return { smsId: group.smsId, status: 'ESME_ROK' };
 		}
 
 		this.groups.delete(key);
@@ -185,6 +176,7 @@ export class Reassembler {
 
 		return {
 			smsId: group.smsId,
+			status: 'ESME_ROK',
 			whole: [...group.parts.entries()].sort(([a], [b]) => a - b).map(([, part]) => part),
 		};
 	}
@@ -205,10 +197,35 @@ export class Reassembler {
 		}
 	}
 
+	/** Whether a segment's UDH can join a group at all: its own numbering, and the group's total. */
+	private placeable(concat: ConcatInfo, existing: Group | undefined): boolean {
+		if (concat.part < 1 || concat.total < 1 || concat.part > concat.total) {
+			this.log.warn('reassembler - dropping a segment the UDH numbers impossibly', {
+				part: concat.part,
+				total: concat.total,
+			});
+
+			return false;
+		}
+
+		// Parts 1/2 and 2/3 would otherwise complete the stored two-part group as a truncated message.
+		if (existing && existing.total !== concat.total) {
+			this.log.warn('reassembler - dropping a segment with an inconsistent UDH total', {
+				existingTotal: existing.total,
+				part: concat.part,
+				total: concat.total,
+			});
+
+			return false;
+		}
+
+		return true;
+	}
+
 	private open(key: string, total: number): Group {
 		if (this.groups.full) this.dropOldest();
 
-		const group: Group = { octets: 0, parts: new Map(), smsId: uuidv7(), total };
+		const group: Group = { octets: 0, parts: new Map(), smsId: this.newId(), total };
 
 		this.groups.set(key, group);
 
@@ -216,21 +233,29 @@ export class Reassembler {
 	}
 
 	/** Drops the oldest groups until the retained payload is back under the octet cap. */
-	private trim(): void {
-		while (this.octets > this.maxOctets && this.groups.size > 0) {
-			this.dropOldest();
+	private trim(current: string): void {
+		while (this.octets > this.maxOctets) {
+			const oldest = this.takeOldest();
+
+			if (!oldest) return;
+
+			// The segment that overran the cap on its own is refused instead, so nothing of it is lost.
+			if (oldest[0] !== current) this.lost(oldest[1], 'evicted');
 		}
 	}
 
-	private dropOldest(): void {
+	private takeOldest(): [string, Group] | undefined {
 		const oldest = this.groups.takeOldest();
 
-		if (!oldest) return;
+		if (oldest) this.octets -= oldest[1].octets;
 
-		const [, group] = oldest;
+		return oldest;
+	}
 
-		this.octets -= group.octets;
-		this.lost(group, 'evicted');
+	private dropOldest(): void {
+		const oldest = this.takeOldest();
+
+		if (oldest) this.lost(oldest[1], 'evicted');
 	}
 
 	/** Its segments are answered, so the peer will not send them again: this is traffic gone. */
