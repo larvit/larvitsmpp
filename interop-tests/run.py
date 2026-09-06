@@ -13,7 +13,9 @@ EXPERT_SEVERITY_ERROR = "8388608"
 
 # The SMPP port each peer's compose overlay exposes its SMSC on.
 PORT_BY_PEER = {
+	"cloudhopper": 2775,
 	"jasmin": 2775,
+	"jsmpp": 2775,
 	"kannel": 2775,
 	"smppsim": 2775,
 	"smscsim": 2775,

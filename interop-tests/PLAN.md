@@ -196,7 +196,8 @@ document, library changes, and the AGENTS.md decision record each one needs.
 | 2 | done | [02-smppsim.md](findings/02-smppsim.md) |
 | 3 | done | [03-jasmin.md](findings/03-jasmin.md) |
 | 4 | done | [04-kannel.md](findings/04-kannel.md) |
-| 5–10 | not started | — |
+| 5 | done | [05-java-clients.md](findings/05-java-clients.md) |
+| 6–10 | not started | — |
 
 Research notes behind this plan, 2026-09-05, are in `research/`: SMSC simulators, ESME clients
 and validators, and operator quirks with one source URL per claim. Ask before trusting a claim here
