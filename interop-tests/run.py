@@ -185,10 +185,9 @@ def main() -> int:
 
 	# dumpcap can't be given 1000:1000 (see fix_capture_ownership), so it creates this file as
 	# root; overwriting one from a previous run then fails, since root here has no DAC override
-	# either - so the stale file has to go before a fresh one can be written in its place. Also
-	# clears smppsim's second capture-textdlr.pcapng file, whose healthcheck (compose.smppsim.yaml)
-	# would otherwise pass against a leftover file instead of proving this run's capture started.
+	# either - so the stale file has to go before a fresh one can be written in its place.
 	(CAPTURES_DIR / f"{args.peer}.pcapng").unlink(missing_ok=True)
+	# Also clears smppsim's textdlr capture so its healthcheck can't pass against a stale leftover.
 	(CAPTURES_DIR / f"{args.peer}-textdlr.pcapng").unlink(missing_ok=True)
 
 	tests = sh(compose_cmd(
