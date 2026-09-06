@@ -96,8 +96,7 @@ function octetsOf(pduObj: PduObject): number {
 	return octets;
 }
 
-// NULL separates them because it is the one octet a C-Octet String address cannot contain, where an
-// alphanumeric sender may hold anything else and forge another peer's key with it.
+// NUL: the one octet a C-Octet String address cannot hold, so no sender can forge another's key.
 function groupKey(pduObj: PduObject, concat: Concat): string {
 	return [
 		paramText(pduObj.params.source_addr),

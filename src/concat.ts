@@ -1,3 +1,4 @@
+import type { ConcatInfo } from './udh.ts';
 import type { PduObject } from './pdu.ts';
 import { concatInfo } from './udh.ts';
 import { hasUdh } from './defs/constants.ts';
@@ -5,12 +6,9 @@ import { messageOctets } from './message-body.ts';
 import { paramNumber } from './defs/types.ts';
 
 /** Where a segment sits in its message, and what ties it to the rest of that message. */
-export type Concat = {
-	part: number;
-	reference: number;
+export type Concat = ConcatInfo & {
 	/** Which of the two carried the numbering: their references are counters of their own. */
 	spelling: 'sar' | 'udh';
-	total: number;
 };
 
 function sarConcat(pduObj: PduObject): Concat | undefined {

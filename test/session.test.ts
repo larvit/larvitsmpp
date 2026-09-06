@@ -716,8 +716,11 @@ describe('sending', () => {
 });
 
 describe('receiving', () => {
-	async function inbound(t: TestContext): Promise<{ peer: Session; session: Session }> {
-		const smpp = await startServer(t);
+	async function inbound(
+		t: TestContext,
+		options: ServerOptions = {},
+	): Promise<{ peer: Session; session: Session }> {
+		const smpp = await startServer(t, options);
 
 		const bound = once<Session>(resolve => { smpp.on('session', resolve); });
 		const { session } = await connect(t, smpp);
@@ -1074,7 +1077,7 @@ describe('receiving', () => {
 	test('answers every sar_* segment on arrival and hands the application one message', async t => {
 		const smpp = await startServer(t);
 		const incoming = once<Sms>(resolve => { smpp.on('session', peer => peer.on('sms', resolve)); });
-		const { session } = await connect(t, smpp, { bindType: 'transmitter' });
+		const { session } = await connect(t, smpp, { bindType: 'transmitter', responseTimeout: 1000 });
 
 		assert.ok(session);
 
@@ -1109,7 +1112,7 @@ describe('receiving', () => {
 	});
 
 	test('joins sar_* segments in the order they number themselves', async t => {
-		const { peer, session } = await inbound(t);
+		const { peer, session } = await inbound(t, { responseTimeout: 1000 });
 		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
 		const parts = ['first ', 'second ', 'third'];
 
@@ -1135,7 +1138,7 @@ describe('receiving', () => {
 	});
 
 	test('reassembles a sar_* segment whose body is in message_payload', async t => {
-		const { peer, session } = await inbound(t);
+		const { peer, session } = await inbound(t, { responseTimeout: 1000 });
 		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
 		const parts = ['in the mandatory field, ', 'and in the TLV'];
 
@@ -1171,7 +1174,7 @@ describe('receiving', () => {
 
 	// The UDH reference is 8 bits and sar_msg_ref_num is 16, so the same number is two messages.
 	test('keeps a UDH group and a sar_* group sharing a reference apart', async t => {
-		const { peer, session } = await inbound(t);
+		const { peer, session } = await inbound(t, { responseTimeout: 1000 });
 		const messages: Sms[] = [];
 
 		session.on('sms', sms => { messages.push(sms); });
@@ -1219,7 +1222,7 @@ describe('receiving', () => {
 
 	// Nothing compares the two references: each spelling counts in a space of its own.
 	test('groups a segment carrying both spellings by its UDH', async t => {
-		const { peer, session } = await inbound(t);
+		const { peer, session } = await inbound(t, { responseTimeout: 1000 });
 		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });
 		const message = 'both spellings on every segment of it, and the UDH decides. '.repeat(4);
 		const segments = splitMessage(message, { reference: 7 });
@@ -1249,7 +1252,7 @@ describe('receiving', () => {
 	});
 
 	test('reads a receipt carrying sar_* fields as a dlr, never as a segment', async t => {
-		const { peer, session } = await inbound(t);
+		const { peer, session } = await inbound(t, { responseTimeout: 1000 });
 		const reports: Dlr[] = [];
 		let messages = 0;
 

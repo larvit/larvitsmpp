@@ -545,8 +545,8 @@ Grouped by what each one constrains.
   untouched, and is where a caller-chosen id and a refusal live; `onRequest` is the escape hatch for
   an application that must refuse a PDU the `sms` event could not have shown it yet. `collect()`
   answers every segment it will not carry rather than leaving it unanswered, which is the same stall
-  in miniature: the field that numbered it where the segment belongs to no group, `ESME_RMSGQFUL` where the
-  segment's own arrival overran the octet cap, since a peer told that still holds it. Rejected:
+  in miniature: the field that numbered it where the segment belongs to no group, `ESME_RMSGQFUL`
+  where the segment's own arrival overran the octet cap, since a peer told that still holds it. Rejected:
   answering every segment but the one that completes the group, which leaves the peer holding some
   segments accepted and one refused with nothing in SMPP to retract the rest, and still cannot honour
   a caller's `smsId` on the segments already gone. Rejected: a hook that mints the id per segment,

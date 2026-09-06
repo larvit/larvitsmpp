@@ -75,7 +75,7 @@ an independent dissector agreeing is the expected outcome, not a surprise.
 | S2 UDH 8-bit (targets 2, 5) | pass | `jsmpp.test.ts` "UDH, 8-bit reference": one reassembled `sms`, segments answered `<base>-1`/`<base>-2` |
 | S2 UDH 16-bit (target 5) | pass | `jsmpp.test.ts` "UDH, 16-bit reference": also reassembled - confirms both widths are read |
 | S2 `message_payload` (target 2) | pass | `jsmpp.test.ts` "message_payload: one sms, the full text" |
-| S2 `sar_*` (target 3) | defect confirmed, second peer; now fixed | `jsmpp.test.ts` "sar_* (target 3)": two independent `sms` events, not one - and, since [#91](https://github.com/larvit/larvitsmpp/pull/91), one reassembled `sms` with the segments answered `<base>-1`/`<base>-2` |
+| S2 `sar_*` (target 3) | defect confirmed, second peer; fixed in [#91](https://github.com/larvit/larvitsmpp/pull/91) | `jsmpp.test.ts` "sar_* (target 3)": one reassembled `sms`, segments answered `<base>-1`/`<base>-2` |
 | S3 known-but-unhandled (targets 1, 6) | pass | `jsmpp.test.ts` "query_sm, cancel_sm, replace_sm": `ESME_RINVCMDID`, link survives, jsmpp raises `NegativeResponseException` and keeps going |
 | S3 unknown command id (target 1) | pass | `jsmpp.test.ts` "an unknown command id gets generic_nack..." |
 | S3 truncated TLV stream (target 1) | pass | `jsmpp.test.ts` "a deliver_sm with a truncated TLV stream..." |
