@@ -699,8 +699,11 @@ describe('receiving', () => {
 
 		assert.ok(answered.pduObj);
 		assert.equal(answered.pduObj.cmdName, 'deliver_sm_resp');
-		// SMPP 3.4 4.6.2 makes the field unused: Jasmin FINs the link over a deliver_sm_resp carrying one.
-		assert.equal(paramText(answered.pduObj.params.message_id), '');
+		assert.equal(
+			paramText(answered.pduObj.params.message_id),
+			'',
+			'SMPP 3.4 4.6.2 leaves deliver_sm_resp\'s message_id unused',
+		);
 		assert.equal(sms.smsId, 'inbound-id', 'the id the application chose is still its own handle');
 	});
 

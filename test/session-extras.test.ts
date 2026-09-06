@@ -14,7 +14,7 @@ import type { Sms } from '../src/sms.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
 import { HeldMessages } from '../src/held-messages.ts';
-import { IncomingRequests } from '../src/incoming-requests.ts';
+import { IncomingRequests, refusalStatus } from '../src/incoming-requests.ts';
 import { UnansweredError } from '../src/unanswered-error.ts';
 import { createSms } from '../src/sms.ts';
 import { LinkGate } from '../src/link-gate.ts';
@@ -1469,11 +1469,14 @@ describe('reassembly bounds', () => {
 		const second = collect(reassembler, 4, 2, 3);
 		const third = collect(reassembler, 4, 3, 3);
 
+		assert.ok(second.kept);
+		assert.ok(third.kept);
 		assert.equal(second.whole, undefined);
 		assert.equal(third.whole, undefined);
 
 		const collected = collect(reassembler, 4, 1, 3);
 
+		assert.ok(collected.kept);
 		assert.ok(collected.whole);
 		assert.deepEqual(collected.whole.map(pduObj => pduObj.seqNr), [1, 2, 3]);
 		assert.equal(reassembler.size, 0);
@@ -1481,14 +1484,10 @@ describe('reassembly bounds', () => {
 		// One id base per group: every segment of it was answered with a part of that base.
 		assert.equal(second.smsId, collected.smsId);
 		assert.equal(third.smsId, collected.smsId);
-		assert.deepEqual(
-			[second.status, third.status, collected.status],
-			['ESME_ROK', 'ESME_ROK', 'ESME_ROK'],
-		);
 	});
 
 	// A group the store cannot hold at all is refused, not accepted and then thrown away.
-	test('refuses a segment whose own arrival overruns the octet cap', () => {
+	test('refuses a lone segment whose own arrival overruns the octet cap', () => {
 		const lost: LostGroup[] = [];
 		const reassembler = new Reassembler({
 			log: silentLog,
@@ -1500,10 +1499,31 @@ describe('reassembly bounds', () => {
 		});
 		const refused = collect(reassembler, 8, 1, 2);
 
-		assert.equal(refused.status, 'ESME_RMSGQFUL');
-		assert.equal(refused.smsId, undefined);
+		assert.equal(refused.kept, false);
 		assert.equal(reassembler.size, 0);
-		assert.deepEqual(lost, [], 'the peer still holds it, so nothing of it was lost');
+		assert.deepEqual(lost, [], 'the peer holds the only segment there was, so nothing was lost');
+	});
+
+	// The segments before it were answered ESME_ROK, so dropping those is not the same as refusing one.
+	test('reports the answered segments of a group that overruns the cap mid-message', () => {
+		const lost: LostGroup[] = [];
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			// One segment is 36 octets, so the second overruns a group already holding the first.
+			maxOctets: 50,
+			now: () => 0,
+			onLost: one => { lost.push(one); },
+			timeout: 60_000,
+		});
+
+		assert.equal(collect(reassembler, 8, 1, 3).kept, true);
+		assert.equal(collect(reassembler, 8, 2, 3).kept, false);
+		assert.equal(reassembler.size, 0);
+		assert.deepEqual(
+			lost.map(one => ({ parts: one.parts, reason: one.reason, total: one.total })),
+			[{ parts: 2, reason: 'evicted', total: 3 }],
+		);
 	});
 
 	// Nothing else says a message the peer has already been answered for was thrown away.
@@ -1560,8 +1580,8 @@ describe('reassembly bounds', () => {
 
 		assert.deepEqual(
 			[collect(reassembler, 1, 1, 0), collect(reassembler, 2, 0, 3), collect(reassembler, 3, 4, 3)]
-				.map(one => one.status),
-			Array(3).fill('ESME_RINVESMCLASS'),
+				.map(one => (one.kept ? undefined : one.refusal)),
+			Array(3).fill('unplaceable'),
 		);
 		assert.equal(reassembler.size, 0);
 		assert.deepEqual(warnings, Array(3).fill('reassembler - dropping a segment the UDH numbers impossibly'));
@@ -1577,8 +1597,11 @@ describe('reassembly bounds', () => {
 			timeout: 60_000,
 		});
 
-		assert.equal(collect(reassembler, 9, 1, 2).whole, undefined);
-		assert.equal(collect(reassembler, 9, 2, 3).status, 'ESME_RINVESMCLASS');
+		const first = collect(reassembler, 9, 1, 2);
+
+		assert.ok(first.kept);
+		assert.equal(first.whole, undefined);
+		assert.equal(collect(reassembler, 9, 2, 3).kept, false);
 		assert.equal(reassembler.size, 1);
 
 		reassembler.clear();
@@ -1595,11 +1618,17 @@ describe('reassembly bounds', () => {
 		});
 
 		for (const reference of [1, 2, 3]) {
-			assert.equal(collect(reassembler, reference, 1, 2).whole, undefined);
+			const collected = collect(reassembler, reference, 1, 2);
+
+			assert.ok(collected.kept);
+			assert.equal(collected.whole, undefined);
 		}
 
 		// Completing the first one must not produce a message: it was evicted.
-		assert.equal(collect(reassembler, 1, 2, 2).whole, undefined);
+		const reopened = collect(reassembler, 1, 2, 2);
+
+		assert.ok(reopened.kept);
+		assert.equal(reopened.whole, undefined);
 		assert.equal(reassembler.size, 2);
 
 		reassembler.clear();
@@ -1617,11 +1646,18 @@ describe('reassembly bounds', () => {
 		});
 
 		for (const reference of [1, 2, 3]) {
-			assert.equal(collect(reassembler, reference, 1, 2).whole, undefined);
+			const collected = collect(reassembler, reference, 1, 2);
+
+			assert.ok(collected.kept);
+			assert.equal(collected.whole, undefined);
 		}
 
 		assert.equal(reassembler.size, 2);
-		assert.equal(collect(reassembler, 1, 2, 2).whole, undefined);
+
+		const reopened = collect(reassembler, 1, 2, 2);
+
+		assert.ok(reopened.kept);
+		assert.equal(reopened.whole, undefined);
 
 		reassembler.clear();
 	});
@@ -1641,12 +1677,16 @@ describe('reassembly bounds', () => {
 		Buffer.concat([Buffer.from([0x05, 0x00, 0x03, 6, 2, 1]), Buffer.from('fragment')]).copy(framed);
 		first.params.short_message = framed.subarray(0, 14);
 
-		assert.equal(reassembler.collect(first, { part: 1, reference: 6, total: 2 }).whole, undefined);
+		const held = reassembler.collect(first, { part: 1, reference: 6, total: 2 });
+
+		assert.ok(held.kept);
+		assert.equal(held.whole, undefined);
 
 		framed.fill(0x00);
 
 		const collected = collect(reassembler, 6, 2, 2);
 
+		assert.ok(collected.kept);
 		assert.ok(collected.whole);
 		assert.equal(decodeSegments(collected.whole), 'fragmentfragment');
 	});
@@ -1662,6 +1702,7 @@ describe('reassembly bounds', () => {
 		});
 		const first = collect(reassembler, 9, 1, 2);
 
+		assert.ok(first.kept);
 		assert.equal(first.whole, undefined);
 
 		now = 61;
@@ -1669,6 +1710,7 @@ describe('reassembly bounds', () => {
 		// The other half arrives after the group expired, so it starts a new, still-incomplete one.
 		const late = collect(reassembler, 9, 2, 2);
 
+		assert.ok(late.kept);
 		assert.equal(late.whole, undefined);
 		assert.notEqual(late.smsId, first.smsId);
 		assert.equal(reassembler.size, 1);
@@ -1679,6 +1721,16 @@ describe('reassembly bounds', () => {
 
 // Jasmin dispatches one request per connector at a time: holding a group unanswered until it was
 // whole deadlocked every multi-segment message against it (interop-tests/findings/03-jasmin.md).
+describe('the status a refused segment is answered with', () => {
+	// SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another.
+	test('names one the command the segment arrived on defines', () => {
+		assert.equal(refusalStatus('submit_sm', 'full'), 'ESME_RMSGQFUL');
+		assert.equal(refusalStatus('deliver_sm', 'full'), 'ESME_RX_T_APPN');
+		assert.equal(refusalStatus('submit_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
+		assert.equal(refusalStatus('deliver_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
+	});
+});
+
 describe('a peer that sends the next segment only once the last one is answered', () => {
 	const text = 'A relay that waits for each response before it sends the next segment. '.repeat(4);
 

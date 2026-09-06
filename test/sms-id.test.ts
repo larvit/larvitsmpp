@@ -40,7 +40,6 @@ describe('the <base>-<n> a segment is answered with', () => {
 });
 
 describe('the id a response carries', () => {
-	// SMPP 3.4 4.6.2 makes deliver_sm_resp's message_id unused; Jasmin FINs the link over one.
 	test('leaves a deliver_sm_resp without one, and gives submit_sm_resp its own', () => {
 		assert.deepEqual(respIdParams('deliver_sm', 'x'), {});
 		assert.deepEqual(respIdParams('submit_sm', 'x'), { message_id: 'x' });
