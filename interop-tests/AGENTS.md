@@ -31,7 +31,14 @@ docker compose -f compose.yaml -f interop-tests/compose.<peer>.yaml down -v
 
 and then decodes `captures/<peer>.pcapng` with tshark (`-d tcp.port==<port>,smpp -Y smpp -T json`),
 printing the command histogram and the counts of `_ws.malformed` and error-severity `_ws.expert`.
-Both counts must be zero for a phase to pass.
+Both counts must be zero for a phase to pass, and an empty capture, or one carrying no bind and its
+response, fails too.
+
+A peer whose scenarios send malformed PDUs on purpose — jsmpp does, to prove they are refused — has
+no way to say so, so its run exits non-zero every time and its findings file carries the count that
+is expected. Give the runner an expected count per peer, and a deviation from it becomes the signal
+that a bare threshold cannot be: today a third malformed frame appearing beside jsmpp's two
+deliberate ones looks exactly like the two.
 
 ## Rules for an experiment
 
