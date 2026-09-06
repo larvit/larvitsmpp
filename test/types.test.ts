@@ -108,8 +108,9 @@ describe('cstring (C-Octet String)', () => {
 		assert.ok(types.cstring.read(encoded, encoded.length + 1).err instanceof Error);
 		assert.ok(types.cstring.read(encoded, -1).err instanceof Error);
 
-		// At the end exactly the field is absent, not corrupt: peers truncate a NULL-only body.
-		assert.deepEqual(types.cstring.read(encoded, encoded.length), { bytesRead: 1, value: '' });
+		// At the end exactly the field is absent, not corrupt: peers truncate a NULL-only body. It
+		// consumed no octet, and a reader that counts one puts every later offset past the end.
+		assert.deepEqual(types.cstring.read(encoded, encoded.length), { bytesRead: 0, value: '' });
 	});
 });
 

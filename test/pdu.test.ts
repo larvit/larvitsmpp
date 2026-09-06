@@ -88,6 +88,26 @@ describe('parsing real PDUs', () => {
 		assert.equal(pduObj.cmdLength, 59);
 	});
 
+	// SMPP 3.4 4.6.2 leaves deliver_sm_resp's message_id unused and peers send the response with no
+	// body at all, so the last C-Octet String of a PDU is one a peer may leave out entirely.
+	test('reads a PDU whose trailing C-Octet String was left out altogether', () => {
+		const bind = encode({
+			cmdName: 'bind_transceiver',
+			params: { password: 'secret08', system_id: 'SMPP3TEST' },
+			seqNr: 1,
+		});
+		const withoutRange = bind.subarray(0, bind.length - 1);
+
+		withoutRange.writeUInt32BE(withoutRange.length, 0);
+
+		const bound = decode(withoutRange);
+
+		assert.equal(bound.params.system_id, 'SMPP3TEST');
+		assert.equal(bound.params.address_range, '');
+		assert.equal(decode(Buffer.from('00000010800000050000000000000007', 'hex')).params.message_id, '');
+		assert.equal(decode(Buffer.from('00000010800000040000000000000007', 'hex')).params.message_id, '');
+	});
+
 	// The padded read skips one NULL octet and no more: the body's own last octet is 0x00 here, and
 	// the optional parameters behind the padding still have to be read.
 	test('reads past that NULL octet to the optional parameters behind it', () => {
