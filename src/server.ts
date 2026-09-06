@@ -1,4 +1,4 @@
-import type { CloseOptions } from './session-options.ts';
+import type { CloseOptions, OnRequest } from './session-options.ts';
 import type { PduObject, TlvInput } from './pdu.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { Server as NetServer, Socket } from 'node:net';
@@ -32,6 +32,8 @@ export type ServerOptions = {
 	maxOutstanding?: number;
 	maxOctets?: number;
 	maxReassembly?: number;
+	/** First refusal on every request a bound peer sends. */
+	onRequest?: OnRequest;
 	port?: number;
 	reassemblyTimeout?: number;
 	responseTimeout?: number;
@@ -185,42 +187,47 @@ async function acceptBind(
 }
 
 async function onBind(session: Session, pduObj: PduObject, options: ServerOptions): Promise<void> {
-	const log = guardedLog(options.log);
 	const identity = { system_id: options.systemId ?? defaults.systemId };
 	const systemId = paramText(pduObj.params.system_id);
 
 	if (!await authenticate(session, pduObj, options)) {
-		log.info('server - bind refused', { systemId });
+		session.log.info('server - bind refused', { systemId });
 		await session.sendReturn(pduObj, 'ESME_RBINDFAIL', identity);
 
 		return;
 	}
 
 	await acceptBind(session, pduObj, options, identity);
-	log.verbose('server - bound', { systemId });
+	session.log.verbose('server - bound', { systemId });
 }
 
 /**
- * Handles everything a peer may send before it is bound. Returns true when it has answered, so the
- * session leaves the PDU alone.
+ * Bind is the server's; a bound peer's other requests are offered to the application. Returns true
+ * when it has answered, so the session leaves the PDU alone.
  */
-async function onRequest(
+async function handleRequest(
 	session: Session,
 	pduObj: PduObject,
 	options: ServerOptions,
 ): Promise<boolean> {
-	if (session.loggedIn || pduObj.cmdName === 'unbind') return false;
+	const isBind = bindCommands.includes(pduObj.cmdName);
 
-	if (!bindCommands.includes(pduObj.cmdName)) {
-		const log = guardedLog(options.log);
+	if (session.loggedIn) {
+		if (isBind || !options.onRequest) return false;
 
-		log.debug('server - command before bind', { cmdName: pduObj.cmdName });
-		await session.sendReturn(pduObj, 'ESME_RINVBNDSTS');
+		return options.onRequest(session, pduObj);
+	}
+
+	if (isBind) {
+		await onBind(session, pduObj, options);
 
 		return true;
 	}
 
-	await onBind(session, pduObj, options);
+	if (pduObj.cmdName === 'unbind') return false;
+
+	session.log.debug('server - command before bind', { cmdName: pduObj.cmdName });
+	await session.sendReturn(pduObj, 'ESME_RINVBNDSTS');
 
 	return true;
 }
@@ -233,7 +240,7 @@ function onConnection(sock: Socket, options: ServerOptions, server: SmppServer):
 		maxOutstanding: options.maxOutstanding,
 		maxOctets: options.maxOctets,
 		maxReassembly: options.maxReassembly,
-		onRequest: (bound, pduObj) => onRequest(bound, pduObj, options),
+		onRequest: (bound, pduObj) => handleRequest(bound, pduObj, options),
 		reassemblyTimeout: options.reassemblyTimeout,
 		responseTimeout: options.responseTimeout,
 		shutdownTimeout: options.shutdownTimeout,
@@ -264,10 +271,27 @@ function createSecureListener(tlsOptions: TlsOptions, log: SmppLog): TlsServer {
 	return listener;
 }
 
+/** A caller without types would otherwise reach a TypeError once per PDU rather than once here. */
+function checkHooks(options: ServerOptions): VoidResult {
+	for (const name of ['authenticate', 'onRequest'] as const) {
+		const hook: unknown = options[name];
+
+		if (hook !== undefined && typeof hook !== 'function') {
+			return { err: new Error(`${name} must be a function, got ${typeof hook}`) };
+		}
+	}
+
+	return {};
+}
+
 function checkOptions(options: ServerOptions, log: SmppLog, port: number): VoidResult {
 	const checked = checkSessionOptions(options);
 
 	if (checked.err) return { err: checked.err };
+
+	const hooks = checkHooks(options);
+
+	if (hooks.err) return hooks;
 
 	if (options.tls === true) {
 		log.warn('server - tls without a certificate', { port });

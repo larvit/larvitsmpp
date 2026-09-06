@@ -81,7 +81,7 @@ export type CloseOptions = { signal?: AbortSignal | undefined };
  * built-in handling is skipped — this is how the server owns bind without the session also
  * replying "invalid command".
  */
-export type OnRequest = (session: Session, pduObj: PduObject) => Promise<boolean>;
+export type OnRequest = (session: Session, pduObj: PduObject) => Promise<boolean> | boolean;
 
 /**
  * How to come back after an unexpected disconnect. The session owns the retry loop; the caller

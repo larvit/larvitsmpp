@@ -397,7 +397,11 @@ export class Session extends EventEmitter<SessionEvents> {
 		void this.incoming.handle(pduObj).catch((thrown: unknown) => {
 			const err = errorFrom(thrown);
 
-			this.log.error('session - a handler threw', { message: err.message });
+			this.log.error('session - a handler threw', {
+				cmdName: pduObj.cmdName,
+				message: err.message,
+				seqNr: pduObj.seqNr,
+			});
 			this.emit('sessionError', err);
 		});
 	}

@@ -517,6 +517,44 @@ Grouped by what each one constrains.
   in hand. The answer goes out before the `sms` event either way, so a listener's own receipt can
   never precede the acceptance of the message it reports on.
 
+- **`server()` composes the application's `onRequest` after its own bind handling, and offers it
+  every request that handling did not answer.** Maintainer's call, 2026-09-06, from a product review
+  of the multipart change: `server()` filled the session's only `onRequest` slot, so the escape hatch
+  the error above names was reachable only by hand-wiring a `Session` over a raw socket, giving up
+  bind acceptance, `authenticate`, the session set and the drain `close()` runs over it — which is
+  what goal 6 means by beating "the application can do this itself". What the library verifies is the
+  ordering rather than the hook's honesty about answering: the hook is consulted only for a non-bind
+  request on a session already bound, so no bind — a second one on a live session included — and
+  nothing a peer sends before one can be intercepted however the hook is written. One
+  `OnRequest` type on both option bags, because a second contract under one name is two spellings of
+  one goal; widened to accept a plain boolean, as `authenticate` already is, so an observing hook need
+  not be `async`. Nothing of ours is written for a request whose hook failed, the same on both
+  surfaces: the library cannot tell one that failed before answering from one that failed after, so
+  goal 2 reports the outcome as undetermined rather than guessing, and the peer's own
+  `responseTimeout` is what settles it — the answer `authenticate` failing already takes. A hook that
+  throws or rejects reaches `sessionError` on the way; one that never settles reaches nothing at all,
+  and is visible only as the request that was never answered. That takes the keepalive with it, since
+  a hook broken across the board leaves `enquire_link` unanswered and the peer drops the link — the
+  back-pressure wanted, because an application that cannot serve a link should not hold one.
+  `sessionError` rather than `serverError` because the
+  failure belongs to one session's request, and that channel already carries every failure of one.
+  The hook is consulted before the bind-direction gate, so it sees a `submit_sm` a receiver-bound
+  peer may not send; first refusal means first, and one it declines still gets `ESME_RINVBNDSTS`.
+  Nothing is held for a request the hook answered: `HeldMessages` is opened by the `sms` event the
+  hook skipped, so the drain waits on none of it. `OnRequest` stays unexported where
+  `AuthenticateInput` is exported, because that hook's argument is a shape this library invents and
+  this one's are two types already published. Rejected: consulting the hook first, which puts
+  bind and authentication inside the application's reach for nothing. Rejected: a narrower hook
+  returning a status for the library to write, which makes the answer verifiable but pays a second
+  contract under a second name for it, and could not express what the session-level hook already
+  does — answer a bind, a vendor command, a `data_sm` — leaving that error naming something only
+  half the surface can do. Rejected: falling the request through to the built-in handling on a
+  failure, which reads as the answer the peer would have had with no hook — true only of a hook
+  that failed before answering, where one that failed after put a second response on the peer's own
+  sequence number, goal 1's wire violation. Rejected with it: recording what the hook wrote so the
+  fall-through could be gated on it, which buys a fail-open path with state and an internal contract
+  no other collaborator needs.
+
 - **The drain waits on the messages the application holds, and `sendResp()` is what says it is done
   with one.** Maintainer's call, 2026-09-01: waiting on the send window alone tore a server session
   down while the application was still answering a `submit_sm`, so the peer timed out and re-sent —
@@ -620,3 +658,9 @@ Grouped by what each one constrains.
   `node:24.18.0-bookworm-slim` ships no openssl binary, so a shelled-out fixture would pass in CI and
   fail on every developer machine, and a committed key leaks in a public repository. Valid while the
   dev image has no openssl.
+
+- **`src/` stays flat until a module has to move for another reason.** Architecture review,
+  2026-09-06: the grouping the file map above already implies — `wire/` for `pdu*` and `defs`,
+  `link/` for `link-*`, `reconnect-*`, `pdu-transport` and `send-window`, `messages/` for `sms*`,
+  `dlr*`, `message*`, `reassembly` and `udh` — rewrites every import for no change to
+  `dist/index.js`, the one published entry. Valid while that map is what a reader navigates by.
