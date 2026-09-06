@@ -96,7 +96,7 @@ src/
 	send-sms.ts          submitSms composition and the submitSmParams builder
 	send-window.ts       SendWindow: the maxOutstanding semaphore
 	session-options.ts   SessionOptions, ReconnectOptions, bind direction and the session defaults
-	sms-id.ts            The notation a peer writes message ids in, normalised for comparison
+	sms-id.ts            Message ids: the peer's notation, the <base>-<n> a segment gets, which response carries one
 	udh.ts               User data header: its length, the concatenation fields of a long SMS and their reference
 	unanswered-error.ts  UnansweredError: it went out and no answer came back
 	uuid.ts              uuidv7() — the ids the library generates for messages
@@ -166,6 +166,7 @@ naming the behaviour.
 | Binary payloads decoded as text | `data_coding` 0x02, 0x04, 0x14 and 0xF4-0xF7 are 8-bit binary and land on the GSM 03.38 table, which rewrites every octet outside it |
 | Binary TLVs round-trip corrupt | `pduToObj` turns a `Buffer` TLV value into a hex string (`utils.js:307`), and `objToPdu` writes that string back as its own ASCII, so `message_payload`, `network_error_code`, `callback_num` and the rest are destroyed by any round trip |
 | `ESME_RINVBCASTCHANIND` typo | Defined as `0x011`, three hex digits; the spec value is `0x0112` |
+| Every response carries a message id | `session.js` builds `params = {'message_id': …}` for every response it sends, `deliver_sm_resp` included; SMPP 3.4 4.6.2 makes that field unused and NULL, and Jasmin closes the connection on one |
 
 ## Multipart sends and the send window
 
@@ -454,22 +455,28 @@ Grouped by what each one constrains.
   deadlocked every multi-segment message against a production gateway
   ([interop-tests/findings/03-jasmin.md](interop-tests/findings/03-jasmin.md)). Goal 1 has the answer
   a real SMSC gives — one `message_id` per `submit_sm`, immediately — so the group's id base is
-  generated when it opens and each segment is answered `<base>-<n>`, the notation `DlrMerger` and
-  `sendDlr()` already read; `sms.smsId` is that base, so a receipt still names ids the peer holds. An
-  `smsId` or a refusing `status` passed to `sendResp()` there is an error rather than a silent
-  no-op, because the wire has already promised otherwise. A single-segment message is untouched, and
-  is where a caller-chosen id and a refusal still live; `onRequest` is the escape hatch for an
-  application that must refuse a PDU before the `sms` event could have shown it one. A segment whose
-  UDH belongs to no group is answered `ESME_RINVESMCLASS` rather than left unanswered, for the same
-  reason the rest are answered at all. Rejected: answering every segment but the one that completes
-  the group, which leaves the peer holding some segments accepted and one refused with nothing in
-  SMPP to retract the rest, and still cannot honour a caller's `smsId` on the segments already gone.
-  Rejected: a hook that mints the id per segment, which asks the application to name a message it
-  cannot read yet — what it wants is `sms.smsId` afterwards. Rejected: an option to keep the old
-  behaviour, a second spelling whose only distinguishing feature is that it deadlocks. Accepted: a
-  group that never completes is traffic the peer will not send again, so each one given up on —
-  expired, evicted, or dropped with the link — reaches `sessionError` as well as the log, since only
-  the application can decide what a half-message is worth.
+  generated when it opens and each segment is answered `<base>-<n>`, the notation `sms-id.ts` owns
+  and `DlrMerger` reads back. The id is therefore fixed by the first segment, which is why an `smsId`
+  or a refusing `status` passed to `sendResp()` on such a message is an error rather than a silent
+  no-op. `answeredOnArrival` is on `Sms` because nothing else can say: a peer may number a
+  concatenated message one part of one, so the segment count is not the discriminant a reader would
+  reach for and would be wrong when they did. A message `sendResp()` still answers itself is
+  untouched, and is where a caller-chosen id and a refusal live; `onRequest` is the escape hatch for
+  an application that must refuse a PDU the `sms` event could not have shown it yet. `collect()`
+  answers every segment it will not carry rather than leaving it unanswered, which is the same stall
+  in miniature: `ESME_RINVESMCLASS` where the UDH belongs to no group, `ESME_RMSGQFUL` where the
+  segment's own arrival overran the octet cap, since a peer told that still holds it. Rejected:
+  answering every segment but the one that completes the group, which leaves the peer holding some
+  segments accepted and one refused with nothing in SMPP to retract the rest, and still cannot honour
+  a caller's `smsId` on the segments already gone. Rejected: a hook that mints the id per segment,
+  which asks the application to name a message it cannot read yet — what it wants is `sms.smsId`
+  afterwards. Rejected: an option to keep the old behaviour, a second spelling whose only
+  distinguishing feature is that it deadlocks. Accepted: a group given up on — expired, evicted, or
+  dropped with the link — is traffic the peer will not send again, so each one reaches `sessionError`
+  as well as the log. Rejected there: an exported `MessageLostError` carrying the group, on the
+  `PduRefusedError` pattern — no `sms` ever fired for that group, so there is nothing in it the
+  application could act on, and goal 6 does not buy a second exported class to make a count
+  distinguishable.
 
 - **The drain waits on the messages the application holds, and `sendResp()` is what says it is done
   with one.** Maintainer's call, 2026-09-01: waiting on the send window alone tore a server session

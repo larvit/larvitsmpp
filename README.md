@@ -215,11 +215,13 @@ await smpp.close();      // stop listening, then drain and close every live sess
 
 A message that arrived in several segments was already answered when you see it: each segment gets
 an `ESME_ROK` as it lands, because a relaying SMSC will not send the next one until the last is
-answered. The ids went with those answers — `sms.smsId` is their base, and the segments carry
-`<smsId>-1`, `<smsId>-2` and so on, which is what `sendDlr()` names — so `sendResp()` there only
-says you are done with the message, and returns an `err` for an `smsId` or a refusing `status`.
-Choosing the id and refusing the message are for a single-segment message; key your own records off
-`sms.smsId` for the rest.
+answered. `sms.answeredOnArrival` says whether that happened — a segment count cannot, since a peer
+may number a concatenated message one part of one. The id was fixed with the first segment, so
+`sendResp()` there only says you are done with the message, and returns an `err` for an `smsId` or a
+refusing `status`; choosing the id and refusing the message belong to a message `sendResp()` still
+answers itself. `sms.smsId` is the base either way, and `sendDlr()` names `<smsId>-1`, `<smsId>-2`
+and so on — the ids a `submit_sm`'s responses carried. A `deliver_sm` is answered with no id at all,
+since SMPP marks that field unused, so an inbound message's base is a handle of your own only.
 
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
 `ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`. `SCHEDULED` and `ENROUTE` go out as intermediate
@@ -273,10 +275,14 @@ Runtime failures on a live connection arrive as `sessionError` and `serverError`
 deliberately not called `error`: Node turns an unhandled `error` event into a thrown exception, which
 is exactly what this library promises not to do.
 
-`sessionError` carries two kinds of failure, and `PduRefusedError` is what separates them:
+`sessionError` carries three kinds of failure, and `PduRefusedError` separates the first from the
+rest:
 
 - **A PDU the peer sent that the codec could not read with the stream still in sync.** The link is
   healthy and only that one PDU is lost, so this is the kind to count rather than alert on.
+- **A concatenated message given up on before it was whole.** Its arrived segments were answered, so
+  the peer will not send them again. Also a counting kind: no `sms` event ever fired for it, so
+  there is nothing to act on beyond knowing traffic was lost.
 - **Everything else**: the session or the socket failing, and a hook or listener that threw or, if it
   was `async`, rejected.
 
@@ -349,7 +355,7 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 | `close` | The session is over, because nothing will bring the link back. Fires once, whether you closed it or the link failed for good. |
 | `disconnected` | The link dropped and the reconnect loop will retry it. Do not open a replacement client here — the session you hold comes back on its own, and `reconnected` says when. Fires again for each attempt that reconnects and then fails, so it is not one-to-one with `reconnected`. |
 | `reconnected` | The client re-bound after a drop. |
-| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires for each PDU the codec refused as well, carrying a `PduRefusedError` while the link carries on: a refused request is answered with the status SMPP names, and a refused response is answered with nothing and settles the request it named as `unanswered`. [Errors](#errors) tells the two kinds apart. A multipart message given up half-arrived fires it too: its segments were answered, so the peer will never send them again. |
+| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires for each PDU the codec refused as well, carrying a `PduRefusedError` while the link carries on: a refused request is answered with the status SMPP names, and a refused response is answered with nothing and settles the request it named as `unanswered`. [Errors](#errors) tells its three kinds apart. |
 | `data` | Raw bytes arrived on the socket. |
 | `incomingPdu` | A complete PDU arrived, as a buffer. |
 | `incomingPduObj` | The same PDU, parsed into an object. |
@@ -494,6 +500,9 @@ have worked around any of these, remove the workaround:
 - A message whose last octet was `0x00` was allocated one octet short while `sm_length` still
   reported the full length, so it went out corrupt. In UCS2 that is any message ending in a
   character like 一 (U+4E00), which made the bug routine for CJK text.
+- Every response carried a `message_id`, `deliver_sm_resp` included, where SMPP 3.4 4.6.2 makes
+  that field unused and NULL. Jasmin closes the connection on one. Answering an inbound message now
+  puts nothing in it, and `sms.smsId` is the local handle it always was.
 - Binary TLVs (`message_payload`, `network_error_code`, `callback_num` and the rest) were parsed
   into a hex string and written back as the ASCII of that string, so every one that made a round
   trip went out corrupt. They are `Buffer`s in both directions now, so drop any hex encoding of
