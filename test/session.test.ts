@@ -566,7 +566,7 @@ describe('sending', () => {
 
 		const [sms, sent] = await Promise.all([
 			incoming.then(async received => {
-				await received.sendResp({ smsId: 'long-id' });
+				await received.sendResp();
 
 				return received;
 			}),
@@ -577,7 +577,7 @@ describe('sending', () => {
 		assert.ok(sms.pduObjs.length > 1);
 		assert.equal(sent.err, undefined);
 		assert.equal(sent.pduObjs.length, 4);
-		assert.deepEqual(sent.smsIds, ['long-id-1', 'long-id-2', 'long-id-3', 'long-id-4']);
+		assert.deepEqual(sent.smsIds, [1, 2, 3, 4].map(part => `${sms.smsId}-${String(part)}`));
 	});
 
 	test('carries a UCS2 message through unchanged', async t => {
@@ -804,7 +804,7 @@ describe('receiving', () => {
 		assert.equal(sms.message, message);
 		assert.equal(sms.pduObjs.length, 2);
 
-		await sms.sendResp({ smsId: 'inbound-long' });
+		assert.deepEqual(await sms.sendResp(), {});
 
 		const ids: string[] = [];
 
@@ -813,7 +813,7 @@ describe('receiving', () => {
 			ids.push(paramText(answered.pduObj.params.message_id));
 		}
 
-		assert.deepEqual(ids, ['inbound-long-1', 'inbound-long-2']);
+		assert.deepEqual(ids, [1, 2].map(part => `${sms.smsId}-${String(part)}`));
 	});
 });
 
@@ -939,7 +939,7 @@ describe('delivery reports', () => {
 
 		const [sms] = await Promise.all([
 			incoming.then(async received => {
-				await received.sendResp({ smsId: 'unrequested' });
+				await received.sendResp();
 
 				return received;
 			}),
@@ -948,7 +948,7 @@ describe('delivery reports', () => {
 
 		await sms.sendDlr();
 
-		assert.deepEqual(perSegment, ['unrequested-1', 'unrequested-2', 'unrequested-3']);
+		assert.deepEqual(perSegment, [1, 2, 3].map(part => `${sms.smsId}-${String(part)}`));
 		assert.equal(merged, 0);
 	});
 });
