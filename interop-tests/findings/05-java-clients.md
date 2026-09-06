@@ -149,6 +149,11 @@ trailing octets, no value) rather than a general TLV-validation gap, but it is a
 target 1 otherwise closed, silently dropping a TLV the peer meant to send instead of losing (and
 counting) the one malformed PDU.
 
+Fixed in [#87](https://github.com/larvit/larvitsmpp/pull/87): the optional parameters now have to end
+on `command_length`, so this PDU is refused `ESME_RINVTLVSTREAM` like the sibling case, and the
+reproducer above is asserted by `jsmpp.test.ts`, "a deliver_sm ending in a bare TLV header gets
+ESME_RINVTLVSTREAM, and reaches no listener".
+
 ## Peer quirks
 
 - **jsmpp's `session.getInterfaceVersion()` echoes what the driver declared, not what the earlier
