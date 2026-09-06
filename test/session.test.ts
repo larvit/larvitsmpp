@@ -1315,6 +1315,14 @@ describe('robustness', () => {
 			to: '46709771337',
 		})));
 
+		const long = await session.sendSms({
+			from: '46701113311',
+			message: 'x'.repeat(500),
+			to: '46709771337',
+		});
+
+		assert.equal(long.err, undefined, 'more segments than slots still completes, a slot at a time');
+		assert.equal(long.smsIds.length, 4);
 		assert.ok(peak <= 2, `peak was ${String(peak)}`);
 	});
 

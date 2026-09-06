@@ -456,8 +456,11 @@ reconnect follows, its `sms.sendDlr()` still goes out on the new link, since a r
 of its own, correlated by the id it names.
 
 `responseTimeout` bounds the wait for a link and the wait for an answer separately, and a send also
-queues for a `maxOutstanding` slot, which nothing bounds — so it is not a deadline for the call.
-Pass `{ signal: AbortSignal.timeout(ms) }` when you need one.
+queues for a `maxOutstanding` slot, which nothing bounds — so it is not a deadline for the call. Pass
+`{ signal: AbortSignal.timeout(ms) }` when you need one: it cuts all three waits short, and a send it
+stops before anything reached the socket adds nothing to `unanswered`. A message with more segments
+than there are slots goes out a slot at a time and still completes, so a deadline tight enough to
+expire mid-message is how you produce the partial failure above.
 
 `acceptsOptionalParams()` answers whether the peer declared SMPP 3.4 or later, which is the version
 at and above which the spec allows optional parameters to be sent to it; `peerInterfaceVersion` is

@@ -48,7 +48,7 @@ export class OutgoingRequests {
 		this.pending = new PendingRequests(options.log);
 		this.responseTimeout = options.responseTimeout;
 		this.transport = options.transport;
-		this.window = new SendWindow(options.maxOutstanding);
+		this.window = new SendWindow({ limit: options.maxOutstanding, log: options.log });
 	}
 
 	/** Read through a method: a drop can land while a request is awaiting. */
@@ -115,7 +115,9 @@ export class OutgoingRequests {
 
 			if (held.err) return { err: held.err };
 
-			await this.window.acquire();
+			const slot = await this.window.acquire(options.signal);
+
+			if (slot.err) return { err: slot.err };
 
 			const attempt = await this.attempt(input, options).finally(() => { this.window.release(); });
 
