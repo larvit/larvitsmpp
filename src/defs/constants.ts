@@ -43,13 +43,10 @@ export const consts = {
 	},
 	ESM_CLASS: {
 		CONVERSATION_ABORT: 0x18,
-		DATAGRAM: 0x01,
 		DELIVERY_ACKNOWLEDGEMENT: 0x08,
-		FORWARD: 0x02,
 		INTERMEDIATE_DELIVERY: 0x20,
 		MC_DELIVERY_RECEIPT: 0x04,
 		SET_REPLY_PATH: 0x80,
-		STORE_FORWARD: 0x03,
 		UDH_INDICATOR: 0x40,
 		USER_ACKNOWLEDGEMENT: 0x10,
 	},
@@ -64,6 +61,13 @@ export const consts = {
 		SKIPPED: 9,
 		UNDELIVERABLE: 5,
 		UNKNOWN: 7,
+	},
+	/** SMPP 3.4 5.2.12 bits 1-0 of esm_class, the field the rest of that octet is OR-ed into. */
+	MESSAGING_MODE: {
+		DATAGRAM: 0x01,
+		FORWARD: 0x02,
+		SMSC_DEFAULT: 0x00,
+		STORE_FORWARD: 0x03,
 	},
 	NETWORK: {
 		CDMA: 0x03,
@@ -114,6 +118,13 @@ export function messageTypeOf(esmClass: number): number {
 
 export type ConstGroup = keyof typeof consts;
 export type MessageState = keyof typeof consts.MESSAGE_STATE;
+export type MessagingMode = keyof typeof consts.MESSAGING_MODE;
+
+export const messagingModes: readonly string[] = Object.keys(consts.MESSAGING_MODE);
+
+export function isMessagingMode(value: unknown): value is MessagingMode {
+	return typeof value === 'string' && Object.hasOwn(consts.MESSAGING_MODE, value);
+}
 
 // Aliased values (NPI.IP === NPI.INTERNET === 0x0E) resolve to whichever name sorts last.
 export const constsById: Record<string, Record<number, string>> = {};

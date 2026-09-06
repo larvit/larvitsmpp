@@ -61,7 +61,7 @@ export type {
 	SessionOptions,
 } from './session.ts';
 export type { CommandName, PduParams, PduParamsInput } from './defs/commands.ts';
-export type { ConstGroup, MessageState } from './defs/constants.ts';
+export type { ConstGroup, MessageState, MessagingMode } from './defs/constants.ts';
 export type { Encoding, EncodingName } from './defs/encodings.ts';
 export type { ErrorName } from './defs/errors.ts';
 export type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';

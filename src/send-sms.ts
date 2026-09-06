@@ -1,11 +1,12 @@
 import type { EncodingName } from './defs/encodings.ts';
+import type { MessagingMode } from './defs/constants.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput } from './pdu.ts';
 import type { Result } from './result.ts';
 import type { SmppLog } from './log.ts';
 import type { SmsIdNotation } from './sms-id.ts';
 import { UnansweredError } from './unanswered-error.ts';
-import { consts } from './defs/constants.ts';
+import { consts, isMessagingMode, messagingModes } from './defs/constants.ts';
 import { detect } from './defs/encodings.ts';
 import { normaliseSmsId } from './sms-id.ts';
 import { paramText } from './defs/types.ts';
@@ -21,6 +22,8 @@ export type SendSmsOptions = {
 	/** Refuse before sending anything if the message needs more than this many segments. */
 	maxSegments?: number;
 	message: string;
+	/** The esm_class messaging mode, SMPP 3.4 5.2.12. Absent leaves the choice to the SMSC. */
+	messagingMode?: MessagingMode;
 	scheduleDeliveryTime?: Date | number | string;
 	sourceAddrNpi?: number;
 	sourceAddrTon?: number;
@@ -67,6 +70,13 @@ function dataCodingFor(encoding: EncodingName, flash: boolean): number {
 	return encoding === 'UCS2' ? 0x18 : 0x10;
 }
 
+/** The mode the caller named sits beside the UDH indicator, which a segment carrying one must keep. */
+function esmClassFor(mode: MessagingMode | undefined, multipart: boolean): number {
+	const udh = multipart ? consts.ESM_CLASS.UDH_INDICATOR : 0;
+
+	return consts.MESSAGING_MODE[mode ?? 'SMSC_DEFAULT'] | udh;
+}
+
 export function submitSmParams(
 	sms: SendSmsOptions,
 	segment: Buffer,
@@ -77,13 +87,13 @@ export function submitSmParams(
 		destination_addr: sms.to,
 		dest_addr_npi: sms.destinationAddrNpi ?? 0,
 		dest_addr_ton: sms.destinationAddrTon ?? addressTon(sms.to),
+		esm_class: esmClassFor(sms.messagingMode, options.multipart),
 		short_message: segment,
 		source_addr: sms.from,
 		source_addr_npi: sms.sourceAddrNpi ?? 0,
 		source_addr_ton: sms.sourceAddrTon ?? addressTon(sms.from),
 	};
 
-	if (options.multipart) params.esm_class = consts.ESM_CLASS.UDH_INDICATOR;
 	if (sms.dlr === true) params.registered_delivery = consts.REGISTERED_DELIVERY.FINAL;
 	if (sms.scheduleDeliveryTime !== undefined) {
 		params.schedule_delivery_time = smppTime.encode(sms.scheduleDeliveryTime);
@@ -93,6 +103,16 @@ export function submitSmParams(
 	}
 
 	return params;
+}
+
+/** The mode is named, never written as bits: a number could clear the UDH indicator a segment needs. */
+export function checkMessagingMode(mode: unknown): Error | undefined {
+	if (mode === undefined || isMessagingMode(mode)) return undefined;
+
+	// String() throws on a null-prototype object, and this value is whatever the caller passed.
+	const got = typeof mode === 'string' || typeof mode === 'number' ? String(mode) : typeof mode;
+
+	return new Error(`messagingMode must be ${messagingModes.join(', ')}, got ${got}`);
 }
 
 /** Nothing goes on the wire until the whole message fits: a half-sent message bills twice. */
@@ -141,6 +161,10 @@ function collectSent(
 
 /** Puts a message on the wire as one submit_sm per segment. */
 export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise<SendSmsResult> {
+	const unnamed = checkMessagingMode(sms.messagingMode);
+
+	if (unnamed) return unsent(unnamed);
+
 	const allowed = sms.maxSegments ?? maxSegments;
 	const encoding = sms.encoding ?? detect(sms.message);
 	const segments = splitMessage(sms.message, { encoding, reference: deps.reference });
