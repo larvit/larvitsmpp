@@ -18,6 +18,7 @@ import { IncomingRequests, refusedSegmentStatus } from '../src/incoming-requests
 import { UnansweredError } from '../src/unanswered-error.ts';
 import { createSms } from '../src/sms.ts';
 import { LinkGate } from '../src/link-gate.ts';
+import { SendWindow } from '../src/send-window.ts';
 import { Reassembler, decodeSegments } from '../src/reassembly.ts';
 import { Session } from '../src/session.ts';
 import { DlrMerger } from '../src/dlr-merger.ts';
@@ -1304,6 +1305,50 @@ describe('LinkGate', () => {
 	});
 });
 
+describe('SendWindow', () => {
+	test('gives up a queued acquire the moment its signal fires', async () => {
+		const window = new SendWindow(1);
+		const controller = new AbortController();
+
+		assert.deepEqual(await window.acquire(undefined), {});
+
+		const queued = window.acquire(controller.signal);
+
+		controller.abort();
+
+		assert.match((await queued).err?.message ?? '', /Aborted while waiting for a send window slot/);
+		assert.equal(window.unfinished(), 1, 'a waiter that gave up is owed nothing');
+	});
+
+	// release() hands the slot straight to the next waiter, so one nobody awaits loses it for good.
+	test('never hands a freed slot to a waiter that gave up', async () => {
+		const window = new SendWindow(1);
+		const controller = new AbortController();
+
+		await window.acquire(undefined);
+
+		const abandoned = window.acquire(controller.signal);
+
+		controller.abort();
+		await abandoned;
+		window.release();
+
+		assert.equal(window.unfinished(), 0, 'the slot is free, not stranded on the waiter that left');
+		assert.deepEqual(await window.acquire(undefined), {}, 'so the next send takes it at once');
+	});
+
+	test('takes no slot for a signal that was already aborted', async () => {
+		const window = new SendWindow(1);
+
+		await window.acquire(undefined);
+
+		const refused = await window.acquire(AbortSignal.abort());
+
+		assert.match(refused.err?.message ?? '', /Aborted while waiting for a send window slot/);
+		assert.equal(window.unfinished(), 1);
+	});
+});
+
 // Goal 4: an application that answers nothing must not grow this for the life of the link.
 describe('held message bounds', () => {
 	function message(seqNr: number): PduObject[] {
@@ -2034,6 +2079,105 @@ describe('AbortSignal on a send', () => {
 		);
 
 		assert.ok(sent.err instanceof Error);
+	});
+
+	/** The peer answers nothing, so the single slot stays taken for the life of the test. */
+	async function oneSlotHeld(
+		t: TestContext,
+		options: Parameters<typeof client>[0] = {},
+	): Promise<Session> {
+		const smpp = await startServer(t);
+		const onWire = once<PduObject>(resolve => {
+			smpp.on('session', bound => bound.on('incomingPduObj', resolve));
+		});
+
+		smpp.on('session', bound => bound.on('sms', () => undefined));
+
+		const { session } = await connect(t, smpp, { maxOutstanding: 1, ...options });
+
+		assert.ok(session);
+		void session.sendSms({ from: '46701113311', message: 'holds the only slot', to: '46709771337' });
+
+		await onWire;
+
+		return session;
+	}
+
+	test('gives up on a send still queued behind a full window', async t => {
+		const session = await oneSlotHeld(t, { responseTimeout: 10_000 });
+		const controller = new AbortController();
+		const queued = session.sendSms(
+			{ from: '46701113311', message: 'queued behind the held slot', to: '46709771337' },
+			{ signal: controller.signal },
+		);
+
+		await delay(20);
+		controller.abort();
+
+		const sent = await within(500, queued);
+
+		assert.ok(sent, 'an abort must not wait out a slot the caller no longer wants');
+		assert.match(sent.err?.message ?? '', /Aborted while waiting for a send window slot/);
+		assert.equal(sent.unanswered, 0, 'it never reached the socket, so the peer cannot have taken it');
+	});
+
+	// responseTimeout: 0 is the case that waited for a slot forever: nothing else was going to end it.
+	test('gives up on a queued send where responseTimeout: 0 never would', async t => {
+		const session = await oneSlotHeld(t, { responseTimeout: 0 });
+		const controller = new AbortController();
+		const queued = session.sendSms(
+			{ from: '46701113311', message: 'queued with nothing else to end the wait', to: '46709771337' },
+			{ signal: controller.signal },
+		);
+
+		await delay(20);
+		controller.abort();
+
+		const sent = await within(500, queued);
+
+		assert.ok(sent, 'the signal is the only bound this wait has');
+		assert.equal(sent.unanswered, 0);
+	});
+
+	test('leaves the freed slot to the next send rather than to the waiter that gave up', async t => {
+		const smpp = await startServer(t);
+		const holding = once<Sms>(resolve => { smpp.on('session', bound => bound.on('sms', resolve)); });
+		let answering = false;
+
+		smpp.on('session', bound => {
+			bound.on('sms', async sms => {
+				if (answering) await sms.sendResp();
+
+				answering = true;
+			});
+		});
+
+		const { session } = await connect(t, smpp, { maxOutstanding: 1, responseTimeout: 10_000 });
+
+		assert.ok(session);
+		void session.sendSms({ from: '46701113311', message: 'holds the only slot', to: '46709771337' });
+
+		const held = await holding;
+		const controller = new AbortController();
+		const abandoned = session.sendSms(
+			{ from: '46701113311', message: 'abandoned in the queue', to: '46709771337' },
+			{ signal: controller.signal },
+		);
+
+		await delay(20);
+		controller.abort();
+
+		assert.ok((await within(500, abandoned))?.err instanceof Error);
+		await held.sendResp();
+
+		const following = await within(1000, session.sendSms({
+			from: '46701113311',
+			message: 'takes the freed slot',
+			to: '46709771337',
+		}));
+
+		assert.ok(following, 'a slot handed to a waiter that left is one the window never gets back');
+		assert.equal(following.err, undefined);
 	});
 });
 
