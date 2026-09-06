@@ -87,7 +87,7 @@ export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 		sendDlr: status => sendDlr(sms, handlers.send, status),
 		sendResp: options => (input.answeredAs === undefined
 			? sendResp(sms, answered, options ?? {}, handlers)
-			: alreadyAnswered(options ?? {}, handlers)),
+			: answeredOnArrival(options ?? {}, handlers)),
 		session: input.session,
 		get smsId(): string {
 			return answered.smsId;
@@ -100,7 +100,7 @@ export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 }
 
 /** Every segment went out answered, so the call is what the shutdown waits for and nothing else. */
-function alreadyAnswered(
+function answeredOnArrival(
 	options: SendRespOptions,
 	handlers: Pick<SmsHandlers, 'onAnswered'>,
 ): Promise<VoidResult> {
