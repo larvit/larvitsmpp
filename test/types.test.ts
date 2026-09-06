@@ -108,8 +108,8 @@ describe('cstring (C-Octet String)', () => {
 		assert.ok(types.cstring.read(encoded, encoded.length + 1).err instanceof Error);
 		assert.ok(types.cstring.read(encoded, -1).err instanceof Error);
 
-		// At the end exactly the field is absent, not corrupt: peers truncate a NULL-only body. It
-		// consumed no octet, and a reader that counts one puts every later offset past the end.
+		// At the end exactly the field is absent, not corrupt, and consumes no octet: counting one
+		// puts every later offset past the declared end.
 		assert.deepEqual(types.cstring.read(encoded, encoded.length), { bytesRead: 0, value: '' });
 	});
 });
@@ -187,6 +187,12 @@ describe('dest_address_array', () => {
 		assert.deepEqual(types.dest_address_array.read(encoded, 0), {
 			bytesRead: 13,
 			value: expected,
+		});
+
+		// A structure that ran out counts the octets that were there, never the terminator that was not.
+		assert.deepEqual(types.dest_address_array.read(Buffer.from([0x01, 0x01, 0x00, 0x00]), 0), {
+			bytesRead: 4,
+			value: [{ dest_addr_npi: 0, dest_addr_ton: 0, destination_addr: '' }],
 		});
 	});
 

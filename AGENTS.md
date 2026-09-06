@@ -412,7 +412,9 @@ Grouped by what each one constrains.
   reason and `ESME_RINVTLVSTREAM` a truncated TLV value already gets. What the rule costs is paid
   once, in `readCstring()`: a trailing C-Octet String a peer left out entirely consumes no octet,
   where reporting the terminator it never sent puts every later offset past the declared end and
-  refuses a bind, and every bodyless response, that used to parse. Rejected: keeping the tolerance
+  refuses a bind, and every bodyless response, that used to parse. That composes, so a run of them
+  at the tail all read empty — `outbind` is the only command with two, and an absent field and an
+  empty one say the same thing, so goal 2 is not at stake even there. Rejected: keeping the tolerance
   for the one to three trailing octets too few to hold a TLV header, which no researched peer sends
   and which cannot be told apart from the truncated tail this fixes. Rejected: refusing it as
   `body`/`ESME_RINVCMDLEN`, which names the mandatory fields — the part the peer got right.

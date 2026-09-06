@@ -136,15 +136,15 @@ plain Python socket, no Java involved):
 ```
 
 This is a `deliver_sm` (`source_addr` `raw-from`, `destination_addr` `raw-to`, body "truncated tlv
-probe silent") followed by `00 1d 00 c8` - tag `0x001D`, declared length 200, zero value octets.
+probe") followed by `00 1d 00 c8` - tag `0x001D`, declared length 200, zero value octets.
 Our server answers `command_status 0x00000000` (`ESME_ROK`) and delivers the text as `sms`.
 Appending 4 more arbitrary octets to the same tail (8 total, still declaring length 200) correctly
 triggers `ESME_RINVTLVSTREAM` instead - `jsmpp.test.ts`'s "a deliver_sm with a truncated TLV stream"
 test uses that 8-octet form deliberately, to test the *documented* refusal path rather than this
 adjacent bug. Reproduced with jsmpp's own driver too:
-`jsmpp.test.ts`, "defect: a 4-octet truncated TLV tail is silently accepted rather than refused" -
-same bytes, over a `net.Socket` opened directly against `server()` (not through jsmpp's typed API,
-which cannot build this shape at all). Severity: low - a narrow boundary condition (exactly 4
+`jsmpp.test.ts`, "a deliver_sm ending in a bare TLV header gets ESME_RINVTLVSTREAM, and reaches no
+listener" - the same shape, over a `net.Socket` opened directly against `server()` (not through
+jsmpp's typed API, which cannot build it at all). Severity: low - a narrow boundary condition (exactly 4
 trailing octets, no value) rather than a general TLV-validation gap, but it is a hole in the fix
 target 1 otherwise closed, silently dropping a TLV the peer meant to send instead of losing (and
 counting) the one malformed PDU.

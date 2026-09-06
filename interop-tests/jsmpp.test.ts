@@ -267,11 +267,12 @@ describe('S3 - known-but-unhandled and malformed commands (targets 1, 6)', () =>
 
 	// Not reachable through jsmpp's own typed API at all (it cannot construct wire garbage), so this
 	// is a raw fixture opened directly against our server().
-	test('a deliver_sm ending in a bare TLV header gets ESME_RINVTLVSTREAM, and reaches no listener', async () => {
+	test('a deliver_sm ending in a bare TLV header gets ESME_RINVTLVSTREAM, and reaches no listener', async t => {
 		await waitForSessions(1);
 
 		const sock = net.connect(SMPP_PORT, '127.0.0.1');
 
+		t.after(() => { sock.destroy(); });
 		await new Promise<void>(resolve => { sock.once('connect', () => { resolve(); }); });
 
 		sock.write(pduBytes({
@@ -306,7 +307,6 @@ describe('S3 - known-but-unhandled and malformed commands (targets 1, 6)', () =>
 		assert.ok(refused.err instanceof PduRefusedError);
 		assert.equal(refused.err.reason, 'tlvs');
 		assert.equal(allSms.some(entry => entry.sms.message === 'truncated tlv probe silent'), false);
-		sock.destroy();
 	});
 });
 

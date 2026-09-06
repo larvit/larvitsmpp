@@ -572,8 +572,7 @@ describe('malformed input', () => {
 		});
 	});
 
-	// interop-tests/findings/05-java-clients.md's reproducer octet for octet, so the bytes a peer
-	// really sent stay checkable; raw-pdus.ts builds the shape where the exact bytes do not matter.
+	// interop-tests/findings/05-java-clients.md's reproducer, octet for octet.
 	test('refuses a bare TLV header the same way it refuses a truncated value', () => {
 		const refused = pduToObj(Buffer.from(
 			'000000460000000500000000000000630000007261772d66726f6d0000007261772d746f0000000000000000000013'
