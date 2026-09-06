@@ -148,6 +148,13 @@ to tell the two apart. `esm_class` is what tells them apart; where it names no m
 declares, since SMSCs commonly copy the reported message's onto it. An intermediate delivery
 notification is the SMSC reporting as well, not an inbound message.
 
+Where the body sits, and which command carried it, changes none of that. An SMSC that leaves
+`sm_length` 0 and puts the body in the `message_payload` TLV — SMPP's way of carrying up to 64 KB,
+and the only place a `data_sm` has for one — reads exactly like one that fills `short_message`,
+concatenated messages and receipts included. A peer that fills both is read from `short_message`.
+`data_sm` itself is a peer of `deliver_sm`, so a message on one arrives as `sms` and a receipt as
+`dlr`, and it is answered `data_sm_resp`.
+
 Matching a receipt to a send means comparing `dlr.smsId` against the `smsIds` that `sendSms()`
 returned. Some SMSCs write the two in different notations — a hex `message_id` on the
 `submit_sm_resp` and a decimal `id:` in the receipt, or one of them zero-padded — and the comparison
@@ -258,6 +265,10 @@ link the session is:
   fail with an `err` before anything reaches the wire.
 - A `submit_sm` arriving on a receiver-bound session, or a `deliver_sm` on a transmitter-bound one,
   is answered `ESME_RINVBNDSTS`.
+- A `data_sm` carries a message either way, so which end the session is decides what its bind
+  forbids: a client refuses one on a transmitter bind, a `server()` session on a receiver bind.
+  `bindAllows('data_sm')` answers for the direction that reaches this session, since the library
+  sends none.
 
 A `transceiver` bind, the default, carries both. `session.send()` stays a low-level passthrough and
 is not checked, so the raw surface can still put whatever a test or a proxy needs on the wire.
@@ -510,6 +521,9 @@ have worked around any of these, remove the workaround:
   into a hex string and written back as the ASCII of that string, so every one that made a round
   trip went out corrupt. They are `Buffer`s in both directions now, so drop any hex encoding of
   your own.
+- A body carried in the `message_payload` TLV was ignored, so the message arrived empty, and a
+  `data_sm` was answered `ESME_RINVCMDID`, so a receipt thrown on one was lost with nothing said.
+  Both reach the application now, and a `data_sm` is answered `data_sm_resp` `ESME_ROK`.
 - Short or malformed PDUs threw out of the codec instead of being reported as a parse failure.
 - Binds now declare `interface_version` 0x34. 0.4.0 declared 0x00, which tells the SMSC the ESME
   speaks SMPP 3.3 or earlier — and a spec-following SMSC then withholds every optional parameter,

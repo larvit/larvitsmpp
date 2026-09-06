@@ -15,6 +15,7 @@ import { concatInfo } from './udh.ts';
 import { hasUdh } from './defs/constants.ts';
 import { createSms } from './sms.ts';
 import { dlrFromPdu } from './dlr.ts';
+import { messageOctets } from './message-body.ts';
 import { paramNumber, paramText } from './defs/types.ts';
 import { respIdParams, segmentId } from './sms-id.ts';
 
@@ -22,7 +23,7 @@ import { respIdParams, segmentId } from './sms-id.ts';
 export function refusedSegmentStatus(cmdName: CommandName, refusal: Refusal): ErrorName {
 	if (refusal === 'unplaceable') return 'ESME_RINVESMCLASS';
 
-	return cmdName === 'deliver_sm' ? 'ESME_RX_T_APPN' : 'ESME_RMSGQFUL';
+	return cmdName === 'submit_sm' ? 'ESME_RMSGQFUL' : 'ESME_RX_T_APPN';
 }
 
 const lostReasons: Record<LostGroup['reason'], string> = {
@@ -104,9 +105,14 @@ export class IncomingRequests {
 			return;
 		}
 
+		await this.route(pduObj);
+	}
+
+	private async route(pduObj: PduObject): Promise<void> {
 		switch (pduObj.cmdName) {
+			case 'data_sm':
 			case 'deliver_sm':
-				await this.onDeliverSm(pduObj);
+				await this.onDelivery(pduObj);
 				break;
 			case 'enquire_link':
 				await this.session.sendReturn(pduObj);
@@ -162,7 +168,7 @@ export class IncomingRequests {
 	}
 
 	/** SMPP carries a mobile-originated message and a delivery receipt on the same command. */
-	private async onDeliverSm(pduObj: PduObject): Promise<void> {
+	private async onDelivery(pduObj: PduObject): Promise<void> {
 		const dlr = dlrFromPdu(pduObj, this.smsIdFormat);
 
 		if (!dlr) {
@@ -185,9 +191,9 @@ export class IncomingRequests {
 	 * one request at a time never sends the second segment until the first has been answered.
 	 */
 	private async onMessage(pduObj: PduObject): Promise<void> {
-		const message = pduObj.params.short_message;
+		const message = messageOctets(pduObj);
 		const carriesUdh = hasUdh(paramNumber(pduObj.params.esm_class, 0));
-		const concat = carriesUdh && Buffer.isBuffer(message) ? concatInfo(message) : undefined;
+		const concat = carriesUdh && message ? concatInfo(message) : undefined;
 
 		if (!concat) {
 			this.emitSms([pduObj]);

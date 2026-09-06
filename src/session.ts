@@ -154,7 +154,7 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	/** Whether this session's bind direction carries a command. Consulted by the library's senders. */
 	bindAllows(cmdName: string): boolean {
-		return bindCarries(this.boundAs, cmdName);
+		return bindCarries(this.boundAs, cmdName, this.options.linkEnd ?? defaults.linkEnd);
 	}
 
 	/** SMPP 3.4 forbids sending optional parameters to a peer that declared an older version. */

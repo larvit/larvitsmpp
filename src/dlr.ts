@@ -4,6 +4,7 @@ import type { PduObject } from './pdu.ts';
 import type { SmsIdFormat } from './sms-id.ts';
 import { consts, constsById, hasUdh, messageTypeOf } from './defs/constants.ts';
 import { encodings } from './defs/encodings.ts';
+import { messageOctets } from './message-body.ts';
 import { normaliseSmsId } from './sms-id.ts';
 import { paramNumber, paramText } from './defs/types.ts';
 import { udhLength } from './udh.ts';
@@ -157,7 +158,7 @@ function messageType(pduObj: PduObject): MessageType {
 
 /** SMPP 3.4 Appendix B makes a receipt fixed text, so its octets are read as octets, not decoded. */
 function receiptBody(pduObj: PduObject): string {
-	const octets = pduObj.shortMessageOctets;
+	const octets = messageOctets(pduObj);
 
 	if (octets === undefined) return paramText(pduObj.params.short_message);
 
@@ -203,7 +204,7 @@ function receiptStatus(
 	return { statusId: tlvState, statusMsg: isMessageState(named) ? named : scraped };
 }
 
-/** The delivery report a deliver_sm carries, or nothing when it carries a message instead. */
+/** The delivery report a deliver_sm or data_sm carries, or nothing where it carries a message. */
 export function dlrFromPdu(pduObj: PduObject, format: SmsIdFormat = {}): Dlr | undefined {
 	const type = messageType(pduObj);
 

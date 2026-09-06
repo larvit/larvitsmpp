@@ -229,6 +229,7 @@ function onConnection(sock: Socket, options: ServerOptions, server: SmppServer):
 	const log = guardedLog(options.log);
 	const session = new Session({
 		idleTimeout: options.idleTimeout ?? defaults.idleTimeout,
+		linkEnd: 'smsc',
 		log,
 		maxOutstanding: options.maxOutstanding,
 		maxOctets: options.maxOctets,

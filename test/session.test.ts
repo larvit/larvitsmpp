@@ -795,12 +795,12 @@ describe('receiving', () => {
 		const delivered = peer.send({
 			cmdName: 'data_sm',
 			params: { destination_addr: '46709771337', source_addr: '46701113311' },
-			tlvs: { message_payload: { tagValue: Buffer.from('a message on data_sm', 'latin1') } },
+			tlvs: { message_payload: { tagValue: Buffer.from('a message carried on the data command', 'latin1') } },
 		});
 		const sms = await raceWithin(2000, incoming);
 
 		assert.ok(sms, 'data_sm is a peer of deliver_sm, not a command to refuse');
-		assert.equal(sms.message, 'a message on data_sm');
+		assert.equal(sms.message, 'a message carried on the data command');
 		assert.equal(sms.from, '46701113311');
 
 		await sms.sendResp({ smsId });

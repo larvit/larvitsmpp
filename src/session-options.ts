@@ -32,6 +32,9 @@ export const bindCommands: readonly string[] = [
 
 export type BindType = 'receiver' | 'transceiver' | 'transmitter';
 
+/** Which end of the link a session is. Only `server()` is the SMSC; everything else is the ESME. */
+export type LinkEnd = 'esme' | 'smsc';
+
 export function bindTypeFromCommand(cmdName: string): BindType | undefined {
 	if (cmdName === 'bind_receiver') return 'receiver';
 	if (cmdName === 'bind_transceiver') return 'transceiver';
@@ -44,8 +47,16 @@ export function bindTypeFromCommand(cmdName: string): BindType | undefined {
  * Whether a bind direction carries a command at all. A receiver-bound ESME submits nothing and a
  * transmitter-bound one is delivered nothing, whichever end of the link is looking. A session that
  * has not bound carries everything, since nothing has declared a direction yet.
+ *
+ * `data_sm` carries a message in either direction, so it is the one command whose own name does not
+ * say which end sent it, and `linkEnd` is what settles that.
  */
-export function bindCarries(bindType: BindType | undefined, cmdName: string): boolean {
+export function bindCarries(
+	bindType: BindType | undefined,
+	cmdName: string,
+	linkEnd: LinkEnd,
+): boolean {
+	if (cmdName === 'data_sm') return bindType !== (linkEnd === 'esme' ? 'transmitter' : 'receiver');
 	if (bindType === 'receiver') return cmdName !== 'submit_sm';
 	if (bindType === 'transmitter') return cmdName !== 'deliver_sm';
 
@@ -78,6 +89,8 @@ export type ReconnectOptions = {
 export type SessionOptions = {
 	enquireLinkInterval?: number | undefined;
 	idleTimeout?: number | undefined;
+	/** Which end of the link this is, which only a `data_sm`'s bind direction depends on. */
+	linkEnd?: LinkEnd | undefined;
 	log?: SmppLog | undefined;
 	maxOctets?: number | undefined;
 	maxOutstanding?: number | undefined;
@@ -95,6 +108,8 @@ export type SessionOptions = {
 	systemId?: string | undefined;
 };
 
+export const defaultLinkEnd: LinkEnd = 'esme';
+
 export const defaultSystemId = '';
 
 /** SMPP 3.4: a peer that declares no version at all is one from before optional parameters. */
@@ -105,6 +120,7 @@ export const defaults = {
 	dlrMergeTimeout: 86_400_000,
 	/** The peer gave up on an unanswered message long before this; the bound is against growth. */
 	heldMessageTimeout: 300_000,
+	linkEnd: defaultLinkEnd,
 	maxDlrMerges: 1000,
 	maxHeldMessages: 1000,
 	maxOutstanding: 10,
