@@ -28,7 +28,7 @@ export type ReassemblerOptions = {
 	timeout: number;
 };
 
-/** Why a segment was not kept. The peer holds it either way, so both are answered as such. */
+/** Why a segment was not kept: its header joins no message here, or the store had no room for it. */
 export type Refusal = 'full' | 'unplaceable';
 
 /** What a segment did to its group. */
@@ -126,6 +126,7 @@ export function decodeSegments(pduObjs: PduObject[]): string {
 export class Reassembler {
 	private readonly groups: ExpiringGroups<Group>;
 	private readonly log: SmppLog;
+	private readonly max: number;
 	private readonly maxOctets: number;
 	private readonly newId: () => string;
 	private readonly onLost: (lost: LostGroup) => void;
@@ -139,6 +140,7 @@ export class Reassembler {
 			timeout: options.timeout,
 		});
 		this.log = options.log;
+		this.max = options.max;
 		this.maxOctets = options.maxOctets ?? defaultMaxOctets;
 		this.newId = options.newId ?? uuidv7;
 		this.onLost = options.onLost;
@@ -243,8 +245,10 @@ export class Reassembler {
 
 			if (!oldest) return;
 
-			// Only a group that is nothing but the refused segment leaves nothing behind to report.
-			if (oldest[0] !== current || oldest[1].parts.size > 1) this.lost(oldest[1], 'evicted');
+			// The refused segment is in the group but stays with the peer, so it is none of the loss.
+			const answered = oldest[0] === current ? oldest[1].parts.size - 1 : oldest[1].parts.size;
+
+			if (answered > 0) this.lost(oldest[1], 'evicted', answered);
 		}
 	}
 
@@ -263,15 +267,15 @@ export class Reassembler {
 	}
 
 	/** Its segments are answered, so the peer will not send them again: this is traffic gone. */
-	private lost(group: Group, reason: LostGroup['reason']): void {
-		const lost: LostGroup = {
-			parts: group.parts.size,
-			reason,
-			smsId: group.smsId,
-			total: group.total,
-		};
+	private lost(group: Group, reason: LostGroup['reason'], parts = group.parts.size): void {
+		const lost: LostGroup = { parts, reason, smsId: group.smsId, total: group.total };
 
-		this.log.warn('reassembler - gave up a concatenated message', lost);
+		this.log.warn('reassembler - gave up a concatenated message', {
+			...lost,
+			max: this.max,
+			maxOctets: this.maxOctets,
+			octets: this.octets,
+		});
 		this.onLost(lost);
 	}
 }

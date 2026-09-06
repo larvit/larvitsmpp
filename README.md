@@ -216,9 +216,9 @@ await smpp.close();      // stop listening, then drain and close every live sess
 
 A message that arrived in several segments was already answered when you see it: each segment is
 answered as it lands, because a relaying SMSC will not send the next one until the last is answered.
-That answer is `ESME_ROK` unless the segment's header names no message this session can join, or the
-reassembly buffer is full — either way the peer keeps it. `sms.answeredOnArrival` says whether the
-message you are holding was answered that way — a segment count cannot, since a peer
+That answer is `ESME_ROK` unless the segment's header names no message this session can join, which
+refuses it, or the reassembly buffer is full, which asks the SMSC to keep it and try again.
+`sms.answeredOnArrival` says whether the message you are holding was answered that way — a segment count cannot, since a peer
 may number a concatenated message one part of one. The id was fixed with the first segment, so
 `sendResp()` there only says you are done with the message, and returns an `err` for an `smsId` or a
 refusing `status`; choosing the id and refusing the message belong to a message `sendResp()` still

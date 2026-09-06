@@ -19,7 +19,7 @@ import { paramNumber, paramText } from './defs/types.ts';
 import { respIdParams, segmentId } from './sms-id.ts';
 
 /** SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another. */
-export function refusalStatus(cmdName: CommandName, refusal: Refusal): ErrorName {
+export function refusedSegmentStatus(cmdName: CommandName, refusal: Refusal): ErrorName {
 	if (refusal === 'unplaceable') return 'ESME_RINVESMCLASS';
 
 	return cmdName === 'deliver_sm' ? 'ESME_RX_T_APPN' : 'ESME_RMSGQFUL';
@@ -198,7 +198,7 @@ export class IncomingRequests {
 		const collected = this.reassembler.collect(pduObj, concat);
 
 		if (!collected.kept) {
-			await this.session.sendReturn(pduObj, refusalStatus(pduObj.cmdName, collected.refusal));
+			await this.session.sendReturn(pduObj, refusedSegmentStatus(pduObj.cmdName, collected.refusal));
 
 			return;
 		}

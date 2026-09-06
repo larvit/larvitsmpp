@@ -478,7 +478,8 @@ Grouped by what each one constrains.
   distinguishable. Accepted: a completing segment whose own answer the socket would not carry still
   reaches the application, because the message is whole and correct and the failed answer is on
   `sessionError` — a peer that re-sends after the drop is the smaller risk than dropping a message
-  in hand.
+  in hand. The answer goes out before the `sms` event either way, so a listener's own receipt can
+  never precede the acceptance of the message it reports on.
 
 - **The drain waits on the messages the application holds, and `sendResp()` is what says it is done
   with one.** Maintainer's call, 2026-09-01: waiting on the send window alone tore a server session

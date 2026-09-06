@@ -201,7 +201,7 @@ arrives, with `<base>-<n>` off an id the group is opened with. All four multi-se
 - **Jasmin FINs the connection on a `deliver_sm_resp` carrying a `message_id`.** SMPP 3.4 4.6.2
   makes that field unused and NULL, and Jasmin's own decoder sizes it at one octet; a 38-octet UUID
   in it cost the link immediately after the response, taking the rest of the MO group with it. Found
-  by the fix for the multipart deadlock below, which is what first had this library answer an inbound
+  by the fix for the multipart deadlock above, which is what first had this library answer an inbound
   `deliver_sm` in this suite at all; the field now goes out empty.
 - **jcli is a plain-text protocol dressed as Telnet** - it sends real `IAC`/option-negotiation bytes
   and a couple of ANSI escapes in its banner, but never waits for or requires a reply to them; a raw
