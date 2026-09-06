@@ -38,3 +38,12 @@ export function truncatedTlv(input: PduObjectInput): Buffer {
 
 	return appended;
 }
+
+/** The same, ending in a bare TLV header: a tag, a declared length, and no value octets at all. */
+export function bareTlvHeader(input: PduObjectInput): Buffer {
+	const appended = Buffer.concat([pduBytes(input), Buffer.from('001d00c8', 'hex')]);
+
+	appended.writeUInt32BE(appended.length, 0);
+
+	return appended;
+}

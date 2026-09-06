@@ -19,7 +19,7 @@ import { PduRefusedError } from '../src/pdu-refusal.ts';
 import { isCommand, objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
 import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
-import { pduBytes, shortened, truncatedTlv, withUnknownCmdId } from './raw-pdus.ts';
+import { bareTlvHeader, pduBytes, shortened, truncatedTlv, withUnknownCmdId } from './raw-pdus.ts';
 import { silentLog } from '../src/log.ts';
 import { splitMessage } from '../src/message.ts';
 
@@ -1565,6 +1565,24 @@ describe('a PDU the codec cannot read', () => {
 
 		// The regression this fixes: the link, and the stream's sync, outlive the refused PDU.
 		peer.writeRaw(pduBytes({ cmdName: 'enquire_link', seqNr: 78 }));
+		assert.equal((await answerTo(peer)).cmdName, 'enquire_link_resp');
+	});
+
+	test('answers a deliver_sm ending in a bare TLV header with ESME_RINVTLVSTREAM', async t => {
+		const { peer, session } = await bound(t);
+		let reports = 0;
+
+		session.on('dlr', () => { reports++; });
+		peer.writeRaw(bareTlvHeader({ cmdName: 'deliver_sm', params: receipt, seqNr: 55 }));
+
+		const answered = await answerTo(peer);
+
+		assert.equal(answered.cmdName, 'deliver_sm_resp');
+		assert.equal(answered.cmdStatus, 'ESME_RINVTLVSTREAM');
+		assert.equal(answered.seqNr, 55);
+		assert.equal(reports, 0, 'a PDU whose optional parameters were never read is no report');
+
+		peer.writeRaw(pduBytes({ cmdName: 'enquire_link', seqNr: 79 }));
 		assert.equal((await answerTo(peer)).cmdName, 'enquire_link_resp');
 	});
 
