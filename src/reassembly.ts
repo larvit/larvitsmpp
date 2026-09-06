@@ -5,6 +5,7 @@ import type { SmppLog } from './log.ts';
 import type { Tlv } from './defs/tlvs.ts';
 import { ExpiringGroups } from './expiring-groups.ts';
 import { decodeMessage } from './message.ts';
+import { messageOctets } from './message-body.ts';
 import { paramNumber, paramText } from './defs/types.ts';
 import { uuidv7 } from './uuid.ts';
 
@@ -108,15 +109,15 @@ export function decodeSegments(pduObjs: PduObject[]): string {
 	let message = '';
 
 	for (const pduObj of pduObjs) {
-		const part = pduObj.params.short_message;
+		const part = messageOctets(pduObj);
 
-		message += Buffer.isBuffer(part)
-			? decodeMessage(
-				part,
-				paramNumber(pduObj.params.data_coding, 0),
-				paramNumber(pduObj.params.esm_class, 0),
-			).message
-			: paramText(part);
+		if (part === undefined) continue;
+
+		message += decodeMessage(
+			part,
+			paramNumber(pduObj.params.data_coding, 0),
+			paramNumber(pduObj.params.esm_class, 0),
+		).message;
 	}
 
 	return message;

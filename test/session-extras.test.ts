@@ -23,7 +23,7 @@ import { Session } from '../src/session.ts';
 import { DlrMerger } from '../src/dlr-merger.ts';
 import { PduRefusedError } from '../src/pdu-refusal.ts';
 import { objToPdu } from '../src/pdu.ts';
-import { checkSessionOptions } from '../src/session-options.ts';
+import { checkSessionOptions, standsInFor } from '../src/session-options.ts';
 import { client } from '../src/client.ts';
 import { closeAfter, closeListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
@@ -1449,6 +1449,21 @@ describe('reassembly bounds', () => {
 		};
 	}
 
+	/** The same segment with its body where SMPP 3.4 5.3.2.32 allows it instead. */
+	function payloadSegment(reference: number, part: number, total: number): PduObject {
+		const carried = segment(reference, part, total);
+		const body = carried.shortMessageOctets;
+
+		assert.ok(body);
+
+		return {
+			...carried,
+			params: { ...carried.params, short_message: Buffer.alloc(0) },
+			shortMessageOctets: Buffer.alloc(0),
+			tlvs: { message_payload: { tagId: 0x0424, tagName: 'message_payload', tagValue: body } },
+		};
+	}
+
 	function collect(
 		reassembler: Reassembler,
 		reference: number,
@@ -1502,6 +1517,25 @@ describe('reassembly bounds', () => {
 		assert.equal(refused.kept, false);
 		assert.equal(reassembler.size, 0);
 		assert.deepEqual(lost, [], 'the peer holds the only segment there was, so nothing was lost');
+	});
+
+	// The two addresses are 22 octets, so only the 14 the TLV carries can overrun a cap of 30.
+	test('counts a body carried in message_payload against the octet cap', () => {
+		function collectPayload(maxOctets: number): Collected {
+			const reassembler = new Reassembler({
+				log: silentLog,
+				max: 10,
+				maxOctets,
+				now: () => 0,
+				onLost: () => undefined,
+				timeout: 60_000,
+			});
+
+			return reassembler.collect(payloadSegment(9, 1, 2), { part: 1, reference: 9, total: 2 });
+		}
+
+		assert.equal(collectPayload(30).kept, false, 'a TLV body the cap cannot hold is refused, not dropped later');
+		assert.equal(collectPayload(40).kept, true);
 	});
 
 	// The segments before it were answered ESME_ROK, so dropping those is not the same as refusing one.
@@ -1729,6 +1763,17 @@ describe('the status a refused segment is answered with', () => {
 		assert.equal(refusedSegmentStatus('deliver_sm', 'full'), 'ESME_RX_T_APPN');
 		assert.equal(refusedSegmentStatus('submit_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
 		assert.equal(refusedSegmentStatus('deliver_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
+	});
+
+	// Which command that is, for the one that travels both ways, is what the end it arrived at says.
+	test('reads a data_sm as the command its direction makes it', () => {
+		assert.equal(standsInFor('data_sm', 'esme'), 'deliver_sm');
+		assert.equal(standsInFor('data_sm', 'smsc'), 'submit_sm');
+		assert.equal(standsInFor('deliver_sm', 'esme'), 'deliver_sm');
+		assert.equal(standsInFor('submit_sm', 'smsc'), 'submit_sm');
+		assert.equal(standsInFor('enquire_link', 'smsc'), 'enquire_link');
+		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'smsc'), 'full'), 'ESME_RMSGQFUL');
+		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'esme'), 'full'), 'ESME_RX_T_APPN');
 	});
 });
 

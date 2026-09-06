@@ -32,6 +32,9 @@ export const bindCommands: readonly string[] = [
 
 export type BindType = 'receiver' | 'transceiver' | 'transmitter';
 
+/** Which end of the link a session is. Only `server()` is the SMSC; everything else is the ESME. */
+export type LinkEnd = 'esme' | 'smsc';
+
 export function bindTypeFromCommand(cmdName: string): BindType | undefined {
 	if (cmdName === 'bind_receiver') return 'receiver';
 	if (cmdName === 'bind_transceiver') return 'transceiver';
@@ -41,13 +44,29 @@ export function bindTypeFromCommand(cmdName: string): BindType | undefined {
 }
 
 /**
+ * Which message-carrying command an inbound one stands in for. Every command but `data_sm` names
+ * its own direction; that one travels either way, so the end it arrived at is what says.
+ */
+export function standsInFor(cmdName: string, linkEnd: LinkEnd): string {
+	if (cmdName !== 'data_sm') return cmdName;
+
+	return linkEnd === 'smsc' ? 'submit_sm' : 'deliver_sm';
+}
+
+/**
  * Whether a bind direction carries a command at all. A receiver-bound ESME submits nothing and a
  * transmitter-bound one is delivered nothing, whichever end of the link is looking. A session that
  * has not bound carries everything, since nothing has declared a direction yet.
  */
-export function bindCarries(bindType: BindType | undefined, cmdName: string): boolean {
-	if (bindType === 'receiver') return cmdName !== 'submit_sm';
-	if (bindType === 'transmitter') return cmdName !== 'deliver_sm';
+export function bindCarries(
+	bindType: BindType | undefined,
+	cmdName: string,
+	linkEnd: LinkEnd,
+): boolean {
+	const carried = standsInFor(cmdName, linkEnd);
+
+	if (bindType === 'receiver') return carried !== 'submit_sm';
+	if (bindType === 'transmitter') return carried !== 'deliver_sm';
 
 	return true;
 }

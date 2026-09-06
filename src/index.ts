@@ -30,6 +30,7 @@ export {
 } from './message.ts';
 
 export { dlrFromPdu, parseReceipt, receiptCodes } from './dlr.ts';
+export { messageOctets } from './message-body.ts';
 export { concatInfo } from './udh.ts';
 export { PduFramer } from './pdu-framer.ts';
 export { uuidv7 } from './uuid.ts';

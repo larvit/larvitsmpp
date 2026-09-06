@@ -8,6 +8,8 @@ import {
 	smppTime,
 	splitMessage,
 } from '../src/message.ts';
+// Through the public surface: an application handed a PduObject needs this same answer.
+import { messageOctets, objToPdu, pduToObj } from '../src/index.ts';
 
 describe('bitCount()', () => {
 	test('counts GSM characters as seven bits each', () => {
@@ -127,6 +129,41 @@ describe('encodeMessage() and decodeMessage()', () => {
 		]);
 
 		assert.equal(decodeMessage(withUdh, 0x00, 0x40).message, 'part one');
+	});
+});
+
+describe('messageOctets()', () => {
+	/** A data_sm has no short_message field at all, which is the case that has neither. */
+	function parsed(short: Buffer | undefined, payload?: Buffer) {
+		const { buffer } = short === undefined
+			? objToPdu({
+				cmdName: 'data_sm',
+				params: { destination_addr: '46709771337', source_addr: '46701113311' },
+			})
+			: objToPdu({
+				cmdName: 'deliver_sm',
+				params: { destination_addr: '46709771337', short_message: short, source_addr: '46701113311' },
+				...(payload ? { tlvs: { message_payload: { tagValue: payload } } } : {}),
+			});
+
+		assert.ok(buffer);
+
+		const { pduObj } = pduToObj(buffer);
+
+		assert.ok(pduObj);
+
+		return pduObj;
+	}
+
+	test('reads the TLV only where short_message carries nothing', () => {
+		const short = Buffer.from('in the field');
+		const payload = Buffer.from('in the TLV');
+
+		assert.deepEqual(messageOctets(parsed(Buffer.alloc(0), payload)), payload);
+		assert.deepEqual(messageOctets(parsed(short, payload)), short);
+		assert.deepEqual(messageOctets(parsed(short)), short);
+		assert.deepEqual(messageOctets(parsed(Buffer.alloc(0))), Buffer.alloc(0));
+		assert.equal(messageOctets(parsed(undefined)), undefined, 'a PDU with neither carries no body');
 	});
 });
 

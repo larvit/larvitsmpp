@@ -1,4 +1,3 @@
-import type { CommandName } from './defs/commands.ts';
 import type { DlrMerger } from './dlr-merger.ts';
 import type { ErrorName } from './defs/errors.ts';
 import type { LostGroup, Refusal } from './reassembly.ts';
@@ -10,19 +9,20 @@ import type { SmppLog } from './log.ts';
 import type { SmsIdFormat } from './sms-id.ts';
 import { HeldMessages } from './held-messages.ts';
 import { Reassembler, decodeSegments } from './reassembly.ts';
-import { bindCommands, defaults } from './session-options.ts';
+import { bindCommands, defaults, standsInFor } from './session-options.ts';
 import { concatInfo } from './udh.ts';
 import { hasUdh } from './defs/constants.ts';
 import { createSms } from './sms.ts';
 import { dlrFromPdu } from './dlr.ts';
+import { messageOctets } from './message-body.ts';
 import { paramNumber, paramText } from './defs/types.ts';
 import { respIdParams, segmentId } from './sms-id.ts';
 
 /** SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another. */
-export function refusedSegmentStatus(cmdName: CommandName, refusal: Refusal): ErrorName {
+export function refusedSegmentStatus(carriedAs: string, refusal: Refusal): ErrorName {
 	if (refusal === 'unplaceable') return 'ESME_RINVESMCLASS';
 
-	return cmdName === 'deliver_sm' ? 'ESME_RX_T_APPN' : 'ESME_RMSGQFUL';
+	return carriedAs === 'submit_sm' ? 'ESME_RMSGQFUL' : 'ESME_RX_T_APPN';
 }
 
 const lostReasons: Record<LostGroup['reason'], string> = {
@@ -104,9 +104,17 @@ export class IncomingRequests {
 			return;
 		}
 
+		await this.route(pduObj);
+	}
+
+	private async route(pduObj: PduObject): Promise<void> {
 		switch (pduObj.cmdName) {
+			case 'data_sm':
 			case 'deliver_sm':
-				await this.onDeliverSm(pduObj);
+				// A data_sm at the SMSC end is a submission, and a submission is never a report.
+				await (this.carriedAs(pduObj) === 'submit_sm'
+					? this.onMessage(pduObj)
+					: this.onDelivery(pduObj));
 				break;
 			case 'enquire_link':
 				await this.session.sendReturn(pduObj);
@@ -161,8 +169,12 @@ export class IncomingRequests {
 		await this.session.sendReturn(pduObj, 'ESME_RINVCMDID');
 	}
 
+	private carriedAs(pduObj: PduObject): string {
+		return standsInFor(pduObj.cmdName, this.session.linkEnd);
+	}
+
 	/** SMPP carries a mobile-originated message and a delivery receipt on the same command. */
-	private async onDeliverSm(pduObj: PduObject): Promise<void> {
+	private async onDelivery(pduObj: PduObject): Promise<void> {
 		const dlr = dlrFromPdu(pduObj, this.smsIdFormat);
 
 		if (!dlr) {
@@ -185,9 +197,9 @@ export class IncomingRequests {
 	 * one request at a time never sends the second segment until the first has been answered.
 	 */
 	private async onMessage(pduObj: PduObject): Promise<void> {
-		const message = pduObj.params.short_message;
+		const message = messageOctets(pduObj);
 		const carriesUdh = hasUdh(paramNumber(pduObj.params.esm_class, 0));
-		const concat = carriesUdh && Buffer.isBuffer(message) ? concatInfo(message) : undefined;
+		const concat = carriesUdh && message ? concatInfo(message) : undefined;
 
 		if (!concat) {
 			this.emitSms([pduObj]);
@@ -198,7 +210,10 @@ export class IncomingRequests {
 		const collected = this.reassembler.collect(pduObj, concat);
 
 		if (!collected.kept) {
-			await this.session.sendReturn(pduObj, refusedSegmentStatus(pduObj.cmdName, collected.refusal));
+			await this.session.sendReturn(
+				pduObj,
+				refusedSegmentStatus(this.carriedAs(pduObj), collected.refusal),
+			);
 
 			return;
 		}

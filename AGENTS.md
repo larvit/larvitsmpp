@@ -84,6 +84,7 @@ src/
 	link-timers.ts       LinkTimers: the enquire_link heartbeat and the idle timeout
 	log.ts               SmppLog, the logger contract, and silentLog — the default
 	message.ts           Encoding detection, splitting, bit counting, SMPP date formatting
+	message-body.ts      Where an inbound body is: short_message, or the message_payload TLV
 	outgoing-requests.ts OutgoingRequests: the gate, the window, the pending map and the retry
 	pdu.ts               pduToObj / objToPdu / pduReturn — synchronous, result-returning
 	pdu-framer.ts        PduFramer: a byte stream cut into complete PDUs
@@ -250,8 +251,8 @@ Grouped by what each one constrains.
 - **`acceptsOptionalParams()` and `bindAllows()` are predicates, not chokepoints.** The library's own
   senders consult them; `session.send({ tlvs })` is passed through as written, because silently
   stripping a caller's explicit TLVs off a deliberately public low-level surface would be worse than
-  sending them. Only `submit_sm` and `deliver_sm` are policed by bind direction — the only two the
-  library sends and dispatches by it.
+  sending them. Only `submit_sm`, `deliver_sm` and `data_sm` are policed by bind direction — the
+  three the library dispatches by it, of which it sends the first two.
 
 - **`session.sock` is a getter over `PduTransport`.** Reading it is unchanged; assigning it no longer
   compiles, which never rewired the handlers and so never worked.
@@ -313,6 +314,41 @@ Grouped by what each one constrains.
   authoritative only where it names a state in the table — SMPP reserves 0x80-0xFF for
   MC-vendor-specific values, so an unnameable one keeps its raw `statusId` and leaves `statusMsg` to
   the body.
+
+- **A body is read from `message_payload` where `short_message` carries none, and `short_message`
+  wins where a peer filled both.** Maintainer's call, 2026-09-06, from the Jasmin interoperability
+  phase: SMPP 3.4 5.3.2.32 makes the TLV the alternative for a body the mandatory field cannot
+  carry, several SMSCs use it, and Jasmin relays one faithfully — reading `short_message` alone
+  handed the application an empty message
+  ([interop-tests/findings/03-jasmin.md](interop-tests/findings/03-jasmin.md)). `messageOctets()` is
+  the single answer to where a body is, so the message path, the reassembler and `dlrFromPdu()`
+  cannot disagree about it, and `esm_class` still says whether that body starts with a UDH wherever
+  it was carried, which leaves concatenation reading exactly as before. Filling both contradicts the
+  spec's own instruction to leave `sm_length` zero, and taking the mandatory field there keeps the
+  rule purely additive: no PDU that parsed before reads differently now. Rejected: preferring the
+  TLV, which re-reads every message a peer echoes into both. Rejected: refusing a PDU carrying both,
+  which discards a message that is almost certainly present twice over, where goal 3 keeps the
+  traffic. The reassembler's octet cap already counts TLV values, so a 64 KB payload is bounded like
+  any other segment.
+
+- **An inbound `data_sm` stands in for whichever of `submit_sm` and `deliver_sm` its direction makes
+  it, and none goes out.** Maintainer's call, 2026-09-06, from the Jasmin interoperability phase:
+  SMPP 3.4 4.7.1 makes it a peer of both that always carries its body in `message_payload`, and
+  Jasmin's `[dlr-thrower] dlr_pdu = data_sm` throws real receipts on it, which `ESME_RINVCMDID`
+  dropped with nothing reported to the application at all. Every command but this one names its own
+  direction, which is why the bind gate and the dispatch never had to be told which end of the link
+  they are on; `linkEnd` is that fact, and it decides both. At the ESME end an inbound one is a
+  delivery, so `esm_class` classifies it as it classifies a `deliver_sm`; at the SMSC end it is a
+  submission and is read as one, because a report about a message this end never sent is goal 2's
+  wrong answer whatever `esm_class` a peer wrote on it. A concatenated one is answered segment by
+  segment either way, and 4.7.2 gives `data_sm_resp` a `message_id` where 4.6.2 leaves
+  `deliver_sm_resp`'s unused, so the answer carries one. `linkEnd` is a field beside `boundAs`
+  rather than a `SessionOptions` entry, so the code that knows which end this is writes it and
+  nothing else can contradict what the session then binds as. Rejected: grouping the command with
+  `deliver_sm` in the gate, which refuses a transmitter-bound ESME's legitimate submission, and with
+  `submit_sm`, which refuses the receiver-bound delivery this was fixed for. Rejected: sending one —
+  `send()` reaches the command raw, and an option choosing which command a message goes out on would
+  be a second spelling of `sendSms()` whose only difference is which peers accept it.
 
 - **A receipt's body is read as octets, and its own `data_coding` never says how.** Maintainer's
   call, 2026-09-05 via the SMPPSim interop run: SMPPSim copies the reported message's `data_coding`
@@ -514,7 +550,7 @@ Grouped by what each one constrains.
   and both exits are logged.
 
 - **A reconnect keeps the delivery-receipt merges; everything else the link held is dropped.**
-  `onDeliverSm()` answers each receipt before the group it belongs to is complete, and `teardown()`
+  `onDelivery()` answers each receipt before the group it belongs to is complete, and `teardown()`
   runs on every path — an idle timeout and a failed rebind, not only `close()` — so clearing the
   merges there loses receipts no peer has a reason to send again. They are cleared where the session
   is over instead. Inbound segments stay in `teardown()`: an 8-bit concatenation reference is the
