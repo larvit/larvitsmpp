@@ -161,9 +161,9 @@ way it is answered `data_sm_resp`.
 
 Nor does the way a peer ties a long message's segments together. A user data header at the start of
 the body and the `sar_msg_ref_num`, `sar_total_segments` and `sar_segment_seqnum` TLVs are the two
-spellings of the same thing, and either reassembles into one `sms`. A segment carrying both is read
-from its header, and the two reference numbers are counters of their own — the same number in each
-is two different messages.
+spellings of the same thing, and either reassembles into one `sms`. A header that numbers the
+segment is what a PDU carrying both is read from, and the two reference numbers are counters of
+their own — the same number in each is two different messages.
 
 Matching a receipt to a send means comparing `dlr.smsId` against the `smsIds` that `sendSms()`
 returned. Some SMSCs write the two in different notations — a hex `message_id` on the
@@ -513,7 +513,9 @@ if (isCommand(pduObj, 'submit_sm')) {
 `params.short_message` is decoded with the PDU's own `data_coding`; `shortMessageOctets` is that
 same field exactly as it arrived. Neither holds the body of a PDU that carried it in the
 `message_payload` TLV instead, which a `data_sm` always does — `messageOctets(pduObj)` is the one
-answer to which of the two the peer used.
+answer to which of the two the peer used. `concatOf(pduObj)` is the same for concatenation: the
+`part`, `total` and `reference` a PDU declares, and the `spelling` — `'udh'` or `'sar'` — that
+carried them, or `undefined` where the PDU is a whole message.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.

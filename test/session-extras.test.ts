@@ -1961,8 +1961,8 @@ describe('the status a refused segment is answered with', () => {
 		assert.equal(standsInFor('deliver_sm', 'esme'), 'deliver_sm');
 		assert.equal(standsInFor('submit_sm', 'smsc'), 'submit_sm');
 		assert.equal(standsInFor('enquire_link', 'smsc'), 'enquire_link');
-		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'smsc'), 'full'), 'ESME_RMSGQFUL');
-		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'esme'), 'full'), 'ESME_RX_T_APPN');
+		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'smsc'), 'full', 'udh'), 'ESME_RMSGQFUL');
+		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'esme'), 'full', 'udh'), 'ESME_RX_T_APPN');
 	});
 });
 

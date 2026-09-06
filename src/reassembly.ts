@@ -96,12 +96,15 @@ function octetsOf(pduObj: PduObject): number {
 	return octets;
 }
 
-function groupKey(pduObj: PduObject, group: string): string {
+// NULL separates them because it is the one octet a C-Octet String address cannot contain, where an
+// alphanumeric sender may hold anything else and forge another peer's key with it.
+function groupKey(pduObj: PduObject, concat: Concat): string {
 	return [
 		paramText(pduObj.params.source_addr),
 		paramText(pduObj.params.destination_addr),
-		group,
-	].join('_');
+		concat.spelling,
+		String(concat.reference),
+	].join('\u0000');
 }
 
 /** The text of a message, joining its segments in the order they were reassembled. */
@@ -155,7 +158,7 @@ export class Reassembler {
 	collect(pduObj: PduObject, concat: Concat): Collected {
 		this.sweep();
 
-		const key = groupKey(pduObj, concat.group);
+		const key = groupKey(pduObj, concat);
 		const existing = this.groups.get(key);
 
 		if (!this.placeable(concat, existing)) return { kept: false, refusal: 'unplaceable' };

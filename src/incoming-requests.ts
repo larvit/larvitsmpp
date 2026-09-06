@@ -1,3 +1,4 @@
+import type { Concat } from './concat.ts';
 import type { DlrMerger } from './dlr-merger.ts';
 import type { ErrorName } from './defs/errors.ts';
 import type { LostGroup, Refusal } from './reassembly.ts';
@@ -17,8 +18,15 @@ import { paramText } from './defs/types.ts';
 import { respIdParams, segmentId } from './sms-id.ts';
 
 /** SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another. */
-export function refusedSegmentStatus(carriedAs: string, refusal: Refusal): ErrorName {
-	if (refusal === 'unplaceable') return 'ESME_RINVESMCLASS';
+export function refusedSegmentStatus(
+	carriedAs: string,
+	refusal: Refusal,
+	spelling: Concat['spelling'],
+): ErrorName {
+	// A sar_* segment's esm_class is 0x00 and correct: naming it would name the part the peer got right.
+	if (refusal === 'unplaceable') {
+		return spelling === 'sar' ? 'ESME_RINVTLVVAL' : 'ESME_RINVESMCLASS';
+	}
 
 	return carriedAs === 'submit_sm' ? 'ESME_RMSGQFUL' : 'ESME_RX_T_APPN';
 }
@@ -208,7 +216,7 @@ export class IncomingRequests {
 		if (!collected.kept) {
 			await this.session.sendReturn(
 				pduObj,
-				refusedSegmentStatus(this.carriedAs(pduObj), collected.refusal),
+				refusedSegmentStatus(this.carriedAs(pduObj), collected.refusal, concat.spelling),
 			);
 
 			return;

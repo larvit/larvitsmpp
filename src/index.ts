@@ -31,6 +31,7 @@ export {
 
 export { dlrFromPdu, parseReceipt, receiptCodes } from './dlr.ts';
 export { messageOctets } from './message-body.ts';
+export { concatOf } from './concat.ts';
 export { concatInfo } from './udh.ts';
 export { PduFramer } from './pdu-framer.ts';
 export { uuidv7 } from './uuid.ts';
@@ -38,6 +39,7 @@ export { uuidv7 } from './uuid.ts';
 export type { BindType, ClientOptions } from './client.ts';
 export type { Dlr, Receipt } from './dlr.ts';
 export type { SendDlrResult, SendRespOptions, Sms, SmsInput } from './sms.ts';
+export type { Concat } from './concat.ts';
 export type { ConcatInfo } from './udh.ts';
 export type { Result, VoidResult } from './result.ts';
 export type { SmppLog } from './log.ts';

@@ -340,18 +340,24 @@ Grouped by what each one constrains.
   the application one `sms` per fragment
   ([interop-tests/findings/05-java-clients.md](interop-tests/findings/05-java-clients.md)).
   `concatOf()` is the single answer to how a PDU says it is a segment, as `messageOctets()` is to
-  where a body is, so the reassembler takes one input and is never told there are two spellings.
-  That input names a group rather than a number because a UDH reference is 8 bits and
-  `sar_msg_ref_num` is 16: they are unrelated counters, so keying reference 5 from each together
-  would assemble two of a peer's messages into one, which goal 2 forbids. The UDH wins where a peer
-  wrote both, which keeps the change additive — no PDU that reassembled before reads differently —
-  and leaves the library nothing to guess when two headers disagree. Rejected: preferring the TLVs,
-  which regroups every message a gateway derived them from. Rejected: comparing the two and
-  reporting a disagreement, which invents a failure out of fields that are not comparable and that
-  the application could not act on either way. A `sar_*` segment sets no UDH indicator, so
-  `esm_class` still says whether a body starts with a header and nothing strips octets that are not
-  there. Receive-only: `sendSms()` goes on writing a UDH with an 8-bit reference, where a send-side
-  `sar_*` would be a second spelling of one message whose only difference is which peers accept it.
+  where a body is, and both are exported for the same reason: an application on the low-level
+  surfaces would otherwise rewrite the read this fixed. It carries the spelling beside the
+  reference, so the key is two tokens the reassembler joins and interprets neither of, and so the
+  refusal can name the field the peer got wrong — `ESME_RINVESMCLASS` for a UDH, `ESME_RINVTLVVAL`
+  for the TLVs, whose segment's `esm_class` is 0x00 and correct. Keying them together instead would
+  assemble two of a peer's messages into one, since a UDH reference is 8 bits and `sar_msg_ref_num`
+  is 16 and neither counts the other's messages; the two UDH widths share a space because they are
+  one sender's counter in one layer, where a `sar_*` reference is another layer's. A UDH that names
+  the concatenation wins over the TLVs — one carrying only a port leaves them to say — which keeps
+  the change additive for every message that reassembled before, and leaves the library nothing to
+  guess where the two disagree. Rejected: preferring the TLVs, which regroups every message a
+  gateway derived them from. Rejected: comparing the parts and reporting a disagreement: the
+  references are not comparable at all, and where the parts are, the UDH is still what the message
+  is assembled by, so the report would name a failure the application cannot act on. Accepted: a
+  peer that switches spelling mid-message now has two groups that expire rather than fragments that
+  arrive, which goal 2 prefers to a message assembled from two counters. Receive-only: `sendSms()`
+  goes on writing a UDH with an 8-bit reference, where a send-side `sar_*` would be a second
+  spelling of one message whose only difference is which peers accept it.
 
 - **An inbound `data_sm` stands in for whichever of `submit_sm` and `deliver_sm` its direction makes
   it, and none goes out.** Maintainer's call, 2026-09-06, from the Jasmin interoperability phase:
@@ -539,7 +545,7 @@ Grouped by what each one constrains.
   untouched, and is where a caller-chosen id and a refusal live; `onRequest` is the escape hatch for
   an application that must refuse a PDU the `sms` event could not have shown it yet. `collect()`
   answers every segment it will not carry rather than leaving it unanswered, which is the same stall
-  in miniature: `ESME_RINVESMCLASS` where the UDH belongs to no group, `ESME_RMSGQFUL` where the
+  in miniature: the field that numbered it where the segment belongs to no group, `ESME_RMSGQFUL` where the
   segment's own arrival overran the octet cap, since a peer told that still holds it. Rejected:
   answering every segment but the one that completes the group, which leaves the peer holding some
   segments accepted and one refused with nothing in SMPP to retract the rest, and still cannot honour
@@ -631,7 +637,7 @@ Grouped by what each one constrains.
   `onDelivery()` answers each receipt before the group it belongs to is complete, and `teardown()`
   runs on every path — an idle timeout and a failed rebind, not only `close()` — so clearing the
   merges there loses receipts no peer has a reason to send again. They are cleared where the session
-  is over instead. Inbound segments stay in `teardown()`: an 8-bit concatenation reference is the
+  is over instead. Inbound segments stay in `teardown()`: a concatenation reference is the
   peer's own counter, so a half-arrived group kept across a drop would take a later message's
   segments as readily as the rest of its own, and goal 2 will not hand the application a message
   assembled that way. What goes there is traffic already answered, which is why each group reaches
