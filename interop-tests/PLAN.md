@@ -89,7 +89,7 @@ coverage.
 | **jsmpp** — Java, active | Strict, low-level: the caller builds UDH, `sar_*` or `message_payload` bytes by hand, so it is the tool for targets 2, 3, 5 and 6. Assumes 3.4 when `sc_interface_version` is absent; crashes on an unnameable one | Maven build in a pinned JDK image; no published image | `interface_version`, raw optional parameters, `query_sm`/`cancel_sm`/`replace_sm` calls |
 | **Cloudhopper (fizzed fork)** — Java/Netty | The windowing client: `setWindowSize`, `setRequestExpiryTimeout`, `setWindowMonitorInterval`; async submits; an SSL demo | Maven build; `make client`, `make ssl-client` | Window 1, 10, 50 against a slow `sms` listener; request expiry shorter than our response |
 | **python-smpplib 2.2.4** — Python | Sends GSM 7-bit unpacked with `0x1B` escapes, UDH long messages, reactive `enquire_link`; the easiest peer to script, so also the driver for the server-side matrix | `python:3.12.14-slim-bookworm` + `pip install smpplib==2.2.4` | `interface_version` kwarg, `auto_send_enquire_link`, `make_parts_encoded` |
-| **php-smpp (alexandr-mironov fork)** — PHP | Cannot bind transceiver, so it forces separate TX and RX binds — the direction-enforcement path; three long-message modes from one client: `CSMS_16BIT_TAGS`, `CSMS_PAYLOAD`, `CSMS_8BIT_UDH` | `php:8.x-cli`, vendored; no licence declared, so test-only | The three CSMS modes; `submit_sm` on the RX bind |
+| **php-smpp (alexandr-mironov fork)** — PHP | Binds transmitter and receiver separately, which is the direction-enforcement path; three long-message modes from one client: `CSMS_16BIT_TAGS`, `CSMS_PAYLOAD`, `CSMS_8BIT_UDH`. It does bind as a transceiver, contrary to what its inherited README says — phase 6 found that out | `php:8.4.25-cli`, cloned at a pinned commit; LGPL-2.0-or-later per its `composer.json`. Its socket guard uses a check PHP 8 broke, so the peer image patches it | The three CSMS modes; `submit_sm` on the RX bind |
 | **Jasmin `smppccm`** — Python/Twisted | A production gateway as the ESME: its own reconnect, `elink_interval`, receipt parsing of what we send, `dlr_msgid` | Same stack as above; `smppccm -a` pointing at our server, `mtrouter`, HTTP `/send` | `elink_interval`, `con_loss_retry`/`con_loss_delay`, `coding`, `dlr_msgid`, `submit_throughput` |
 | **smppload 2.5.3** — Erlang | The only free, scriptable load generator with UDH long messages: `-r` rps, `-T` threads, `-c` count, `-D` receipts, `-C` data_coding | Hand-built OTP image; expect build friction (issue #8) | No real window — in-flight is `threads × rps` — and no `enquire_link` at all, which is itself a real-world shape |
 | **vponomarev/libsmpp `smpp-dumb-client`** — Go | The one load tool with an enforced bounded window (`generator.window`) | Go build stage, YAML config | `rate`, `window`, `count`, `stayConnected` |
@@ -200,6 +200,7 @@ newer changes stayed consistent with them.
 | `reconnect: { fromStart: true }` (#80) | `client()` resolves only once bound, and only the caller's signal ends the wait. Is that obvious enough that nobody ships a process that hangs at startup? |
 | A receipt's body read as octets (#81) | `dlr.receipt` now parses for peers where it used to be garbage. Anything an application could have been relying on in the broken case? |
 | The abortable send window (in flight) | What an aborted send returns, and whether it counts as `unanswered` — the field an application reads to decide whether resending risks a duplicate. |
+| The held-message cap against a peer's window (phase 7) | A peer whose window is wider than the 1000 messages this library will hold unanswered makes it evict, so the peer is never answered for those and re-sends or times out. The cap is deliberate and on a constant an application cannot raise, but it is the peer's window that decides whether it is ever reached. Does an application learn it is happening in time to slow down? |
 | All of them together | `sessionError` now carries refused PDUs, lost reassembly groups and failed hooks. Is one channel carrying too many meanings for an application to act on any of them? |
 
 ## Delegation
@@ -242,7 +243,10 @@ defect; each is a claim resting on the specification and on Node rather than on 
 | 3 | done | [03-jasmin.md](findings/03-jasmin.md) |
 | 4 | done | [04-kannel.md](findings/04-kannel.md) |
 | 5 | done | [05-java-clients.md](findings/05-java-clients.md) |
-| 6–11 | not started | — |
+| 6 | done | [06-python-php.md](findings/06-python-php.md) |
+| 7 | done | [07-load.md](findings/07-load.md) |
+| 8 | dropped | [Untested](#untested) |
+| 9–11 | not started | — |
 
 Phases 1 to 5 were graded before `run.py` learned to fail an empty capture, so a run whose capture
 never started would have scored green on the wire checks while its own assertions carried it. Every

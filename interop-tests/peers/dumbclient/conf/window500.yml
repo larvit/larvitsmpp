@@ -1,0 +1,35 @@
+log:
+  level: info
+  rate: yes
+  netbuf: false
+
+profiler:
+  enabled: no
+
+smpp:
+  remote: NODE_HOST:2775
+  bind:
+    systemID: dumb-w500
+    systemType: ""
+    password: dumbpw
+    mode: TRX
+
+generator:
+  enabled: yes
+  message:
+    from:
+      ton: 1
+      npi: 1
+      addr: "15550005678"
+    to:
+      ton: 1
+      npi: 1
+      addr: "15550001234"
+      template: no
+    registeredDelivery: 0
+    dataCoding: 1
+    body: "load phase 7 - window 500, below maxHeldMessages"
+  count: 20000
+  rate: 2000
+  window: 500
+  stayConnected: no

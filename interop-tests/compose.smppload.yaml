@@ -1,0 +1,46 @@
+x-log-limits: &log-limits
+  logging:
+    driver: json-file
+    options:
+      max-file: "3"
+      max-size: 20m
+
+services:
+  # Blocked (findings/07-load.md): builds and connects, but its bind_transceiver goes out on the
+  # wire two bytes short - a corrupted command_length/command_id no SMSC can parse. Kept running
+  # here (rather than removed) so smppload.test.ts's own reproducer stays exercised.
+  smppload:
+    build: ./interop-tests/peers/smppload
+    image: interop-smppload:2.5.3-49fb653
+    <<: *log-limits
+    environment:
+      SMPP_HOST: node
+      SMPP_PORT: "2775"
+    command: ["-H", "node", "-P", "2775", "-i", "sload-probe", "-p", "password", "-B", "trx", "-d", "15550001234", "-s", "15550005678", "-c", "1", "-r", "1", "-T", "1", "-l", "20", "--bind_timeout", "5000"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/healthy"]
+      interval: 1s
+      retries: 30
+      timeout: 2s
+
+  # smppload only ever dials node:2775 on this container's own network namespace, so this sees
+  # exactly its side of the exchange (same pattern as compose.kannel.yaml).
+  capture:
+    image: nicolaka/netshoot:v0.16
+    network_mode: "service:smppload"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      smppload:
+        condition: service_healthy
+    command: ["dumpcap", "-i", "any", "-f", "tcp port 2775", "-w", "/captures/smppload.pcapng"]
+    volumes:
+      - ./interop-tests/captures:/captures
+
+  node:
+    depends_on:
+      capture:
+        condition: service_started
+      smppload:
+        condition: service_healthy
