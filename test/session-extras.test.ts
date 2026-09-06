@@ -2121,7 +2121,6 @@ describe('AbortSignal on a send', () => {
 		assert.equal(sent.unanswered, 0, 'it never reached the socket, so the peer cannot have taken it');
 	});
 
-	// responseTimeout: 0 is the case that waited for a slot forever: nothing else was going to end it.
 	test('gives up on a queued send where responseTimeout: 0 never would', async t => {
 		const session = await oneSlotHeld(t, { responseTimeout: 0 });
 		const controller = new AbortController();
@@ -2170,8 +2169,9 @@ describe('AbortSignal on a send', () => {
 
 		const gaveUp = await within(500, abandoned);
 
+		assert.ok(gaveUp, 'the waiter that gave up must settle before the slot it left is freed');
 		// Any other error means it never reached the queue, so there was no waiter to strand.
-		assert.match(gaveUp?.err?.message ?? '', /Aborted while waiting for a send window slot/);
+		assert.match(gaveUp.err?.message ?? '', /Aborted while waiting for a send window slot/);
 		await held.sendResp();
 
 		const following = await within(1000, session.sendSms({

@@ -18,7 +18,7 @@ export class SendWindow {
 	private readonly idleWaiters = new IdleWaiters();
 	private readonly limit: number;
 	private readonly log: SmppLog;
-	private readonly waiting: Waiter[] = [];
+	private readonly waiting = new Set<Waiter>();
 	private inFlight = 0;
 
 	constructor(options: SendWindowOptions) {
@@ -40,9 +40,10 @@ export class SendWindow {
 	}
 
 	release(): void {
-		const next = this.waiting.shift();
+		const next = this.waiting.values().next().value;
 
 		if (next) {
+			this.waiting.delete(next);
 			next({});
 
 			return;
@@ -57,7 +58,7 @@ export class SendWindow {
 
 	/** Everything the caller is still owed: on the wire, plus queued behind a full window. */
 	unfinished(): number {
-		return this.inFlight + this.waiting.length;
+		return this.inFlight + this.waiting.size;
 	}
 
 	/** Resolves 0 once nothing is left on the wire, or with what still is. */
@@ -69,15 +70,12 @@ export class SendWindow {
 	private queue(signal: AbortSignal | undefined): Promise<VoidResult> {
 		this.log.verbose('sendWindow - queueing a request behind a full window', {
 			limit: this.limit,
-			queued: this.waiting.length + 1,
+			queued: this.waiting.size + 1,
 		});
 
 		return new Promise<VoidResult>(resolve => {
 			const settle = (result: VoidResult): void => {
-				const index = this.waiting.indexOf(settle);
-
-				if (index !== -1) this.waiting.splice(index, 1);
-
+				this.waiting.delete(settle);
 				signal?.removeEventListener('abort', onAbort);
 				resolve(result);
 			};
@@ -87,7 +85,7 @@ export class SendWindow {
 			}
 
 			signal?.addEventListener('abort', onAbort, { once: true });
-			this.waiting.push(settle);
+			this.waiting.add(settle);
 		});
 	}
 }

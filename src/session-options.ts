@@ -136,7 +136,7 @@ export const defaults = {
 
 /**
  * A count below 1 does not fail loudly anywhere downstream: `maxOutstanding: 0` leaves every send
- * queued behind a slot that is never freed, so the call never settles at all.
+ * queued behind a slot that is never freed, so a send with no `signal` never settles at all.
  */
 export function checkSessionOptions(options: CheckableOptions): VoidResult {
 	if (options.fromStart !== undefined) {

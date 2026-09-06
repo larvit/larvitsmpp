@@ -169,7 +169,7 @@ naming the behaviour.
 | `ESME_RINVBCASTCHANIND` typo | Defined as `0x011`, three hex digits; the spec value is `0x0112` |
 | Every response carries a message id | `session.js` builds `params = {'message_id': …}` for every response it sends, `deliver_sm_resp` included; SMPP 3.4 4.6.2 makes that field unused and NULL, and Jasmin closes the connection on one |
 
-## Multipart sends and the send window
+## Multipart sends
 
 `sendSms` puts every segment of a message on the wire together instead of waiting for each response
 in turn, so a long message costs one round trip rather than one per segment. Nothing on the
@@ -651,9 +651,8 @@ Grouped by what each one constrains.
   settles instead. Rejected: bounding this wait by `responseTimeout` as the hold is bounded — a full
   window is this end's own concurrency draining as the peer answers rather than a link going nowhere,
   and that bound would fail a message with more segments than `maxOutstanding` partway through
-  against a slow peer. The failure is a plain `Error` rather than `UnansweredError`: nothing was
-  written, so `sendSms()` reports it with `unanswered: 0`, the same answer an abort at the gate
-  already gives. The drain half needs nothing: `close({ signal })` already hands the signal to
+  against a slow peer. The failure is a plain `Error` rather than `UnansweredError`, the same answer
+  an abort at the gate already gives. The drain half needs nothing: `close({ signal })` already hands the signal to
   `window.idle()`, and `unbind()` taking none is the shape README states.
 
 - **The gate decides whether a link can carry a request, and a bind is what makes it one.**
