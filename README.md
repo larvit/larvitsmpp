@@ -248,7 +248,7 @@ import { isCommand, server } from '@larvit/smpp';
 
 const knownRecipients = new Set(['46709771337']);
 
-const { err, server: smpp } = await server({
+const { err } = await server({
 	onRequest: async (session, pduObj) => {
 		if (!isCommand(pduObj, 'submit_sm') || knownRecipients.has(pduObj.params.destination_addr)) {
 			return false;
@@ -268,15 +268,14 @@ message is a request of its own, so the hook sees each one while refusing it sti
 No bind reaches it, and neither does anything a peer sends before one: `server()` answers those and
 runs `authenticate` itself, so a hook cannot intercept a bind however it is written.
 
-A hook that throws or rejects reaches `sessionError`, and the request then takes the built-in
-handling as though the hook had returned `false`. A hook that fails is therefore not a refusal — the
-message is accepted and reaches the `sms` event — so a filter that must not fail open catches its
-own errors and answers the PDU itself.
+A hook that throws or rejects reaches `sessionError`, and nothing else is written for that request:
+the library cannot tell a hook that failed before answering from one that failed after, and a second
+response on the peer's sequence number would be worse than none. The peer's own response timeout
+settles it, so a hook that must reach a decision either way makes that decision itself.
 
 A `Session` you construct yourself (see [Bind direction](#bind-direction)) takes the same hook as a
-session option, where it is also how a peer's bind gets accepted: a hand-wired session has no bind
-handling of its own, and no fallback either — a hook that throws there is reported and the request
-is left unanswered.
+session option, and handles a failing one the same way; it is also where a peer's bind gets accepted,
+since a hand-wired session has no bind handling of its own.
 
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
 `ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`. `SCHEDULED` and `ENROUTE` go out as intermediate

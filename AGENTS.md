@@ -528,22 +528,28 @@ Grouped by what each one constrains.
   nothing a peer sends before one can be intercepted however the hook is written. One
   `OnRequest` type on both option bags, because a second contract under one name is two spellings of
   one goal; widened to accept a plain boolean, as `authenticate` already is, so an observing hook need
-  not be `async`. The failure policy belongs to the composition and not to the type: a hook that
-  throws or rejects reaches `sessionError` and `server()` falls the request through to the built-in
-  handling — the answer the peer would have had with no hook at all — while the same hook on a
-  hand-wired `Session` is reported and the request left unanswered, which is goal 6's passthrough
-  seam holding no policy of the caller's. `authenticate` failing has no fallback either way, since
-  accepting the bind would be the bypass. `sessionError` rather than `serverError` because the
+  not be `async`. A hook that throws, rejects or never settles is reported on `sessionError` and
+  nothing of ours is written for that request, the same on both surfaces: the library cannot tell one
+  that failed before answering from one that failed after, so goal 2 reports the outcome as
+  undetermined rather than guessing, and the peer's own `responseTimeout` is what settles it — the
+  answer `authenticate` failing already takes. `sessionError` rather than `serverError` because the
   failure belongs to one session's request, and that channel already carries every failure of one.
+  The hook is consulted before the bind-direction gate, so it sees a `submit_sm` a receiver-bound
+  peer may not send; first refusal means first, and one it declines still gets `ESME_RINVBNDSTS`.
   Nothing is held for a request the hook answered: `HeldMessages` is opened by the `sms` event the
-  hook skipped, so the drain waits on none of it. Rejected: consulting the hook first, which puts
+  hook skipped, so the drain waits on none of it. `OnRequest` stays unexported where
+  `AuthenticateInput` is exported, because that hook's argument is a shape this library invents and
+  this one's are two types already published. Rejected: consulting the hook first, which puts
   bind and authentication inside the application's reach for nothing. Rejected: a narrower hook
   returning a status for the library to write, which makes the answer verifiable but pays a second
   contract under a second name for it, and could not express what the session-level hook already
   does — answer a bind, a vendor command, a `data_sm` — leaving that error naming something only
-  half the surface can do. Accepted: falling through is fail-open, so a filter that must not be is
-  the application's to close; refusing instead would give `enquire_link` per-command failure
-  semantics for the sake of one command class.
+  half the surface can do. Rejected: falling the request through to the built-in handling on a
+  failure, read at first as the answer the peer would have had with no hook — true only of a hook
+  that failed before answering, where one that failed after put a second response on the peer's own
+  sequence number, goal 1's wire violation. Rejected with it: recording what the hook wrote so the
+  fall-through could be gated on it, which buys a fail-open path with state and an internal contract
+  no other collaborator needs.
 
 - **The drain waits on the messages the application holds, and `sendResp()` is what says it is done
   with one.** Maintainer's call, 2026-09-01: waiting on the send window alone tore a server session
