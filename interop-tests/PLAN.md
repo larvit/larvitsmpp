@@ -226,6 +226,14 @@ document, library changes, and the AGENTS.md decision record each one needs.
 | 5 | done | [05-java-clients.md](findings/05-java-clients.md) |
 | 6–11 | not started | — |
 
+Phases 1 to 5 were graded before `run.py` learned to fail an empty capture, so a run whose capture
+never started scored green on the wire checks while its own assertions carried it. smscsim and
+SMPPSim were re-run under the stricter grading and hold. Kannel, Jasmin, jsmpp and Cloudhopper were
+not: jsmpp decoded frames either way, since it reported the malformed count its scenarios provoke on
+purpose, but the other three reported zero, which is what an empty capture also reports. Re-run those
+three before phase 11 and confirm the zeros are real. Their assertions stand regardless — what is
+unproven is the wire check that sits beside them.
+
 Research notes behind this plan, 2026-09-05, are in `research/`: SMSC simulators, ESME clients
 and validators, and operator quirks with one source URL per claim. Ask before trusting a claim here
 that a peer's own docs would settle.
