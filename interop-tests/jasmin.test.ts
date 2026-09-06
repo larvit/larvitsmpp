@@ -514,15 +514,13 @@ describe('C8 (target 3) - long MO from an upstream SMSC, SAR vs UDH segmentation
 
 		await sendSarMo(upstreamSession, { from: TO, message: text, to: FROM });
 
-		// Recorded either way, per the task: one whole `sms` (Jasmin reassembled the SAR segments
-		// before forwarding) or several fragments (it relayed them, and our SAR-blind reassembler -
-		// keyed on UDH only - never groups them; see findings for which happened and the reproducer).
 		const whole = await waitFor(() => sms.find(s => s.message === text), 10_000);
-		const fragments = sms.filter(s => text.includes(s.message) && s.message !== '');
+		const fragments = sms.filter(s => s.message !== text && text.includes(s.message) && s.message !== '');
 
 		await session.close({ signal: AbortSignal.abort() });
 
-		assert.ok(whole ?? fragments.length > 0, 'expected either a reassembled sms or SAR fragments to arrive');
+		assert.ok(whole, 'expected the SAR segments to reassemble into one whole sms');
+		assert.deepEqual(fragments.map(s => s.message), [], 'no segment reaches the application on its own');
 	});
 
 	test('UDH-segmented deliver_sm from the fake upstream', async () => {
