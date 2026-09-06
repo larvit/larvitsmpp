@@ -1454,36 +1454,72 @@ describe('reassembly bounds', () => {
 		reference: number,
 		part: number,
 		total: number,
-	): Collected | undefined {
+	): Collected {
 		return reassembler.collect(segment(reference, part, total), { part, reference, total });
 	}
 
 	test('hands back every segment in order once the last one arrives', () => {
-		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
 		const second = collect(reassembler, 4, 2, 3);
 		const third = collect(reassembler, 4, 3, 3);
 
-		assert.equal(second?.whole, undefined);
-		assert.equal(third?.whole, undefined);
+		assert.equal(second.whole, undefined);
+		assert.equal(third.whole, undefined);
 
 		const collected = collect(reassembler, 4, 1, 3);
 
-		assert.ok(collected?.whole);
+		assert.ok(collected.whole);
 		assert.deepEqual(collected.whole.map(pduObj => pduObj.seqNr), [1, 2, 3]);
 		assert.equal(reassembler.size, 0);
 
 		// One id base per group: every segment of it was answered with a part of that base.
-		assert.equal(second?.smsId, collected.smsId);
-		assert.equal(third?.smsId, collected.smsId);
+		assert.equal(second.smsId, collected.smsId);
+		assert.equal(third.smsId, collected.smsId);
+		assert.deepEqual(
+			[second.status, third.status, collected.status],
+			['ESME_ROK', 'ESME_ROK', 'ESME_ROK'],
+		);
+	});
+
+	// A group the store cannot hold at all is refused, not accepted and then thrown away.
+	test('refuses a segment whose own arrival overruns the octet cap', () => {
+		const lost: LostGroup[] = [];
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			maxOctets: 10,
+			now: () => 0,
+			onLost: one => { lost.push(one); },
+			timeout: 60_000,
+		});
+		const refused = collect(reassembler, 8, 1, 2);
+
+		assert.equal(refused.status, 'ESME_RMSGQFUL');
+		assert.equal(refused.smsId, undefined);
+		assert.equal(reassembler.size, 0);
+		assert.deepEqual(lost, [], 'the peer still holds it, so nothing of it was lost');
 	});
 
 	// Nothing else says a message the peer has already been answered for was thrown away.
 	test('names every group it gives up on, and why', () => {
 		let now = 0;
+		let issued = 0;
+		const ids = [
+			'0199e0eb-4c11-7a02-9f31-2b6d80c4e517',
+			'0199e0eb-9d42-7bc6-8e70-51af3c92d6b8',
+			'0199e0ec-0e73-7d18-bb29-7c04ea51f3a9',
+		];
 		const lost: LostGroup[] = [];
 		const reassembler = new Reassembler({
 			log: silentLog,
 			max: 1,
+			newId: () => ids[issued++] ?? '',
 			now: () => now,
 			onLost: one => { lost.push(one); },
 			timeout: 60,
@@ -1500,7 +1536,7 @@ describe('reassembly bounds', () => {
 		assert.deepEqual(lost.map(one => one.reason), ['evicted', 'expired', 'linkGone']);
 		assert.deepEqual(lost.map(one => one.parts), [1, 1, 1]);
 		assert.deepEqual(lost.map(one => one.total), [2, 3, 2]);
-		assert.equal(new Set(lost.map(one => one.smsId)).size, 3, 'each group carries an id of its own');
+		assert.deepEqual(lost.map(one => one.smsId), ids, 'each group carries an id of its own');
 	});
 
 	// The UDH is peer-controlled, and the default authenticate() accepts every peer.
@@ -1514,21 +1550,35 @@ describe('reassembly bounds', () => {
 			verbose: noop,
 			warn: msg => { warnings.push(msg); },
 		};
-		const reassembler = new Reassembler({ log, max: 10, now: () => 0, timeout: 60_000 });
+		const reassembler = new Reassembler({
+			log,
+			max: 10,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
 
-		assert.equal(collect(reassembler, 1, 1, 0), undefined);
-		assert.equal(collect(reassembler, 2, 0, 3), undefined);
-		assert.equal(collect(reassembler, 3, 4, 3), undefined);
+		assert.deepEqual(
+			[collect(reassembler, 1, 1, 0), collect(reassembler, 2, 0, 3), collect(reassembler, 3, 4, 3)]
+				.map(one => one.status),
+			Array(3).fill('ESME_RINVESMCLASS'),
+		);
 		assert.equal(reassembler.size, 0);
 		assert.deepEqual(warnings, Array(3).fill('reassembler - dropping a segment the UDH numbers impossibly'));
 	});
 
 	// Parts 1/2 then 2/3 would otherwise complete the stored two-part group, truncating the message.
 	test('refuses a segment that renumbers how many parts the message has', () => {
-		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
 
-		assert.equal(collect(reassembler, 9, 1, 2)?.whole, undefined);
-		assert.equal(collect(reassembler, 9, 2, 3), undefined);
+		assert.equal(collect(reassembler, 9, 1, 2).whole, undefined);
+		assert.equal(collect(reassembler, 9, 2, 3).status, 'ESME_RINVESMCLASS');
 		assert.equal(reassembler.size, 1);
 
 		reassembler.clear();
@@ -1536,14 +1586,20 @@ describe('reassembly bounds', () => {
 
 	// 0.4.0 held incomplete groups without limit and swept them only when other traffic arrived.
 	test('drops the oldest incomplete message once the cap is reached', () => {
-		const reassembler = new Reassembler({ log: silentLog, max: 2, now: () => 0, timeout: 60_000 });
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 2,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
 
 		for (const reference of [1, 2, 3]) {
-			assert.equal(collect(reassembler, reference, 1, 2)?.whole, undefined);
+			assert.equal(collect(reassembler, reference, 1, 2).whole, undefined);
 		}
 
 		// Completing the first one must not produce a message: it was evicted.
-		assert.equal(collect(reassembler, 1, 2, 2)?.whole, undefined);
+		assert.equal(collect(reassembler, 1, 2, 2).whole, undefined);
 		assert.equal(reassembler.size, 2);
 
 		reassembler.clear();
@@ -1556,52 +1612,65 @@ describe('reassembly bounds', () => {
 			// One segment is 36 octets: 14 of short_message plus the two 11-octet addresses.
 			maxOctets: 80,
 			now: () => 0,
+			onLost: () => undefined,
 			timeout: 60_000,
 		});
 
 		for (const reference of [1, 2, 3]) {
-			assert.equal(collect(reassembler, reference, 1, 2)?.whole, undefined);
+			assert.equal(collect(reassembler, reference, 1, 2).whole, undefined);
 		}
 
 		assert.equal(reassembler.size, 2);
-		assert.equal(collect(reassembler, 1, 2, 2)?.whole, undefined);
+		assert.equal(collect(reassembler, 1, 2, 2).whole, undefined);
 
 		reassembler.clear();
 	});
 
 	// A retained subarray keeps its whole framed PDU alive, up to maxPduLength per segment.
 	test('copies a segment out of the buffer it arrived in', () => {
-		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
 		const framed = Buffer.alloc(1024);
 		const first = segment(6, 1, 2);
 
 		Buffer.concat([Buffer.from([0x05, 0x00, 0x03, 6, 2, 1]), Buffer.from('fragment')]).copy(framed);
 		first.params.short_message = framed.subarray(0, 14);
 
-		assert.equal(reassembler.collect(first, { part: 1, reference: 6, total: 2 })?.whole, undefined);
+		assert.equal(reassembler.collect(first, { part: 1, reference: 6, total: 2 }).whole, undefined);
 
 		framed.fill(0x00);
 
 		const collected = collect(reassembler, 6, 2, 2);
 
-		assert.ok(collected?.whole);
+		assert.ok(collected.whole);
 		assert.equal(decodeSegments(collected.whole), 'fragmentfragment');
 	});
 
 	test('expires an incomplete message once its timeout has passed', () => {
 		let now = 0;
-		const reassembler = new Reassembler({ log: silentLog, max: 10, now: () => now, timeout: 60 });
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			now: () => now,
+			onLost: () => undefined,
+			timeout: 60,
+		});
 		const first = collect(reassembler, 9, 1, 2);
 
-		assert.equal(first?.whole, undefined);
+		assert.equal(first.whole, undefined);
 
 		now = 61;
 
 		// The other half arrives after the group expired, so it starts a new, still-incomplete one.
 		const late = collect(reassembler, 9, 2, 2);
 
-		assert.equal(late?.whole, undefined);
-		assert.notEqual(late?.smsId, first?.smsId);
+		assert.equal(late.whole, undefined);
+		assert.notEqual(late.smsId, first.smsId);
 		assert.equal(reassembler.size, 1);
 
 		reassembler.clear();
@@ -1666,6 +1735,7 @@ describe('a peer that sends the next segment only once the last one is answered'
 		assert.equal(sms.message, text);
 		assert.equal(sms.pduObjs.length, answers.length);
 		assert.equal(messages.length, 1, 'the application sees one message, not one per segment');
+		assert.equal(sms.answeredOnArrival, true);
 		assert.deepEqual(answers.map(answer => answer.cmdStatus), answers.map(() => 'ESME_ROK'));
 		assert.deepEqual(
 			answers.map(answer => paramText(answer.params.message_id)),
@@ -1695,6 +1765,7 @@ describe('a peer that sends the next segment only once the last one is answered'
 		const sms = await incoming;
 
 		assert.equal(await within(150, submitted), undefined, 'nothing may answer for the application');
+		assert.equal(sms.answeredOnArrival, false);
 		assert.deepEqual(await sms.sendResp({ smsId: '0199e0e9-4a3e-7c62-9a4b-1f0c5d7e8a21' }), {});
 
 		const answered = await submitted;
@@ -1721,9 +1792,10 @@ describe('a peer that sends the next segment only once the last one is answered'
 		const named = await sms.sendResp({ smsId: '0199e0ea-1f3d-7ab4-8c21-6d4e5f0a9b73' });
 		const refused = await sms.sendResp({ status: 'ESME_RMSGQFUL' });
 
-		assert.match(named.err?.message ?? '', /read sms\.smsId/);
+		assert.match(named.err?.message ?? '', /fixed when its first segment arrived/);
 		assert.match(refused.err?.message ?? '', /onRequest/);
 		assert.deepEqual(await sms.sendResp({ status: 'ESME_ROK' }), {});
+		assert.equal(sms.answeredOnArrival, true);
 	});
 
 	test('reports a half-arrived message it has already answered, and holds nothing after', async t => {
@@ -1767,6 +1839,39 @@ describe('a peer that sends the next segment only once the last one is answered'
 
 		assert.ok(closed.err instanceof Error);
 		assert.match(closed.err.message, /1 message\(s\) unanswered/);
+	});
+
+	// pduObjs.length is 1 either way here, so answeredOnArrival is the only thing that can say.
+	test('marks a one-part concatenated message answered, as its segment count cannot', async t => {
+		const smpp = await startServer(t);
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', bound => bound.on('sms', resolve));
+		});
+		const { session } = await connect(t, smpp, { responseTimeout: 1000 });
+
+		assert.ok(session);
+
+		const answered = await session.send({
+			cmdName: 'submit_sm',
+			params: {
+				destination_addr: '46709771337',
+				esm_class: consts.ESM_CLASS.UDH_INDICATOR,
+				short_message: Buffer.concat([
+					Buffer.from([0x05, 0x00, 0x03, 0x2F, 0x01, 0x01]),
+					Buffer.from('one part of one'),
+				]),
+				source_addr: '46701113311',
+			},
+		});
+		const sms = await incoming;
+
+		assert.equal(answered.err, undefined);
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
+		assert.equal(paramText(answered.pduObj.params.message_id), sms.smsId);
+		assert.equal(sms.pduObjs.length, 1);
+		assert.equal(sms.answeredOnArrival, true);
+		assert.deepEqual(await sms.sendResp(), {});
 	});
 
 	// esm_class said there was a UDH, and there is no group its concatenation fields can join.
