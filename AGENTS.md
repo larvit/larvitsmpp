@@ -401,6 +401,25 @@ Grouped by what each one constrains.
   keeps that traffic and `PendingRequests.nextSeqNr()`, the only thing that invents one, is what
   holds our own sends inside the spec.
 
+- **The optional parameters run to `command_length` exactly, and the only slack tolerated is one
+  NULL octet where a peer padded `short_message`.** Maintainer's call, 2026-09-06, from the
+  Java-client interoperability phase: the codec accepted whichever of its two reads produced no
+  error, so a `deliver_sm` ending in a bare TLV header — a tag and a declared length with no value
+  octets at all — was answered `ESME_ROK` with three octets never read, the padded read having
+  shifted them out of reach of a TLV loop that then ended quietly
+  ([interop-tests/findings/05-java-clients.md](interop-tests/findings/05-java-clients.md)). Goal 2
+  settles it against goal 3: octets this codec cannot name are a PDU it did not read, so a region
+  that does not end on `command_length` is refused with the `tlvs` reason and `ESME_RINVTLVSTREAM`
+  a truncated TLV value already gets. The padding retry is one shifted TLV parse rather than a
+  second parse of the whole PDU, taken only where the mandatory fields ended on a `short_message`
+  and the octet after it really is `0x00`, and its result has to end on `command_length` like any
+  other — which is what stops a retry laundering a misread into an acceptance. Fields are read from
+  `pdu.subarray(0, cmdLength)`, so nothing past the declared end is reachable rather than merely
+  checked for. Rejected: keeping the tolerance for the one to three trailing octets too few to hold
+  a TLV header, which no researched peer sends and which cannot be told apart from the truncated
+  tail this fixes. Rejected: refusing it as `body`/`ESME_RINVCMDLEN`, which names the mandatory
+  fields — the part the peer got right.
+
 - **`smsIdFormat` names a notation per place, and normalisation never reaches inside a `<base>-<n>`
   id.** An SMSC may answer `submit_sm_resp` in hex and write the receipt's `id:` in decimal, so one
   transform over both sides cannot make them equal. `submitResp` covers the `receipted_message_id`

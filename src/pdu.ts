@@ -281,7 +281,6 @@ function parseTlvs(
 function readParams(
 	cmdName: CommandName,
 	pdu: Buffer,
-	trailingNull: boolean,
 ): Result<{ offset: number; params: Record<string, ParamValue> }> {
 	const params: Record<string, ParamValue> = {};
 	let offset = 16;
@@ -295,11 +294,37 @@ function readParams(
 
 		params[name] = read.value;
 		offset += read.bytesRead;
-
-		if (name === 'short_message' && trailingNull) offset++;
 	}
 
 	return { offset, params };
+}
+
+/**
+ * SMPP 3.4 4.3: the optional parameters run to command_length exactly, so an octet left over is a
+ * TLV stream this codec could not read rather than slack to drop.
+ */
+function readOptionalParams(
+	pdu: Buffer,
+	start: number,
+	cmdLength: number,
+	afterShortMessage: boolean,
+): Result<{ tlvs: Record<string, Tlv> }> {
+	const plain = parseTlvs(pdu, start, cmdLength);
+
+	if (!plain.err && plain.offset === cmdLength) return { tlvs: plain.tlvs };
+
+	// Some peers append a NULL octet after short_message; that octet, and no other, is skipped.
+	if (afterShortMessage && pdu[start] === 0) {
+		const padded = parseTlvs(pdu, start + 1, cmdLength);
+
+		if (!padded.err && padded.offset === cmdLength) return { tlvs: padded.tlvs };
+	}
+
+	return {
+		err: plain.err ?? new Error(
+			`${String(cmdLength - plain.offset)} octets are left over after the optional parameters`,
+		),
+	};
 }
 
 function headerOf(pdu: Buffer): PduHeader {
@@ -314,7 +339,7 @@ function headerOf(pdu: Buffer): PduHeader {
 	};
 }
 
-function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolean; pduObj: PduObject }> {
+function parsePdu(pdu: Buffer): Result<{ pduObj: PduObject }> {
 	const header = headerOf(pdu);
 	const { cmdId, cmdLength, cmdName, cmdStatusId, seqNr } = header;
 
@@ -322,20 +347,21 @@ function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolea
 		return { err: new PduRefusedError(header, 'command', new Error('Unknown PDU command id')) };
 	}
 
+	// Every field is read from what command_length declares, never from octets buffered behind it.
+	const declared = pdu.subarray(0, cmdLength);
 	// SMPP 3.4 4.4.2 and friends: a response with a non-zero status carries no body at all.
 	const read = cmdStatusId !== 0 && cmdLength === 16
 		? { offset: 16, params: {} }
-		: readParams(cmdName, pdu, trailingNull);
+		: readParams(cmdName, declared);
 
 	if (read.err) return { err: new PduRefusedError(header, 'body', read.err) };
-
-	const parsed = parseTlvs(pdu, read.offset, cmdLength);
-
-	if (parsed.err) return { err: new PduRefusedError(header, 'tlvs', parsed.err) };
 
 	const params = read.params;
 	const message = params.short_message;
 	const octets = Buffer.isBuffer(message) ? message : undefined;
+	const parsed = readOptionalParams(declared, read.offset, cmdLength, message !== undefined);
+
+	if (parsed.err) return { err: new PduRefusedError(header, 'tlvs', parsed.err) };
 
 	// A message carrying a UDH stays a buffer; the session needs the header intact to reassemble.
 	if (octets && !hasUdh(paramNumber(params.esm_class, 0))) {
@@ -343,7 +369,6 @@ function parseOnce(pdu: Buffer, trailingNull: boolean): Result<{ aligned: boolea
 	}
 
 	return {
-		aligned: parsed.offset === cmdLength,
 		pduObj: {
 			cmdId,
 			cmdLength,
@@ -380,18 +405,7 @@ export function pduToObj(pdu: Buffer): Result<{ pduObj: PduObject }> {
 
 	if (framing.err) return { err: framing.err };
 
-	const plain = parseOnce(pdu, false);
-
-	if (!plain.err && plain.aligned) return { pduObj: plain.pduObj };
-
-	// Some peers append a NULL octet after short_message; allow for it before giving up.
-	const padded = parseOnce(pdu, true);
-
-	if (!padded.err && padded.aligned) return { pduObj: padded.pduObj };
-	if (!plain.err) return { pduObj: plain.pduObj };
-	if (!padded.err) return { pduObj: padded.pduObj };
-
-	return { err: plain.err };
+	return parsePdu(pdu);
 }
 
 /**
