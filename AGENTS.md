@@ -525,9 +525,7 @@ Grouped by what each one constrains.
   what goal 6 means by beating "the application can do this itself". What the library verifies is the
   ordering rather than the hook's honesty about answering: the hook is consulted only for a non-bind
   request on a session already bound, so no bind — a second one on a live session included — and
-  nothing a peer sends before one can be intercepted however the hook is written. Testing the command
-  before `loggedIn` is what keeps that absolute; the earlier cut gated on `loggedIn` alone and let a
-  re-bind and a pre-bind `unbind` through, by reusing one condition for two intentions. One
+  nothing a peer sends before one can be intercepted however the hook is written. One
   `OnRequest` type on both option bags, because a second contract under one name is two spellings of
   one goal; widened to accept a plain boolean, as `authenticate` already is, so an observing hook need
   not be `async`. The failure policy belongs to the composition and not to the type: a hook that

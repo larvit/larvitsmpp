@@ -225,8 +225,8 @@ async function onRequest(
 }
 
 /**
- * Everything bind, then what is left over to the application. Returns true when it has answered, so
- * the session leaves the PDU alone.
+ * Bind is the server's; a bound peer's other requests are offered to the application. Returns true
+ * when it has answered, so the session leaves the PDU alone.
  */
 async function handleRequest(
 	session: Session,
