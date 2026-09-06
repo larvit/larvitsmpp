@@ -170,11 +170,10 @@ naming the behaviour.
 ## Multipart sends and the send window
 
 `sendSms` puts every segment of a message on the wire together instead of waiting for each response
-in turn. This is not an optimisation: this library's own server holds segments until the whole
-message is reassembled before it answers any of them, so sending them one-after-a-response
-deadlocks. It follows that a message with more segments than `maxOutstanding` cannot be delivered to
-a server that defers responses that way — real SMSCs answer each `submit_sm` immediately, so this
-only bites when both ends are this library.
+in turn, so a long message costs one round trip rather than one per segment. Nothing on the
+receiving side forces the order either way: this library answers each inbound segment as it arrives,
+so a peer that dispatches one request at a time is never left waiting on us, and a message with more
+segments than `maxOutstanding` goes out a slot at a time and still completes.
 
 ## GSM 7-bit is sent unpacked
 
@@ -448,19 +447,45 @@ Grouped by what each one constrains.
   reports each session's unfinished drain through `serverError`, because its own result says nothing
   but that the listener stopped.
 
+- **Every segment of a concatenated message is answered as it arrives, so `sendResp()` on one is the
+  application's own signal rather than the peer's answer.** Maintainer's call, 2026-09-06, from the
+  Jasmin interoperability phase: Jasmin dispatches one `submit_sm` per connector at a time and will
+  not send segment 2 until segment 1 is answered, so holding a group unanswered until it was whole
+  deadlocked every multi-segment message against a production gateway
+  ([interop-tests/findings/03-jasmin.md](interop-tests/findings/03-jasmin.md)). Goal 1 has the answer
+  a real SMSC gives — one `message_id` per `submit_sm`, immediately — so the group's id base is
+  generated when it opens and each segment is answered `<base>-<n>`, the notation `DlrMerger` and
+  `sendDlr()` already read; `sms.smsId` is that base, so a receipt still names ids the peer holds. An
+  `smsId` or a refusing `status` passed to `sendResp()` there is an error rather than a silent
+  no-op, because the wire has already promised otherwise. A single-segment message is untouched, and
+  is where a caller-chosen id and a refusal still live; `onRequest` is the escape hatch for an
+  application that must refuse a PDU before the `sms` event could have shown it one. A segment whose
+  UDH belongs to no group is answered `ESME_RINVESMCLASS` rather than left unanswered, for the same
+  reason the rest are answered at all. Rejected: answering every segment but the one that completes
+  the group, which leaves the peer holding some segments accepted and one refused with nothing in
+  SMPP to retract the rest, and still cannot honour a caller's `smsId` on the segments already gone.
+  Rejected: a hook that mints the id per segment, which asks the application to name a message it
+  cannot read yet — what it wants is `sms.smsId` afterwards. Rejected: an option to keep the old
+  behaviour, a second spelling whose only distinguishing feature is that it deadlocks. Accepted: a
+  group that never completes is traffic the peer will not send again, so each one given up on —
+  expired, evicted, or dropped with the link — reaches `sessionError` as well as the log, since only
+  the application can decide what a half-message is worth.
+
 - **The drain waits on the messages the application holds, and `sendResp()` is what says it is done
   with one.** Maintainer's call, 2026-09-01: waiting on the send window alone tore a server session
   down while the application was still answering a `submit_sm`, so the peer timed out and re-sent —
   the duplicate goal 2 forbids, in the direction the window already covers. No completion signal was
-  added to the `sms` event: `sendResp()` is the answer the peer is waiting for, so it is the one the
-  drain waits for. Counting every inbound request until `sendReturn()` answered it was rejected —
+  added to the `sms` event: `sendResp()` is what an application already calls when it is done with a
+  message, so it is the one the drain waits for. Counting every inbound request until `sendReturn()` answered it was rejected —
   an `onRequest` that deliberately answers nothing would then cost a full `shutdownTimeout` on every
   close — and a message no listener took is released at once, since nothing is going to answer it.
   A listener that failed before answering gives it up the same way, but only once every listener has:
   a throw stops `emit()` where it stands, while a rejection leaves the others running, so the release
   waits for the last of them rather than answering on their behalf. What ends the wait is the response
   reaching the wire, not the call — a `sendResp()` the library refused, or one the socket would not
-  carry, leaves the message held, so `close()` still reports the one the peer is owed. `teardown()`
+  carry, leaves the message held, so `close()` still reports the one the peer is owed. Where the
+  segments were answered as they arrived there is no response left to write, so the call itself ends
+  the wait, an argument the library refuses excepted. `teardown()`
   drops what is still held for the same reason it drops inbound segments. The release is one turn
   late, so a listener that sends its receipt straight after the response is still holding when the
   drain looks; `sendDlr()` is the one send that goes out past the drain's refusal, and only while the
@@ -482,9 +507,11 @@ Grouped by what each one constrains.
   `onDeliverSm()` answers each receipt before the group it belongs to is complete, and `teardown()`
   runs on every path — an idle timeout and a failed rebind, not only `close()` — so clearing the
   merges there loses receipts no peer has a reason to send again. They are cleared where the session
-  is over instead. Inbound segments stay in `teardown()`, because they go unanswered until the
-  message is whole: the peer still holds them, and answering it on a later link with the old
-  segments' sequence numbers would correlate with nothing.
+  is over instead. Inbound segments stay in `teardown()`: an 8-bit concatenation reference is the
+  peer's own counter, so a half-arrived group kept across a drop would take a later message's
+  segments as readily as the rest of its own, and goal 2 will not hand the application a message
+  assembled that way. What goes there is traffic already answered, which is why each group reaches
+  `sessionError` like every other one given up on.
 
 - **A message id base is merged at most once.** A receipt carries nothing but `<base>-<n>`, so a
   straggler for a message whose group is gone cannot be told from a receipt for a later message the

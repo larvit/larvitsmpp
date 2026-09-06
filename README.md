@@ -213,6 +213,14 @@ console.log(smpp.port);  // the port actually bound, useful when 0 was requested
 await smpp.close();      // stop listening, then drain and close every live session
 ```
 
+A message that arrived in several segments was already answered when you see it: each segment gets
+an `ESME_ROK` as it lands, because a relaying SMSC will not send the next one until the last is
+answered. The ids went with those answers — `sms.smsId` is their base, and the segments carry
+`<smsId>-1`, `<smsId>-2` and so on, which is what `sendDlr()` names — so `sendResp()` there only
+says you are done with the message, and returns an `err` for an `smsId` or a refusing `status`.
+Choosing the id and refusing the message are for a single-segment message; key your own records off
+`sms.smsId` for the rest.
+
 `sendDlr` accepts `SCHEDULED`, `ENROUTE`, `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`,
 `ACCEPTED`, `UNKNOWN`, `REJECTED` and `SKIPPED`. `SCHEDULED` and `ENROUTE` go out as intermediate
 delivery notifications (`esm_class` 0x20), the rest as delivery receipts (0x04).
@@ -335,13 +343,13 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 
 | Event | Fires when |
 | --- | --- |
-| `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and its `smsId`. |
+| `sms` | An SMS arrives, reassembled if it was multipart. Carries `sendResp()`, `sendDlr()` and its `smsId`. A multipart one was answered as its segments arrived — see [Server](#server). |
 | `dlr` | A delivery report arrives, one per segment. `intermediate` is true where the report is not final: the SMSC either marked it an intermediate notification, or reported `ENROUTE` or `SCHEDULED`. `smsId` is undefined when the peer marked a receipt whose body carries no readable id. `statusMsg` names `statusId` unless the peer sent a `message_state` this library cannot name — then `statusId` is that raw value and `statusMsg` is whatever the body said, or `UNKNOWN`. |
 | `messageDlr` | Every segment of a multipart message sent with `dlr: true` has been reported on, carrying the worst status of the segments. A report carrying `intermediate` never counts towards it. Merging needs the SMSC to number its segment ids `<base>-<n>`, which is this library's own server's convention — an SMSC that hands out unrelated ids per segment never fires it. A base is merged once: a later message the SMSC gives the same ids is reported on through `dlr` alone, and an earlier one still collecting loses its merged report as well. |
 | `close` | The session is over, because nothing will bring the link back. Fires once, whether you closed it or the link failed for good. |
 | `disconnected` | The link dropped and the reconnect loop will retry it. Do not open a replacement client here — the session you hold comes back on its own, and `reconnected` says when. Fires again for each attempt that reconnects and then fails, so it is not one-to-one with `reconnected`. |
 | `reconnected` | The client re-bound after a drop. |
-| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires for each PDU the codec refused as well, carrying a `PduRefusedError` while the link carries on: a refused request is answered with the status SMPP names, and a refused response is answered with nothing and settles the request it named as `unanswered`. [Errors](#errors) tells the two kinds apart. |
+| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires for each PDU the codec refused as well, carrying a `PduRefusedError` while the link carries on: a refused request is answered with the status SMPP names, and a refused response is answered with nothing and settles the request it named as `unanswered`. [Errors](#errors) tells the two kinds apart. A multipart message given up half-arrived fires it too: its segments were answered, so the peer will never send them again. |
 | `data` | Raw bytes arrived on the socket. |
 | `incomingPdu` | A complete PDU arrived, as a buffer. |
 | `incomingPduObj` | The same PDU, parsed into an object. |
@@ -353,7 +361,8 @@ refuse further sends, wait out the requests this end already sent for up to `shu
 then tear down whatever is left, resolving to an `err` that says what was lost. They also wait for
 every `sms` still in the application's hands, so a peer whose `submit_sm` is being handled is
 answered rather than left to re-send it. That wait ends when `sendResp()` puts the response on the
-wire, or when every listener that took the message has failed; answering its PDUs through
+wire — or, for a message whose segments were answered as they arrived, when it is called at all —
+or when every listener that took the message has failed; answering its PDUs through
 `sendReturn()` instead leaves the wait running until it gives up. `sendDlr()` is the one send the
 refusal lets past, and it catches the wait when issued straight after `sendResp()`; await anything in
 between and it races the shutdown like any other send. `close({ signal })` takes an `AbortSignal`
