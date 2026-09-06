@@ -115,6 +115,11 @@ sent SAR MO unprompted), it confirms only that pushing SAR/UDH-tagged `deliver_s
 directly over the connector session, reassembles correctly on the way out through `smpps` - Jasmin
 does not re-segment or otherwise disturb an already-short single PDU in transit.
 
+**Fixed** in [#91](https://github.com/larvit/larvitsmpp/pull/91), where a second peer did reproduce
+it (`findings/05-java-clients.md`): reassembly now reads the `sar_*` TLVs as well as the UDH. C8's
+SAR scenario no longer accepts fragments as an outcome - it asserts one whole `sms` and no segment
+arriving on its own - and a rerun is 19/19 with no malformed frame and no expert error.
+
 ### `data_sm` is refused (target 4) - confirmed against a real peer
 
 **What happened.** With `jasmin-datasm`'s `[dlr-thrower] dlr_pdu = data_sm`, a receipt requested via
