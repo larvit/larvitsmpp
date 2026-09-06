@@ -133,12 +133,18 @@ describe('encodeMessage() and decodeMessage()', () => {
 });
 
 describe('messageOctets()', () => {
-	function parsed(short: Buffer, payload?: Buffer) {
-		const { buffer } = objToPdu({
-			cmdName: 'deliver_sm',
-			params: { destination_addr: '46709771337', short_message: short, source_addr: '46701113311' },
-			...(payload ? { tlvs: { message_payload: { tagValue: payload } } } : {}),
-		});
+	/** A data_sm has no short_message field at all, which is the case that has neither. */
+	function parsed(short: Buffer | undefined, payload?: Buffer) {
+		const { buffer } = short === undefined
+			? objToPdu({
+				cmdName: 'data_sm',
+				params: { destination_addr: '46709771337', source_addr: '46701113311' },
+			})
+			: objToPdu({
+				cmdName: 'deliver_sm',
+				params: { destination_addr: '46709771337', short_message: short, source_addr: '46701113311' },
+				...(payload ? { tlvs: { message_payload: { tagValue: payload } } } : {}),
+			});
 
 		assert.ok(buffer);
 
@@ -157,6 +163,7 @@ describe('messageOctets()', () => {
 		assert.deepEqual(messageOctets(parsed(short, payload)), short);
 		assert.deepEqual(messageOctets(parsed(short)), short);
 		assert.deepEqual(messageOctets(parsed(Buffer.alloc(0))), Buffer.alloc(0));
+		assert.equal(messageOctets(parsed(undefined)), undefined, 'a PDU with neither carries no body');
 	});
 });
 

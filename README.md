@@ -270,7 +270,8 @@ link the session is:
 - A `data_sm` carries a message either way, so which end the session is decides what its bind
   forbids: a client refuses one on a transmitter bind, a `server()` session on a receiver bind.
   `bindAllows('data_sm')` answers for the direction that reaches this session, since the library
-  sends none.
+  sends none. A `Session` you construct yourself is the ESME end, which is what `client()` builds;
+  a hand-wired SMSC sets `session.linkEnd = 'smsc'`, as `server()` does.
 
 A `transceiver` bind, the default, carries both. `session.send()` stays a low-level passthrough and
 is not checked, so the raw surface can still put whatever a test or a proxy needs on the wire.
@@ -527,7 +528,8 @@ have worked around any of these, remove the workaround:
   your own.
 - A body carried in the `message_payload` TLV was ignored, so the message arrived empty, and a
   `data_sm` was answered `ESME_RINVCMDID`, so a receipt thrown on one was lost with nothing said.
-  Both reach the application now, and a `data_sm` is answered `data_sm_resp` `ESME_ROK`.
+  Both reach the application now — a receipt as `dlr`, answered for you, and a message as `sms` for
+  you to answer like any other.
 - Short or malformed PDUs threw out of the codec instead of being reported as a parse failure.
 - Binds now declare `interface_version` 0x34. 0.4.0 declared 0x00, which tells the SMSC the ESME
   speaks SMPP 3.3 or earlier — and a spec-following SMSC then withholds every optional parameter,

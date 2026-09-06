@@ -111,13 +111,13 @@ export function decodeSegments(pduObjs: PduObject[]): string {
 	for (const pduObj of pduObjs) {
 		const part = messageOctets(pduObj);
 
-		message += part === undefined
-			? paramText(pduObj.params.short_message)
-			: decodeMessage(
-				part,
-				paramNumber(pduObj.params.data_coding, 0),
-				paramNumber(pduObj.params.esm_class, 0),
-			).message;
+		if (part === undefined) continue;
+
+		message += decodeMessage(
+			part,
+			paramNumber(pduObj.params.data_coding, 0),
+			paramNumber(pduObj.params.esm_class, 0),
+		).message;
 	}
 
 	return message;

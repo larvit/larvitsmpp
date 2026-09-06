@@ -23,7 +23,7 @@ import { Session } from '../src/session.ts';
 import { DlrMerger } from '../src/dlr-merger.ts';
 import { PduRefusedError } from '../src/pdu-refusal.ts';
 import { objToPdu } from '../src/pdu.ts';
-import { checkSessionOptions } from '../src/session-options.ts';
+import { checkSessionOptions, standsInFor } from '../src/session-options.ts';
 import { client } from '../src/client.ts';
 import { closeAfter, closeListenerAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
@@ -1760,11 +1760,20 @@ describe('the status a refused segment is answered with', () => {
 	// SMPP 3.4 lists ESME_RMSGQFUL under submit_sm_resp only; 4.6.2's retryable code is another.
 	test('names one the command the segment arrived on defines', () => {
 		assert.equal(refusedSegmentStatus('submit_sm', 'full'), 'ESME_RMSGQFUL');
-		assert.equal(refusedSegmentStatus('data_sm', 'full'), 'ESME_RX_T_APPN');
 		assert.equal(refusedSegmentStatus('deliver_sm', 'full'), 'ESME_RX_T_APPN');
 		assert.equal(refusedSegmentStatus('submit_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
-		assert.equal(refusedSegmentStatus('data_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
 		assert.equal(refusedSegmentStatus('deliver_sm', 'unplaceable'), 'ESME_RINVESMCLASS');
+	});
+
+	// Which command that is, for the one that travels both ways, is what the end it arrived at says.
+	test('reads a data_sm as the command its direction makes it', () => {
+		assert.equal(standsInFor('data_sm', 'esme'), 'deliver_sm');
+		assert.equal(standsInFor('data_sm', 'smsc'), 'submit_sm');
+		assert.equal(standsInFor('deliver_sm', 'esme'), 'deliver_sm');
+		assert.equal(standsInFor('submit_sm', 'smsc'), 'submit_sm');
+		assert.equal(standsInFor('enquire_link', 'smsc'), 'enquire_link');
+		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'smsc'), 'full'), 'ESME_RMSGQFUL');
+		assert.equal(refusedSegmentStatus(standsInFor('data_sm', 'esme'), 'full'), 'ESME_RX_T_APPN');
 	});
 });
 

@@ -550,7 +550,7 @@ Grouped by what each one constrains.
   and both exits are logged.
 
 - **A reconnect keeps the delivery-receipt merges; everything else the link held is dropped.**
-  `onDeliverSm()` answers each receipt before the group it belongs to is complete, and `teardown()`
+  `onDelivery()` answers each receipt before the group it belongs to is complete, and `teardown()`
   runs on every path — an idle timeout and a failed rebind, not only `close()` — so clearing the
   merges there loses receipts no peer has a reason to send again. They are cleared where the session
   is over instead. Inbound segments stay in `teardown()`: an 8-bit concatenation reference is the
