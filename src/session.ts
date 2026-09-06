@@ -3,7 +3,7 @@ import type { MessageDlr } from './dlr-merger.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
 import type { PduRefusedError } from './pdu-refusal.ts';
-import type { BindType, CloseOptions, ReconnectOptions, SendOptions, SessionEvents, SessionOptions } from './session-options.ts';
+import type { BindType, CloseOptions, LinkEnd, ReconnectOptions, SendOptions, SessionEvents, SessionOptions } from './session-options.ts';
 import type { Result, VoidResult } from './result.ts';
 import type { SendSmsOptions, SendSmsResult } from './send-sms.ts';
 import type { SmppLog } from './log.ts';
@@ -35,7 +35,7 @@ export type {
 	SessionEvents,
 	SessionOptions,
 };
-export type { BindType };
+export type { BindType, LinkEnd };
 export { bindCommands, defaultSystemId };
 
 /** A listener may return a promise: an `async` one that rejects is routed like one that throws. */
@@ -54,6 +54,8 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	/** The role the ESME bound with, whichever end of the link this is. Undefined before any bind. */
 	boundAs: BindType | undefined = undefined;
+	/** Which end of the link this is. `server()` sets it; a hand-wired SMSC must set it too. */
+	linkEnd: LinkEnd = 'esme';
 	loggedIn = false;
 	/** What the peer declared when binding: 0x00 if it declared none, undefined before any bind. */
 	peerInterfaceVersion: number | undefined = undefined;
@@ -154,7 +156,7 @@ export class Session extends EventEmitter<SessionEvents> {
 
 	/** Whether this session's bind direction carries a command. Consulted by the library's senders. */
 	bindAllows(cmdName: string): boolean {
-		return bindCarries(this.boundAs, cmdName, this.options.linkEnd ?? defaults.linkEnd);
+		return bindCarries(this.boundAs, cmdName, this.linkEnd);
 	}
 
 	/** SMPP 3.4 forbids sending optional parameters to a peer that declared an older version. */

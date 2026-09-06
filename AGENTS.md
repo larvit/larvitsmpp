@@ -251,8 +251,8 @@ Grouped by what each one constrains.
 - **`acceptsOptionalParams()` and `bindAllows()` are predicates, not chokepoints.** The library's own
   senders consult them; `session.send({ tlvs })` is passed through as written, because silently
   stripping a caller's explicit TLVs off a deliberately public low-level surface would be worse than
-  sending them. Only `submit_sm` and `deliver_sm` are policed by bind direction — the only two the
-  library sends and dispatches by it.
+  sending them. Only `submit_sm`, `deliver_sm` and `data_sm` are policed by bind direction — the
+  three the library dispatches by it, of which it sends the first two.
 
 - **`session.sock` is a getter over `PduTransport`.** Reading it is unchanged; assigning it no longer
   compiles, which never rewired the handlers and so never worked.
@@ -331,21 +331,24 @@ Grouped by what each one constrains.
   traffic. The reassembler's octet cap already counts TLV values, so a 64 KB payload is bounded like
   any other segment.
 
-- **`data_sm` is read exactly as `deliver_sm` is, and is never sent.** Maintainer's call,
-  2026-09-06, from the Jasmin interoperability phase: SMPP 3.4 4.7.1 makes it a peer of
-  `submit_sm`/`deliver_sm` that always carries its body in `message_payload`, and Jasmin's
-  `[dlr-thrower] dlr_pdu = data_sm` throws real receipts on it, which `ESME_RINVCMDID` dropped with
-  nothing reported to the application at all. `esm_class` classifies it the way it classifies a
-  `deliver_sm`, so a receipt reaches `dlr` and a message `sms`, and a concatenated one is answered
-  segment by segment like any other. 4.7.2 gives `data_sm_resp` a `message_id` where 4.6.2 leaves
-  `deliver_sm_resp`'s unused, so the answer carries one. A command with a fixed direction tells the
-  bind gate which end of the link this is, which is why `bindCarries()` never had to be told;
-  `data_sm` travels either way, so `linkEnd` — `esme`, or `smsc` where `server()` built the
-  session — is what says which direction an inbound one came from. Rejected: grouping it with
-  `deliver_sm` in that gate, which refuses a transmitter-bound ESME's legitimate submission, and
-  with `submit_sm`, which refuses the receiver-bound delivery this was fixed for. Rejected: sending
-  one. `send()` reaches the command raw, and an option choosing which command a message goes out on
-  would be a second spelling of `sendSms()` whose only difference is which peers accept it.
+- **An inbound `data_sm` stands in for whichever of `submit_sm` and `deliver_sm` its direction makes
+  it, and none goes out.** Maintainer's call, 2026-09-06, from the Jasmin interoperability phase:
+  SMPP 3.4 4.7.1 makes it a peer of both that always carries its body in `message_payload`, and
+  Jasmin's `[dlr-thrower] dlr_pdu = data_sm` throws real receipts on it, which `ESME_RINVCMDID`
+  dropped with nothing reported to the application at all. Every command but this one names its own
+  direction, which is why the bind gate and the dispatch never had to be told which end of the link
+  they are on; `linkEnd` is that fact, and it decides both. At the ESME end an inbound one is a
+  delivery, so `esm_class` classifies it as it classifies a `deliver_sm`; at the SMSC end it is a
+  submission and is read as one, because a report about a message this end never sent is goal 2's
+  wrong answer whatever `esm_class` a peer wrote on it. A concatenated one is answered segment by
+  segment either way, and 4.7.2 gives `data_sm_resp` a `message_id` where 4.6.2 leaves
+  `deliver_sm_resp`'s unused, so the answer carries one. `linkEnd` is a field beside `boundAs`
+  rather than a `SessionOptions` entry, so the code that knows which end this is writes it and
+  nothing else can contradict what the session then binds as. Rejected: grouping the command with
+  `deliver_sm` in the gate, which refuses a transmitter-bound ESME's legitimate submission, and with
+  `submit_sm`, which refuses the receiver-bound delivery this was fixed for. Rejected: sending one —
+  `send()` reaches the command raw, and an option choosing which command a message goes out on would
+  be a second spelling of `sendSms()` whose only difference is which peers accept it.
 
 - **A receipt's body is read as octets, and its own `data_coding` never says how.** Maintainer's
   call, 2026-09-05 via the SMPPSim interop run: SMPPSim copies the reported message's `data_coding`

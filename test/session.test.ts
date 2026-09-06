@@ -849,6 +849,42 @@ describe('receiving', () => {
 		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
 	});
 
+	// At the SMSC end an inbound data_sm is a submission, so nothing in one reports on our own sends.
+	test('reads a receipt-shaped data_sm submitted to a server as the message it is', async t => {
+		const smpp = await startServer(t);
+		const body = 'id:0199e0f2-2d15-7b83-a4c1-6e90b7d2f345 stat:DELIVRD err:000 text:';
+		const messages: Sms[] = [];
+		const reports: Dlr[] = [];
+
+		smpp.on('session', peer => {
+			peer.on('dlr', dlr => { reports.push(dlr); });
+			peer.on('sms', sms => {
+				messages.push(sms);
+				void sms.sendResp();
+			});
+		});
+
+		const { session } = await connect(t, smpp, { bindType: 'transmitter' });
+
+		assert.ok(session);
+
+		const submitted = await session.send({
+			cmdName: 'data_sm',
+			params: {
+				destination_addr: '46709771337',
+				esm_class: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+				source_addr: '46701113311',
+			},
+			tlvs: { message_payload: { tagValue: Buffer.from(body, 'latin1') } },
+		});
+
+		assert.ok(submitted.pduObj);
+		assert.equal(submitted.pduObj.cmdStatus, 'ESME_ROK');
+		assert.notEqual(paramText(submitted.pduObj.params.message_id), '');
+		assert.equal(messages[0]?.message, body);
+		assert.deepEqual(reports, [], 'an ESME submitting is never the network reporting');
+	});
+
 	test('reassembles a concatenated message whose segments arrived in message_payload', async t => {
 		const { peer, session } = await inbound(t);
 		const incoming = once<Sms>(resolve => { session.on('sms', resolve); });

@@ -56,7 +56,7 @@ export function bindCarries(
 	cmdName: string,
 	linkEnd: LinkEnd,
 ): boolean {
-	if (cmdName === 'data_sm') return bindType !== (linkEnd === 'esme' ? 'transmitter' : 'receiver');
+	if (cmdName === 'data_sm') return bindType !== (linkEnd === 'smsc' ? 'receiver' : 'transmitter');
 	if (bindType === 'receiver') return cmdName !== 'submit_sm';
 	if (bindType === 'transmitter') return cmdName !== 'deliver_sm';
 
@@ -89,8 +89,6 @@ export type ReconnectOptions = {
 export type SessionOptions = {
 	enquireLinkInterval?: number | undefined;
 	idleTimeout?: number | undefined;
-	/** Which end of the link this is, which only a `data_sm`'s bind direction depends on. */
-	linkEnd?: LinkEnd | undefined;
 	log?: SmppLog | undefined;
 	maxOctets?: number | undefined;
 	maxOutstanding?: number | undefined;
@@ -108,8 +106,6 @@ export type SessionOptions = {
 	systemId?: string | undefined;
 };
 
-export const defaultLinkEnd: LinkEnd = 'esme';
-
 export const defaultSystemId = '';
 
 /** SMPP 3.4: a peer that declares no version at all is one from before optional parameters. */
@@ -120,7 +116,6 @@ export const defaults = {
 	dlrMergeTimeout: 86_400_000,
 	/** The peer gave up on an unanswered message long before this; the bound is against growth. */
 	heldMessageTimeout: 300_000,
-	linkEnd: defaultLinkEnd,
 	maxDlrMerges: 1000,
 	maxHeldMessages: 1000,
 	maxOutstanding: 10,

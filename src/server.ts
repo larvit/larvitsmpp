@@ -229,7 +229,6 @@ function onConnection(sock: Socket, options: ServerOptions, server: SmppServer):
 	const log = guardedLog(options.log);
 	const session = new Session({
 		idleTimeout: options.idleTimeout ?? defaults.idleTimeout,
-		linkEnd: 'smsc',
 		log,
 		maxOutstanding: options.maxOutstanding,
 		maxOctets: options.maxOctets,
@@ -242,6 +241,7 @@ function onConnection(sock: Socket, options: ServerOptions, server: SmppServer):
 		systemId: options.systemId ?? defaults.systemId,
 	});
 
+	session.linkEnd = 'smsc';
 	server.sessions.add(session);
 	session.on('close', () => server.sessions.delete(session));
 

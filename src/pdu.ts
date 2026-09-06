@@ -45,7 +45,10 @@ export type PduObject = {
 	cmdStatusId: number;
 	params: Record<string, ParamValue>;
 	seqNr: number;
-	/** short_message as it arrived, whatever data_coding turned `params.short_message` into. */
+	/**
+	 * short_message as it arrived, whatever data_coding turned `params.short_message` into. A body
+	 * the peer put in `message_payload` is not here; `messageOctets()` is what reads either.
+	 */
 	shortMessageOctets: Buffer | undefined;
 	tlvs: Record<string, Tlv>;
 };

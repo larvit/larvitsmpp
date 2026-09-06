@@ -152,8 +152,10 @@ Where the body sits, and which command carried it, changes none of that. An SMSC
 `sm_length` 0 and puts the body in the `message_payload` TLV — SMPP's way of carrying up to 64 KB,
 and the only place a `data_sm` has for one — reads exactly like one that fills `short_message`,
 concatenated messages and receipts included. A peer that fills both is read from `short_message`.
-`data_sm` itself is a peer of `deliver_sm`, so a message on one arrives as `sms` and a receipt as
-`dlr`, and it is answered `data_sm_resp`.
+`data_sm` itself is a peer of both `deliver_sm` and `submit_sm`, and its direction says which: a
+client reads one as a delivery, so a message on it arrives as `sms` and a receipt as `dlr`, while a
+`server()` session reads one as the submission it is and always hands it to you as `sms`. Either
+way it is answered `data_sm_resp`.
 
 Matching a receipt to a send means comparing `dlr.smsId` against the `smsIds` that `sendSms()`
 returned. Some SMSCs write the two in different notations — a hex `message_id` on the
@@ -456,7 +458,9 @@ if (isCommand(pduObj, 'submit_sm')) {
 ```
 
 `params.short_message` is decoded with the PDU's own `data_coding`; `shortMessageOctets` is that
-same field exactly as it arrived.
+same field exactly as it arrived. Neither holds the body of a PDU that carried it in the
+`message_payload` TLV instead, which a `data_sm` always does — `messageOctets(pduObj)` is the one
+answer to which of the two the peer used.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.

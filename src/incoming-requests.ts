@@ -110,7 +110,10 @@ export class IncomingRequests {
 
 	private async route(pduObj: PduObject): Promise<void> {
 		switch (pduObj.cmdName) {
+			// Its direction says which of the two it stands in for, and it is read as that one.
 			case 'data_sm':
+				await (this.session.linkEnd === 'smsc' ? this.onMessage(pduObj) : this.onDelivery(pduObj));
+				break;
 			case 'deliver_sm':
 				await this.onDelivery(pduObj);
 				break;

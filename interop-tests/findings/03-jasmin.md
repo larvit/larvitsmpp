@@ -228,6 +228,11 @@ arrives, with `<base>-<n>` off an id the group is opened with. All four multi-se
 - Whether the deadlock above is specific to a message requesting a receipt (`registered_delivery`
   set) or would also occur for a plain multi-segment send with no `dlr` - not isolated separately,
   since every `C3+C7` case here requests one.
+- Whether a real peer accepts a `data_sm_resp` carrying a `message_id`. SMPP 3.4 4.7.2 defines the
+  field, unlike `deliver_sm_resp`'s, and this library fills it when a `data_sm` carried a message -
+  but Jasmin only ever sends one as a receipt, which is answered with the field empty, so the filled
+  case has met no peer. Jasmin FINing over a `deliver_sm_resp` that carried one is the nearest
+  precedent there is.
 - Whether Jasmin, given an *upstream* connector that itself defaults to SAR (rather than our
   library's own UDH), would relay an MT message using SAR instead of preserving our UDH bytes - the
   120s-timeout deadlock always intervened before a second segment could be observed on the wire in
