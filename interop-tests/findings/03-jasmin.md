@@ -99,6 +99,13 @@ send it over the connector's session, and inspect the `sms` event at a client bo
 **Severity.** Medium: silent data loss, not a wire error - the message is fully present on the wire
 and Jasmin forwards it faithfully; only this library's read of it is incomplete.
 
+**Fixed** in [#84](https://github.com/larvit/larvitsmpp/pull/84): the body is read from
+`message_payload` where `short_message` carries none. The relay is confirmed on the wire - the
+capture's one `sm_length` 0 `deliver_sm` is Jasmin's own, out of `smpps` to our client, carrying the
+`0x0424` TLV intact. The reproducer's own fixture was wrong as well as the library: it built the TLV
+as Latin-1 while the PDU declared `data_coding` 0, so `_` (GSM 03.38 0x11, Latin-1 0x5F) came back
+as `§` even once the body was read. It now encodes the payload the way the PDU says it is written.
+
 ### `sar_*`/UDH segmentation from an upstream SMSC reassembles fine (target 3, MO direction) - not reproduced as a defect here
 
 C8's SAR and UDH MO pushes both reassembled into one whole `sms` at our real client. This does not
@@ -120,6 +127,12 @@ Our client's `incomingPduObj` sees it arrive; no `dlr` event ever fires. The rec
 
 **Severity.** Medium: a real, documented Jasmin configuration (`dlr_pdu = data_sm`) that a receipt
 depends on silently drops delivery reports, with no error surfaced to the application either.
+
+**Fixed** in [#84](https://github.com/larvit/larvitsmpp/pull/84): `data_sm` is classified and
+answered exactly as `deliver_sm` is, and the receipt reaches `dlr` naming the id the `submit_sm_resp`
+carried, `DELIVERED`. The wire histogram still shows no `data_sm`: `capture` runs
+`network_mode: service:jasmin`, so it only ever sees the main instance's namespace, never
+`jasmin-datasm`'s.
 
 ### A multi-part MT send deadlocks against Jasmin's serialized per-connector relay - a library/peer interaction, not a wire defect
 
