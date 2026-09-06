@@ -194,6 +194,11 @@ behind a serializing relay needs its own segment-level ack), but not fixed here 
   printf-style placeholders, nothing is written into the URL by the caller. `dlr-level=1` fires once,
   immediately, with `message_status=ESME_ROK` (an SMSC-ack, not a terminal state); `dlr-level=3`
   additionally fires once more, later, with the real terminal status (`DELIVRD` here).
+- **Jasmin FINs the connection on a `deliver_sm_resp` carrying a `message_id`.** SMPP 3.4 4.6.2
+  makes that field unused and NULL, and Jasmin's own decoder sizes it at one octet; a 38-octet UUID
+  in it cost the link immediately after the response, taking the rest of the MO group with it. Found
+  by the fix for the multipart deadlock below, which is what first had this library answer an inbound
+  `deliver_sm` in this suite at all; the field now goes out empty.
 - **jcli is a plain-text protocol dressed as Telnet** - it sends real `IAC`/option-negotiation bytes
   and a couple of ANSI escapes in its banner, but never waits for or requires a reply to them; a raw
   socket client that ignores negotiation entirely and just reads/writes lines works throughout.
