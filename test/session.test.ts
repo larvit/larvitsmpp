@@ -2069,7 +2069,6 @@ describe('the server\'s onRequest hook', () => {
 		assert.equal(messages, 0);
 	});
 
-	// Two responses on one sequence number is the wire violation an unconditional fall-through made.
 	test('writes nothing more for a segment the hook answered before it failed', async t => {
 		const smpp = await startServer(t, {
 			onRequest: async (bound, pduObj) => {

@@ -528,11 +528,15 @@ Grouped by what each one constrains.
   nothing a peer sends before one can be intercepted however the hook is written. One
   `OnRequest` type on both option bags, because a second contract under one name is two spellings of
   one goal; widened to accept a plain boolean, as `authenticate` already is, so an observing hook need
-  not be `async`. A hook that throws, rejects or never settles is reported on `sessionError` and
-  nothing of ours is written for that request, the same on both surfaces: the library cannot tell one
-  that failed before answering from one that failed after, so goal 2 reports the outcome as
-  undetermined rather than guessing, and the peer's own `responseTimeout` is what settles it — the
-  answer `authenticate` failing already takes. `sessionError` rather than `serverError` because the
+  not be `async`. Nothing of ours is written for a request whose hook failed, the same on both
+  surfaces: the library cannot tell one that failed before answering from one that failed after, so
+  goal 2 reports the outcome as undetermined rather than guessing, and the peer's own
+  `responseTimeout` is what settles it — the answer `authenticate` failing already takes. A hook that
+  throws or rejects reaches `sessionError` on the way; one that never settles reaches nothing at all,
+  and is visible only as the request that was never answered. That takes the keepalive with it, since
+  a hook broken across the board leaves `enquire_link` unanswered and the peer drops the link — the
+  back-pressure wanted, because an application that cannot serve a link should not hold one.
+  `sessionError` rather than `serverError` because the
   failure belongs to one session's request, and that channel already carries every failure of one.
   The hook is consulted before the bind-direction gate, so it sees a `submit_sm` a receiver-bound
   peer may not send; first refusal means first, and one it declines still gets `ESME_RINVBNDSTS`.
@@ -545,7 +549,7 @@ Grouped by what each one constrains.
   contract under a second name for it, and could not express what the session-level hook already
   does — answer a bind, a vendor command, a `data_sm` — leaving that error naming something only
   half the surface can do. Rejected: falling the request through to the built-in handling on a
-  failure, read at first as the answer the peer would have had with no hook — true only of a hook
+  failure, which reads as the answer the peer would have had with no hook — true only of a hook
   that failed before answering, where one that failed after put a second response on the peer's own
   sequence number, goal 1's wire violation. Rejected with it: recording what the hook wrote so the
   fall-through could be gated on it, which buys a fail-open path with state and an internal contract
