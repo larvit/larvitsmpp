@@ -56,6 +56,11 @@ Snags fixed while building the harness, roughly in the order found:
 Three runs of `./interop-tests/run.py jasmin`, all after the fixes above: all exit non-zero (the
 4 failing tests below), all `malformed: 0`, `expert errors: 0`. Wire commands, from the last run:
 
+Re-run 2026-09-06, after every defect below was fixed and after `run.py` learned to refuse a capture
+holding no frames: exit 0, 19 of 19 tests pass, 175 frames, `malformed: 0`, `expert errors: 0`. The
+four multi-segment failures are gone with the deadlock, and the counts below are the state that
+found the defects, kept because that is what the reproducers refer to.
+
 ```
 bind_transceiver: 14, bind_transmitter: 1, bind_receiver: 6 (+ their _resp)
 submit_sm: 45, submit_sm_resp: 43
