@@ -1924,6 +1924,173 @@ describe('application hooks that throw or reject', () => {
 	});
 });
 
+describe('the server\'s onRequest hook', () => {
+	const answeredId = '01a07501-b609-7d27-ab98-d3b29bd78e7e';
+
+	function submitTo(session: Session, to: string, message = 'screened by the hook') {
+		return session.send({
+			cmdName: 'submit_sm',
+			params: { destination_addr: to, short_message: message, source_addr: '46701113311' },
+		});
+	}
+
+	test('refuses an inbound submit_sm with the status the hook chose', async t => {
+		const smpp = await startServer(t, {
+			onRequest: async (bound, pduObj) => {
+				if (!isCommand(pduObj, 'submit_sm')) return false;
+
+				await bound.sendReturn(pduObj, 'ESME_RINVDSTADR');
+
+				return true;
+			},
+		});
+		let messages = 0;
+
+		smpp.on('session', bound => bound.on('sms', () => { messages++; }));
+
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const answered = await submitTo(session, '46700000000');
+
+		assert.equal(answered.err, undefined);
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdStatus, 'ESME_RINVDSTADR');
+		assert.equal(messages, 0, 'a request the hook answered never reaches the sms event');
+	});
+
+	test('answers a bind itself, so a hook that claims every request cannot intercept one', async t => {
+		const seen: string[] = [];
+		const smpp = await startServer(t, {
+			authenticate: ({ password, systemId }) => systemId === 'user' && password === 'pass',
+			onRequest: (_bound, pduObj) => { seen.push(pduObj.cmdName); return true; },
+		});
+		const peer = rawPeer(t, smpp.port);
+
+		peer.write(bindOf(0x34));
+
+		const accepted = await peer.next();
+		const wrong = rawPeer(t, smpp.port);
+
+		wrong.write({
+			cmdName: 'bind_transceiver',
+			params: { interface_version: 0x34, password: 'wrong', system_id: 'user' },
+			seqNr: 1,
+		});
+
+		const refused = await wrong.next();
+
+		assert.equal(accepted.cmdName, 'bind_transceiver_resp');
+		assert.equal(accepted.cmdStatus, 'ESME_ROK');
+		assert.equal(refused.cmdStatus, 'ESME_RBINDFAIL');
+		assert.deepEqual(seen, [], 'the hook is never consulted for a bind');
+	});
+
+	test('passes a request the hook declines through to the sms event', async t => {
+		const seen: string[] = [];
+		const smpp = await startServer(t, {
+			onRequest: (_bound, pduObj) => { seen.push(pduObj.cmdName); return false; },
+		});
+		const incoming = once<Sms>(resolve => {
+			smpp.on('session', bound => bound.on('sms', async sms => {
+				resolve(sms);
+				await sms.sendResp({ smsId: answeredId });
+			}));
+		});
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const answered = await submitTo(session, '46709771337', 'declined by the hook');
+		const sms = await incoming;
+
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
+		assert.equal(paramText(answered.pduObj.params.message_id), answeredId);
+		assert.equal(sms.message, 'declined by the hook');
+		assert.deepEqual(seen, ['submit_sm']);
+	});
+
+	test('reports a hook that throws and leaves the request to the built-in handling', async t => {
+		const smpp = await startServer(t, {
+			onRequest: () => { throw new Error('the onRequest hook exploded'); },
+		});
+		const failed = once<Error>(resolve => {
+			smpp.on('session', bound => { bound.on('sessionError', resolve); });
+		});
+
+		smpp.on('session', bound => bound.on('sms', async sms => {
+			await sms.sendResp({ smsId: answeredId });
+		}));
+
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const answered = await submitTo(session, '46709771337');
+		const reported = await failed;
+
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
+		assert.equal(paramText(answered.pduObj.params.message_id), answeredId);
+		assert.equal(reported.message, 'the onRequest hook exploded');
+	});
+
+	test('reports a hook that rejects and leaves the request to the built-in handling', async t => {
+		const smpp = await startServer(t, {
+			onRequest: () => Promise.reject(new Error('the onRequest hook rejected')),
+		});
+		const failed = once<Error>(resolve => {
+			smpp.on('session', bound => { bound.on('sessionError', resolve); });
+		});
+
+		smpp.on('session', bound => bound.on('sms', async sms => {
+			await sms.sendResp({ smsId: answeredId });
+		}));
+
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const answered = await submitTo(session, '46709771337');
+		const reported = await failed;
+
+		assert.ok(answered.pduObj);
+		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
+		assert.equal(reported.message, 'the onRequest hook rejected');
+	});
+
+	// Nothing is held for a message the hook took, so the drain waits on none of the application's.
+	test('closes without waiting out the shutdown for a message the hook answered itself', async t => {
+		const smpp = await startServer(t, {
+			onRequest: async (bound, pduObj) => {
+				if (!isCommand(pduObj, 'submit_sm')) return false;
+
+				await bound.sendReturn(pduObj, 'ESME_ROK', { message_id: answeredId });
+
+				return true;
+			},
+			shutdownTimeout: 2000,
+		});
+		const bound = once<Session>(resolve => { smpp.on('session', resolve); });
+		const { session } = await connect(t, smpp);
+
+		assert.ok(session);
+
+		const answered = await submitTo(session, '46709771337');
+		const serverSide = await bound;
+		const started = Date.now();
+		const closed = await serverSide.close();
+		const waited = Date.now() - started;
+
+		assert.ok(answered.pduObj);
+		assert.equal(paramText(answered.pduObj.params.message_id), answeredId);
+		assert.deepEqual(closed, {});
+		assert.ok(waited < 1000, `close() waited ${String(waited)} ms on a message nothing was holding`);
+	});
+});
+
 describe('link timers', () => {
 	test('closes a client link the peer has stopped answering', async t => {
 		const peer = await smscPeer(t);

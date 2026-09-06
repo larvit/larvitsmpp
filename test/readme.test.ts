@@ -1,18 +1,15 @@
 import assert from 'node:assert/strict';
-import net from 'node:net';
 import test, { describe } from 'node:test';
 import type { Dlr } from '../src/dlr.ts';
-import type { PduObject } from '../src/pdu.ts';
+import type { Session } from '../src/session.ts';
 import type { Sms } from '../src/sms.ts';
 import type { SmppLog } from '../src/log.ts';
 import type { SmppServer } from '../src/server.ts';
 import type { TestContext } from 'node:test';
-import { PduFramer } from '../src/pdu-framer.ts';
 import { PduRefusedError } from '../src/pdu-refusal.ts';
-import { Session } from '../src/session.ts';
 import { client } from '../src/client.ts';
-import { closeAfter, closeListenerAfter } from './teardown.ts';
-import { isCommand, objToPdu, pduToObj } from '../src/pdu.ts';
+import { closeAfter } from './teardown.ts';
+import { isCommand, objToPdu } from '../src/pdu.ts';
 import { server } from '../src/server.ts';
 
 function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
@@ -264,68 +261,41 @@ describe('README: Server', () => {
 		assert.equal(answeredOnArrival, false);
 	});
 
-	test('refusing a submission at onRequest, before this library would answer it', async t => {
+	test('refusing a segment at onRequest, before this library would answer it', async t => {
 		const knownRecipients = new Set(['46709771337']);
-		const accepted: net.Socket[] = [];
-		const listener = net.createServer(sock => {
-			accepted.push(sock);
-
-			const session = new Session({
-				onRequest: async (bound, pduObj) => {
-					if (!isCommand(pduObj, 'submit_sm') || knownRecipients.has(pduObj.params.destination_addr)) {
-						return false;
-					}
-
-					await bound.sendReturn(pduObj, 'ESME_RINVDSTADR');
-
-					return true;
-				},
-				sock,
-			});
-
-			session.linkEnd = 'smsc';
-			closeAfter(t, session);
-		});
-
-		closeListenerAfter(t, listener, accepted);
-
-		await new Promise<void>(resolve => { listener.listen(0, resolve); });
-
-		const address = listener.address();
-		const port = typeof address === 'object' && address !== null ? address.port : 0;
-		const peer = net.connect({ port });
-
-		t.after(() => { peer.destroy(); });
-
-		const framer = new PduFramer();
-		const refused = once<PduObject>(resolve => {
-			peer.on('data', chunk => {
-				framer.push(chunk);
-
-				for (const pdu of framer.next().pdus ?? []) {
-					const { pduObj } = pduToObj(pdu);
-
-					if (pduObj) resolve(pduObj);
+		const { err, server: smpp } = await server({
+			onRequest: async (session, pduObj) => {
+				if (!isCommand(pduObj, 'submit_sm') || knownRecipients.has(pduObj.params.destination_addr)) {
+					return false;
 				}
-			});
-		});
 
-		await once<true>(resolve => { peer.once('connect', () => { resolve(true); }); });
+				await session.sendReturn(pduObj, 'ESME_RINVDSTADR');
 
-		const { buffer } = objToPdu({
-			cmdName: 'submit_sm',
-			params: {
-				destination_addr: '46700000000',
-				short_message: 'Hello world',
-				source_addr: '46701113311',
+				return true;
 			},
-			seqNr: 1,
+		});
+		if (err) throw err;
+
+		closeAfter(t, smpp);
+
+		let messages = 0;
+
+		smpp.on('session', bound => bound.on('sms', () => { messages++; }));
+
+		const connected = await client();
+		if (connected.err) throw connected.err;
+
+		closeAfter(t, connected.session);
+
+		const sent = await connected.session.sendSms({
+			from: '46701113311',
+			message: 'A submission long enough to need more than one segment. '.repeat(4),
+			to: '46700000000',
 		});
 
-		assert.ok(buffer);
-		peer.write(buffer);
-
-		assert.equal((await refused).cmdStatus, 'ESME_RINVDSTADR');
+		assert.equal(sent.err?.message, 'submit_sm refused by the peer: ESME_RINVDSTADR');
+		assert.deepEqual(sent.smsIds, []);
+		assert.equal(messages, 0, 'a segment the hook refused never becomes a message');
 	});
 });
 
