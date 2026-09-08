@@ -2447,9 +2447,9 @@ describe('merged delivery report bounds', () => {
 		};
 	}
 
-	function merger(options: { max?: number; now?: () => number } = {}): DlrMerger {
+	function merger(options: { log?: SmppLog; max?: number; now?: () => number } = {}): DlrMerger {
 		return new DlrMerger({
-			log: silentLog,
+			log: options.log ?? silentLog,
 			max: options.max ?? 10,
 			now: options.now ?? (() => 0),
 			timeout: 60,
@@ -2469,6 +2469,26 @@ describe('merged delivery report bounds', () => {
 		assert.equal(merged.smsId, 'whole');
 		assert.equal(merged.segments.length, 2);
 		assert.equal(dlrMerger.size, 0);
+	});
+
+	// An id answered in one notation and reported in another merges nothing and reports nothing.
+	test('logs the receipt of a base no send is waiting on, and stays quiet for a single-part id', () => {
+		const debugged: Record<string, boolean | number | string>[] = [];
+		const dlrMerger = merger({
+			log: { ...silentLog, debug: (msg, metadata) => { debugged.push({ msg, ...metadata }); } },
+		});
+
+		dlrMerger.expect(['1a2b-1', '1a2b-2']);
+
+		assert.equal(dlrMerger.collect(receipt('6699-1')), undefined);
+		assert.deepEqual(debugged, [{
+			base: '6699',
+			msg: 'dlrMerger - receipt names no message being merged',
+			smsId: '6699-1',
+		}]);
+
+		assert.equal(dlrMerger.collect(receipt('019878e0e3d97b2c9d8a4f6b1c0e5a73')), undefined);
+		assert.equal(debugged.length, 1, 'a single-part receipt was never expected to merge');
 	});
 
 	// Telesign answers only the first segment of a concatenated submit with a message id.

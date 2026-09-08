@@ -294,6 +294,13 @@ A hook that throws or rejects reaches `sessionError`, and nothing else is writte
 the library cannot tell a hook that failed before answering from one that failed after, and a second
 response on the peer's sequence number would be worse than none. The peer's own response timeout
 settles it, so a hook that must reach a decision either way makes that decision itself.
+`authenticate` fails the same way, leaving the bind itself unanswered.
+
+Every request a bound peer sends reaches the hook, `enquire_link` and `unbind` among them, where
+failing costs more than the one request a response timeout settles: an unanswered `enquire_link` has
+the peer drop the link at its own idle timer, and an unanswered `unbind` skips the close this end
+would have run on it. Guard on the command name, as the example above does, and a hook that fails
+takes nothing but its own request with it.
 
 A `Session` you construct yourself (see [Bind direction](#bind-direction)) takes the same hook as a
 session option, and handles a failing one the same way; it is also where a peer's bind gets accepted,
@@ -368,6 +375,10 @@ rest:
 - **Everything else**: the session or the socket failing, and a hook or listener that threw or, if it
   was `async`, rejected.
 
+Only the first is separable by type. The last two are both a plain `Error`, told apart from each
+other by their message text alone, so the example below alerts on a lost concatenated message as
+well as on a session that failed.
+
 ```javascript
 import { PduRefusedError } from '@larvit/smpp';
 
@@ -437,7 +448,7 @@ TypeScript users can import `SmppLog` to have the compiler check one.
 | `close` | The session is over, because nothing will bring the link back. Fires once, whether you closed it or the link failed for good. |
 | `disconnected` | The link dropped and the reconnect loop will retry it. Do not open a replacement client here — the session you hold comes back on its own, and `reconnected` says when. Fires again for each attempt that reconnects and then fails, so it is not one-to-one with `reconnected`. |
 | `reconnected` | The client re-bound after a drop. |
-| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires for each PDU the codec refused as well, carrying a `PduRefusedError` while the link carries on: a refused request is answered with the status SMPP names, and a refused response is answered with nothing and settles the request it named as `unanswered`. [Errors](#errors) tells its three kinds apart. |
+| `sessionError` | Something failed on a live session, including a hook or listener that threw or, if it was `async`, rejected. Fires for each PDU the codec refused as well, carrying a `PduRefusedError` while the link carries on: a refused request is answered with the status SMPP names, and a refused response is answered with nothing and settles the request it named as `unanswered`. [Errors](#errors) names its three kinds, of which `PduRefusedError` separates one. |
 | `data` | Raw bytes arrived on the socket. |
 | `incomingPdu` | A complete PDU arrived, as a buffer. |
 | `incomingPduObj` | The same PDU, parsed into an object. |
@@ -451,7 +462,9 @@ every `sms` still in the application's hands, so a peer whose `submit_sm` is bei
 answered rather than left to re-send it. That wait ends when `sendResp()` puts the response on the
 wire — or, for a message whose segments were answered as they arrived, when it is called at all —
 or when every listener that took the message has failed; answering its PDUs through
-`sendReturn()` instead leaves the wait running until it gives up. `sendDlr()` is the one send the
+`sendReturn()` instead leaves the wait running until it gives up. A session holds at most 1000
+unanswered messages, five minutes each; what falls out of either bound is dropped with a warning on
+the log and waited for no longer. Neither bound is an option. `sendDlr()` is the one send the
 refusal lets past, and it catches the wait when issued straight after `sendResp()`; await anything in
 between and it races the shutdown like any other send. `close({ signal })` takes an `AbortSignal`
 that cuts the wait short; `unbind()` takes none, and waits a further
@@ -529,9 +542,11 @@ if (isCommand(pduObj, 'submit_sm')) {
 `params.short_message` is decoded with the PDU's own `data_coding`; `shortMessageOctets` is that
 same field exactly as it arrived. Neither holds the body of a PDU that carried it in the
 `message_payload` TLV instead, which a `data_sm` always does — `messageOctets(pduObj)` is the one
-answer to which of the two the peer used. `concatOf(pduObj)` is the same for concatenation: the
-`part`, `total` and `reference` a PDU declares, and the `spelling` — `'udh'` or `'sar'` — that
-carried them, or `undefined` where the PDU is a whole message.
+answer to which of the two the peer used, and gives back the octets undecoded: `decodeMessage()`
+turns them into text with the PDU's own `data_coding`, and hands back the UDH where the PDU carries
+one. `concatOf(pduObj)` is the same for concatenation: the `part`, `total` and `reference` a PDU
+declares, and the `spelling` — `'udh'` or `'sar'` — that carried them, or `undefined` where the PDU
+is a whole message.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.
@@ -609,6 +624,11 @@ have worked around any of these, remove the workaround:
   and `sar_segment_seqnum` TLVs rather than by a user data header was never reassembled, so each
   segment arrived as its own message. Both spellings reassemble now.
 - Short or malformed PDUs threw out of the codec instead of being reported as a parse failure.
+- A PDU whose optional parameters do not end exactly on `command_length` is refused with
+  `ESME_RINVTLVSTREAM` and dropped, where 0.4.0 kept the TLVs it had read and ignored the octets
+  left over — which loses the `receipted_message_id` that makes a receipt a receipt. The refusal
+  reaches `sessionError` as a `PduRefusedError` with `reason` `tlvs`, which is what to match on
+  where a peer's traffic goes missing.
 - Binds now declare `interface_version` 0x34. 0.4.0 declared 0x00, which tells the SMSC the ESME
   speaks SMPP 3.3 or earlier — and a spec-following SMSC then withholds every optional parameter,
   including the TLVs delivery receipts are carried in.
