@@ -1,20 +1,16 @@
 import assert from 'node:assert/strict';
-import net from 'node:net';
 import test, { describe } from 'node:test';
 import type { PduObjectInput } from '../src/pdu.ts';
 import type { SendSmsDeps } from '../src/send-sms.ts';
 import type { Session } from '../src/session.ts';
 import type { SubmitMessagingMode } from '../src/defs/constants.ts';
 import type { TestContext } from 'node:test';
-import { PduFramer } from '../src/pdu-framer.ts';
-import { client } from '../src/client.ts';
-import { closeAfter, closeListenerAfter } from './teardown.ts';
+import { bindToSmsc, dummySmsc } from './dummy-smsc.ts';
 import { consts, submitMessagingModes } from '../src/defs/constants.ts';
 import { paramNumber } from '../src/defs/types.ts';
-import { pduReturn, pduToObj } from '../src/pdu.ts';
+import { pduToObj } from '../src/pdu.ts';
 import { silentLog } from '../src/log.ts';
 import { submitSms } from '../src/send-sms.ts';
-import { uuidv7 } from '../src/uuid.ts';
 
 const from = '46701113311';
 const to = '46709771337';
@@ -38,45 +34,11 @@ type BoundPeer = {
 	session: Session;
 };
 
-/** An SMSC that answers a bind and every submit, keeping the octets each submit arrived as. */
 async function boundToPeer(t: TestContext): Promise<BoundPeer> {
-	const octets: Buffer[] = [];
-	const sockets: net.Socket[] = [];
-	const listener = net.createServer(sock => {
-		const framer = new PduFramer();
+	const smsc = await dummySmsc(t);
+	const session = await bindToSmsc(t, smsc.port, { reconnect: false });
 
-		sockets.push(sock);
-		sock.on('data', chunk => {
-			framer.push(chunk);
-
-			for (const pdu of framer.next().pdus ?? []) {
-				const { pduObj } = pduToObj(pdu);
-
-				if (!pduObj) continue;
-
-				if (pduObj.cmdName === 'submit_sm') octets.push(pdu);
-
-				const answered = pduReturn(pduObj, 'ESME_ROK', pduObj.cmdName === 'submit_sm'
-					? { message_id: uuidv7() }
-					: { system_id: 'byte-peer' });
-
-				if (answered.buffer) sock.write(answered.buffer);
-			}
-		});
-	});
-
-	closeListenerAfter(t, listener, sockets);
-	await new Promise<void>(resolve => { listener.listen(0, resolve); });
-
-	const address = listener.address();
-	const port = typeof address === 'object' && address !== null ? address.port : 0;
-	const { err, session } = await client({ port, reconnect: false });
-
-	assert.equal(err, undefined);
-	assert.ok(session);
-	closeAfter(t, session);
-
-	return { octets, session };
+	return { octets: smsc.octets, session };
 }
 
 function hexOf(octets: Buffer[]): string[] {

@@ -1639,6 +1639,28 @@ describe('reassembly bounds', () => {
 		assert.equal(third.smsId, collected.smsId);
 	});
 
+	// The header is stripped by its own declared length, so the wider element assembles identically.
+	test('assembles a message numbered by a 16-bit UDH reference', () => {
+		const reassembler = new Reassembler({
+			log: silentLog,
+			max: 10,
+			now: () => 0,
+			onLost: () => undefined,
+			timeout: 60_000,
+		});
+
+		const first = collectPdu(reassembler, segment(0x2af1, 1, 2, 16));
+
+		assert.ok(first.kept);
+		assert.equal(first.whole, undefined);
+
+		const collected = collectPdu(reassembler, segment(0x2af1, 2, 2, 16));
+
+		assert.ok(collected.kept);
+		assert.ok(collected.whole);
+		assert.equal(decodeSegments(collected.whole), 'fragmentfragment');
+	});
+
 	// A group the store cannot hold at all is refused, not accepted and then thrown away.
 	test('refuses a lone segment whose own arrival overruns the octet cap', () => {
 		const lost: LostGroup[] = [];

@@ -2471,6 +2471,16 @@ describe('merged delivery report bounds', () => {
 		assert.equal(dlrMerger.size, 0);
 	});
 
+	// Telesign answers only the first segment of a concatenated submit with a message id.
+	test('arms nothing for a send whose ids do not number one message', () => {
+		const dlrMerger = merger();
+
+		dlrMerger.expect(['5cb0ea53b5d61093529174ca44e23871', '', '']);
+		dlrMerger.expect(['bf53ad8b', '40ccdce2', 'b64bf122']);
+
+		assert.equal(dlrMerger.size, 0);
+	});
+
 	// A receipt for whole-3 would otherwise fill the slot whole-2 was registered for, truncating the report.
 	test('ignores a receipt for a part the send never registered', () => {
 		const dlrMerger = merger();

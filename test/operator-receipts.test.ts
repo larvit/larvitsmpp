@@ -1,20 +1,12 @@
 import assert from 'node:assert/strict';
-import net from 'node:net';
 import test, { describe } from 'node:test';
 import type { Dlr, Receipt } from '../src/dlr.ts';
 import type { MessageDlr } from '../src/session.ts';
 import type { PduObject, TlvInput } from '../src/pdu.ts';
-import type { Session } from '../src/session.ts';
-import type { TestContext } from 'node:test';
-import { DlrMerger } from '../src/dlr-merger.ts';
-import { PduFramer } from '../src/pdu-framer.ts';
-import { bindCommands } from '../src/session.ts';
-import { client } from '../src/client.ts';
-import { closeAfter, closeListenerAfter } from './teardown.ts';
+import { bindToSmsc, dummySmsc } from './dummy-smsc.ts';
 import { consts } from '../src/defs/constants.ts';
-import { dlrFromPdu, parseReceipt } from '../src/dlr.ts';
-import { objToPdu, pduReturn, pduToObj } from '../src/pdu.ts';
-import { silentLog } from '../src/log.ts';
+import { dlrFromPdu, parseReceipt, receiptCodes, transientStates } from '../src/dlr.ts';
+import { objToPdu, pduToObj } from '../src/pdu.ts';
 
 /**
  * Receipt bodies as commercial operators document them, from `interop-tests/research/operator-quirks.md`
@@ -58,7 +50,6 @@ type ReceiptFixture = {
 		statusId: number;
 		statusMsg: Dlr['statusMsg'];
 	};
-	esmClass?: number;
 	name: string;
 	receipt: Receipt;
 	source: string;
@@ -209,35 +200,12 @@ const fixtures: readonly ReceiptFixture[] = [
 			receipted_message_id: { tagValue: 'e9ca671b2497d778d771938333dc0c52' },
 		},
 	},
-	{
-		body: 'sub:001 dlvrd:001 submit date:2609051430 done date:2609051431 stat:DELIVRD err:000 text:',
-		dlr: {
-			doneDate: '2026-09-05T14:31:00.000Z',
-			errorCode: '000',
-			intermediate: false,
-			smsId: undefined,
-			statusId: consts.MESSAGE_STATE.DELIVERED,
-			statusMsg: 'DELIVERED',
-		},
-		name: 'a marked receipt naming no id, which settles a status against no message',
-		receipt: {
-			dlvrd: 1,
-			doneDate: '2609051431',
-			err: '000',
-			id: undefined,
-			stat: 'DELIVRD',
-			sub: 1,
-			submitDate: '2609051430',
-			text: '',
-		},
-		source: 'https://smpp.org/smpp-delivery-receipt.html',
-	},
 ];
 
 describe('receipt bodies operators document', () => {
 	for (const fixture of fixtures) {
 		test(fixture.name, () => {
-			const dlr = dlrFromPdu(deliverSm(fixture.body, fixture.tlvs, fixture.esmClass));
+			const dlr = dlrFromPdu(deliverSm(fixture.body, fixture.tlvs));
 
 			assert.ok(dlr, fixture.source);
 			assert.deepEqual(dlr.receipt, fixture.receipt, fixture.source);
@@ -297,27 +265,27 @@ describe('the status codes operators publish', () => {
 		for (const { codes, operator, source } of documentedCodes) {
 			for (const code of codes) {
 				const dlr = dlrFromPdu(deliverSm(`id:ec421e62 stat:${code} err:000 text:`));
+				const named = code === 'UNKNOWN' ? 'UNKNOWN' : 'a state of its own';
 
 				assert.ok(dlr);
 				assert.equal(
-					dlr.statusMsg === 'UNKNOWN',
-					code === 'UNKNOWN',
-					`${operator} documents stat:${code}, which nothing here names — ${source}`,
+					dlr.statusMsg === 'UNKNOWN' ? 'UNKNOWN' : 'a state of its own',
+					named,
+					`${operator} documents stat:${code}, read as ${dlr.statusMsg} — ${source}`,
 				);
 				assert.equal(dlr.intermediate, code === 'ENROUTE', `${operator} stat:${code} — ${source}`);
 			}
 		}
 	});
 
-	// LINK Mobility supports no intermediate receipts at all, so none of its codes may read as one.
-	test('reads none of LINK Mobility\'s as anything but final', () => {
+	// LINK Mobility supports no intermediate receipts at all, so it publishes no transient code.
+	test('finds none of LINK Mobility\'s among the transient ones', () => {
 		const link = documentedCodes.find(one => one.operator === 'LINK Mobility');
 
-		assert.ok(link);
+		const transient = transientStates.map(state => receiptCodes[state]);
 
-		for (const code of link.codes) {
-			assert.equal(dlrFromPdu(deliverSm(`id:53a9d7b2 stat:${code}`))?.intermediate, false);
-		}
+		assert.ok(link);
+		assert.deepEqual(link.codes.filter(code => transient.includes(code)), []);
 	});
 });
 
@@ -339,11 +307,15 @@ describe('a receipt whose fields are not where the spec puts them', () => {
 		assert.equal(parseReceipt(early).stat, 'DELIVRD', 'the other fields are still read');
 	});
 
-	test('leaves an unmarked deliver_sm that names no id to arrive as a message', () => {
-		const bodyless = 'sub:001 dlvrd:001 stat:DELIVRD err:000 text:';
+	test('settles a status against no message where a marked receipt names no id', () => {
+		const bodyless = 'sub:001 dlvrd:001 submit date:2609051430 done date:2609051431 stat:DELIVRD err:000 text:';
+		const marked = dlrFromPdu(deliverSm(bodyless));
 
-		assert.equal(dlrFromPdu(deliverSm(bodyless, undefined, 0)), undefined);
-		assert.equal(dlrFromPdu(deliverSm(bodyless))?.smsId, undefined, 'the marker still makes it a report');
+		assert.ok(marked);
+		assert.equal(marked.smsId, undefined);
+		assert.equal(marked.statusMsg, 'DELIVERED');
+		assert.equal(marked.receipt?.id, undefined);
+		assert.equal(dlrFromPdu(deliverSm(bodyless, undefined, 0)), undefined, 'unmarked, it is a message');
 	});
 
 	test('takes the id from the TLV where the body names none', () => {
@@ -357,87 +329,6 @@ describe('a receipt whose fields are not where the spec puts them', () => {
 		assert.equal(dlr.statusMsg, 'DELIVERED');
 	});
 });
-
-type OperatorSmsc = {
-	port: number;
-	/** Writes a receipt to the ESME, spelled as the operator's own documentation spells it. */
-	receipt: (body: string, options?: { esmClass?: number; tlvs?: Record<string, TlvInput> }) => void;
-	submits: PduObject[];
-};
-
-/** An SMSC answering binds, and each submit_sm with the next message id the fixture names. */
-async function operatorSmsc(t: TestContext, messageIds: readonly string[]): Promise<OperatorSmsc> {
-	const accepted: net.Socket[] = [];
-	const submits: PduObject[] = [];
-	let answered = 0;
-	let sent = 0;
-	const listener = net.createServer(sock => {
-		const framer = new PduFramer();
-
-		accepted.push(sock);
-		sock.on('data', chunk => {
-			framer.push(chunk);
-
-			for (const pdu of framer.next().pdus ?? []) {
-				const { pduObj } = pduToObj(pdu);
-
-				if (!pduObj) continue;
-
-				if (bindCommands.includes(pduObj.cmdName)) {
-					const bound = pduReturn(pduObj, 'ESME_ROK', { system_id: 'operator' });
-
-					if (bound.buffer) sock.write(bound.buffer);
-				} else if (pduObj.cmdName === 'submit_sm') {
-					submits.push(pduObj);
-
-					const taken = pduReturn(pduObj, 'ESME_ROK', { message_id: messageIds[answered++] ?? '' });
-
-					if (taken.buffer) sock.write(taken.buffer);
-				}
-			}
-		});
-	});
-
-	await new Promise<void>(resolve => { listener.listen(0, resolve); });
-	closeListenerAfter(t, listener, accepted);
-
-	const address = listener.address();
-
-	return {
-		port: typeof address === 'object' && address !== null ? address.port : 0,
-		receipt: (body, options = {}) => {
-			const { buffer } = objToPdu({
-				cmdName: 'deliver_sm',
-				params: {
-					destination_addr: '46701113311',
-					esm_class: options.esmClass ?? consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
-					short_message: body,
-					source_addr: '46709771337',
-				},
-				seqNr: ++sent,
-				tlvs: options.tlvs,
-			});
-
-			assert.ok(buffer);
-			accepted[accepted.length - 1]?.write(buffer);
-		},
-		submits,
-	};
-}
-
-async function bindTo(
-	t: TestContext,
-	port: number,
-	options: Parameters<typeof client>[0] = {},
-): Promise<Session> {
-	const { err, session } = await client({ ...options, port });
-
-	assert.equal(err, undefined);
-	assert.ok(session);
-	closeAfter(t, session);
-
-	return session;
-}
 
 /** Resolves once `count` of them have arrived, so a run short of that fails rather than hangs. */
 function collect<T>(count: number, register: (push: (value: T) => void) => void): Promise<T[]> {
@@ -471,8 +362,8 @@ describe('an SMSC that writes its message ids in two notations', () => {
 	const decimal = '862224236';
 
 	test('correlates the receipt against the send once both notations are named', async t => {
-		const smsc = await operatorSmsc(t, [hex]);
-		const session = await bindTo(t, smsc.port, {
+		const smsc = await dummySmsc(t, { messageIds: [hex] });
+		const session = await bindToSmsc(t, smsc.port, {
 			smsIdFormat: { receipt: 'decimal', submitResp: 'hex' },
 		});
 		const reported = collect<Dlr>(1, push => { session.on('dlr', push); });
@@ -480,7 +371,7 @@ describe('an SMSC that writes its message ids in two notations', () => {
 
 		assert.equal(sent.err, undefined);
 		assert.deepEqual(sent.smsIds, [decimal]);
-		smsc.receipt(receiptBody(decimal));
+		smsc.deliver(receiptBody(decimal));
 
 		const [dlr] = await reported;
 
@@ -490,13 +381,13 @@ describe('an SMSC that writes its message ids in two notations', () => {
 	});
 
 	test('leaves the two incomparable where neither notation is named', async t => {
-		const smsc = await operatorSmsc(t, [hex]);
-		const session = await bindTo(t, smsc.port);
+		const smsc = await dummySmsc(t, { messageIds: [hex] });
+		const session = await bindToSmsc(t, smsc.port);
 		const reported = collect<Dlr>(1, push => { session.on('dlr', push); });
 		const sent = await session.sendSms({ dlr: true, message: 'operator receipt', ...message });
 
 		assert.deepEqual(sent.smsIds, [hex]);
-		smsc.receipt(receiptBody(decimal));
+		smsc.deliver(receiptBody(decimal));
 
 		const [dlr] = await reported;
 
@@ -506,15 +397,15 @@ describe('an SMSC that writes its message ids in two notations', () => {
 	});
 
 	test('strips the padding an operator writes the same number with', async t => {
-		const smsc = await operatorSmsc(t, ['706678557']);
-		const session = await bindTo(t, smsc.port, {
+		const smsc = await dummySmsc(t, { messageIds: ['706678557'] });
+		const session = await bindToSmsc(t, smsc.port, {
 			smsIdFormat: { receipt: 'decimal', submitResp: 'decimal' },
 		});
 		const reported = collect<Dlr>(1, push => { session.on('dlr', push); });
 		const sent = await session.sendSms({ dlr: true, message: 'operator receipt', ...message });
 
 		assert.deepEqual(sent.smsIds, ['706678557']);
-		smsc.receipt(receiptBody('0000706678557'));
+		smsc.deliver(receiptBody('0000706678557'));
 
 		const [dlr] = await reported;
 
@@ -527,14 +418,14 @@ describe('an SMSC that reports one message more than once', () => {
 	// tyntec sends a buffered receipt shortly after submission and a final one later.
 	test('hands both receipts to the application rather than taking the second for a duplicate', async t => {
 		const id = 'd91518bd27c1018d';
-		const smsc = await operatorSmsc(t, [id]);
-		const session = await bindTo(t, smsc.port);
+		const smsc = await dummySmsc(t, { messageIds: [id] });
+		const session = await bindToSmsc(t, smsc.port);
 		const reported = collect<Dlr>(2, push => { session.on('dlr', push); });
 		const sent = await session.sendSms({ dlr: true, message: 'buffered then delivered', ...message });
 
 		assert.deepEqual(sent.smsIds, [id]);
-		smsc.receipt(`id:${id} sub:001 dlvrd:000 submit date:2609051430 done date:2609051430 stat:ENROUTE err:000 text:`);
-		smsc.receipt(receiptBody(id));
+		smsc.deliver(`id:${id} sub:001 dlvrd:000 submit date:2609051430 done date:2609051430 stat:ENROUTE err:000 text:`);
+		smsc.deliver(receiptBody(id));
 
 		const [buffered, final] = await reported;
 
@@ -551,8 +442,8 @@ describe('an SMSC that reports each segment under an id of its own', () => {
 	// Vonage sends one receipt per segment, and its ids carry no <base>-<n> to merge them by.
 	test('reports every segment and merges nothing', async t => {
 		const ids = ['bf53ad8b', '40ccdce2', 'b64bf122'];
-		const smsc = await operatorSmsc(t, ids);
-		const session = await bindTo(t, smsc.port);
+		const smsc = await dummySmsc(t, { messageIds: ids });
+		const session = await bindToSmsc(t, smsc.port);
 		const merged: MessageDlr[] = [];
 		const reported = collect<Dlr>(3, push => { session.on('dlr', push); });
 
@@ -564,7 +455,7 @@ describe('an SMSC that reports each segment under an id of its own', () => {
 		assert.deepEqual(sent.smsIds, ids);
 
 		for (const id of ids) {
-			smsc.receipt(receiptBody(id));
+			smsc.deliver(receiptBody(id));
 		}
 
 		const dlrs = await reported;
@@ -576,17 +467,12 @@ describe('an SMSC that reports each segment under an id of its own', () => {
 	// Telesign answers only the first part of a concatenated submit with a message id.
 	test('hands back what landed where only the first segment is answered with one', async t => {
 		const id = '5cb0ea53b5d61093529174ca44e23871';
-		const smsc = await operatorSmsc(t, [id]);
-		const session = await bindTo(t, smsc.port);
+		const smsc = await dummySmsc(t, { messageIds: [id] });
+		const session = await bindToSmsc(t, smsc.port);
 		const sent = await session.sendSms({ dlr: true, message: 'x'.repeat(400), ...message });
 
 		assert.equal(sent.err, undefined);
-		assert.equal(smsc.submits.length, 3);
+		assert.equal(smsc.submits.length, 3, 'every segment goes out whatever the peer answers');
 		assert.deepEqual(sent.smsIds, [id, '', '']);
-
-		const merger = new DlrMerger({ log: silentLog, max: 10, now: () => 0, timeout: 60_000 });
-
-		merger.expect(sent.smsIds);
-		assert.equal(merger.size, 0, 'ids that do not number one message arm no merge');
 	});
 });

@@ -22,7 +22,9 @@ New file: `test/operator-receipts.test.ts` — a table of receipt bodies as each
 documentation spells them, checked through `dlrFromPdu()`, plus four scenarios driven over a live
 link against a dummy SMSC that answers each `submit_sm` with the message id the fixture names. Each
 fixture carries the URL it was read from as its assertion message, so a failure names the page that
-settles it. `test/session-extras.test.ts` gained one assertion for C8's 16-bit UDH.
+settles it. That dummy SMSC is `test/dummy-smsc.ts`, extracted from the copy `messaging-mode.test.ts`
+already carried rather than written a second time. `test/session-extras.test.ts` gained C8's 16-bit
+UDH and `test/session.test.ts` the `DlrMerger` fact the Telesign scenario turned up.
 
 ## What the research settles, and what it does not
 
@@ -41,6 +43,12 @@ Three things in topic 5 could not be taken at face value, and are recorded rathe
 - **Telesign's `message_parts_count` TLV has no published tag id** in either sourced page, so no
   fixture names one. The behaviour it accompanies (only the first segment answered with a
   `message_id`) is covered without it.
+- **The Telesign fixture's body and TLV deliberately disagree**, where its own page says the status
+  is given redundantly in both. The disagreement is forced rather than sourced: `message_state` 9 is
+  Telesign's `SKIPPED`, and Appendix B has no seven-character code for it, so the body carries
+  `stat:UNKNOWN` — which is what this library itself writes for that state (`receiptCodes.SKIPPED`).
+  The fixture is there for the TLV-wins rule over a state only a vendor names; nothing in it should
+  be read as a claim about what Telesign puts in the two fields together.
 
 Two further items in topic 5 are not receipt-body shapes at all and are out of this phase:
 Syniverse's and Route Mobile's numeric status tables are vendor fields of their own rather than the
@@ -58,12 +66,12 @@ seven characters `stat:` holds, and LINK Mobility's `registered_delivery=0x21` i
 | C16 Clickatell: the exact documented body | pass | "Clickatell, whose dates carry seconds" — every field of the documented order, 12-octet dates |
 | C16 Telesign: hex `err:`, `message_state` 9, one id per concatenated send | pass | "Telesign, whose err is hexadecimal and whose message_state 9 the body has no code for"; "hands back what landed where only the first segment is answered with one" |
 | C16 CM.com: a body with neither `sub:` nor `dlvrd:` | pass | "CM.com, which writes neither sub nor dlvrd and states the same status twice" — absent fields stay `undefined`, and the `message_state` TLV agrees with `stat:` |
-| C16 a receipt with no `id:` at all | pass | "a marked receipt naming no id…" (marked: `smsId` undefined, status still settled) and "leaves an unmarked deliver_sm that names no id to arrive as a message" |
+| C16 a receipt with no `id:` at all | pass | "settles a status against no message where a marked receipt names no id" — marked, `smsId` is undefined and the status still settles; unmarked, the same body arrives as an `sms`. "takes the id from the TLV where the body names none" covers the third case |
 | C16 fields in another order | pass | "reads the same fields whatever order they arrive in"; "reads the rest of the line as the text where a peer does not write text last" |
 | C16 hex `message_id` against a decimal `id:` | pass | "correlates the receipt against the send once both notations are named" and "leaves the two incomparable where neither notation is named" |
 | C16 a zero-padded id | pass | "strips the padding an operator writes the same number with" |
 | C16 dates with and without seconds | pass | The LINK Mobility and Infobip fixtures carry 10-octet dates, Clickatell and Telesign 12-octet ones; every one asserts the `Date` it resolves to |
-| C8 UDH 16-bit | pass | `session-extras.test.ts` "names the spelling a segment was numbered by, alongside the reference" — GSM 03.40 element 0x08 now has a fixture, where the width was previously exercised only by the jsmpp peer run ([05-java-clients.md](05-java-clients.md)) |
+| C8 UDH 16-bit | pass | `session-extras.test.ts` "names the spelling a segment was numbered by, alongside the reference" reads GSM 03.40 element 0x08, and "assembles a message numbered by a 16-bit UDH reference" carries two of them through the `Reassembler` into one whole text — the width was previously exercised only by the jsmpp peer run ([05-java-clients.md](05-java-clients.md)) |
 | C9 MO or receipt on `data_sm` | pass, already covered | `dlr.test.ts` "reads a receipt the peer carried in message_payload, on deliver_sm and on data_sm"; `session-extras.test.ts` "reads a data_sm as the command its direction makes it" |
 | C10 unknown command id, malformed and vendor TLVs | pass, already covered | `test/raw-pdus.ts` and the `session.test.ts` refusal suites |
 | C15 `interfaceVersion` 0x50, a peer answering 3.3 or nothing | pass, already covered | `session.test.ts` bind-version suites around `sc_interface_version` |

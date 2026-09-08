@@ -198,9 +198,12 @@ exactly 140.
   preambles or restate what the code says.
 - Test data uses real randomised UUID v7 values, never `aaaa-0000` placeholders.
 - Fixtures that encode the wire are shared so no two files can drift on it: `test/raw-pdus.ts` builds
-  the octets a test writes straight to a socket, the PDUs `objToPdu()` refuses to build included. The
-  waiting helpers each file carries are copies, tolerated because a wrong one fails that file's own
-  tests and nothing else.
+  the octets a test writes straight to a socket, the PDUs `objToPdu()` refuses to build included. So
+  is the peer a test drives the library against: `test/dummy-smsc.ts` is the one dummy SMSC, because
+  two copies drift in what they answer rather than in what a test asserts, and one that silently
+  stops answering `enquire_link` fails the file that copied it for a reason nothing in that file
+  names. The waiting helpers each file carries are copies, tolerated because a wrong one fails that
+  file's own tests and nothing else.
 - `message_id` values the library generates are UUID v7.
 - A test that needs a dummy peer must `resume()` its sockets. An unread socket never processes the
   peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
@@ -436,9 +439,13 @@ Grouped by what each one constrains.
   It joins `receiptStates` alone: `receiptCodes` goes on writing `UNDELIV`, so nothing this library
   sends gains a spelling 3.4 does not define. Rejected: a `FAILED` member of `MESSAGE_STATE`, which
   is 3.4's own numbered table — the code has no number there, so one would have to be invented, and
-  every consumer's switch would grow a case no `message_state` TLV can carry. Rejected: reading the
+  every consumer's switch would grow a case no `message_state` TLV can carry. Rejected: leaving it
+  `UNKNOWN` and sending the application to `dlr.receipt.stat` for the state, which reports a terminal
+  failure as undetermined and leaves the merge ranking it below `EXPIRED`. Rejected: reading the
   numeric status tables Syniverse and Route Mobile publish beside it, which are vendor fields of
-  their own rather than the seven characters `stat:` holds.
+  their own rather than the seven characters `stat:` holds. Accepted: all three of those operators
+  document `FAILED` and `UNDELIV` as separate codes, and both now resolve to `UNDELIVERABLE` — an
+  application that must tell them apart reads `dlr.receipt.stat`, which carries what the SMSC wrote.
 
 - **A transient state goes out as an intermediate delivery notification (0x20), every other state as
   a delivery receipt (0x04).** Appendix B makes a receipt's `stat` the message's final status, so
@@ -770,3 +777,12 @@ Grouped by what each one constrains.
   `link/` for `link-*`, `reconnect-*`, `pdu-transport` and `send-window`, `messages/` for `sms*`,
   `dlr*`, `message*`, `reassembly` and `udh` — rewrites every import for no change to
   `dist/index.js`, the one published entry. Valid while that map is what a reader navigates by.
+
+- **`test/` stays flat too, and a file there is named for the question it answers rather than for the
+  module it covers.** Architecture review, 2026-09-08, on the file count reaching 21: `node --test
+  test/*.test.ts` is the whole runner configuration, and a directory split would need a second glob
+  for no change to what runs. What keeps the count honest is the naming rule rather than a tree —
+  `operator-receipts.test.ts` holds a corpus defined by where it came from, cutting across four
+  modules, where filing it by module would enter each new operator twice. The shared helpers are the
+  exception that is not a test file: `teardown.ts`, `raw-pdus.ts` and `dummy-smsc.ts` carry no tests
+  of their own. Valid while the runner takes one glob.
