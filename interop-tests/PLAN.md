@@ -250,13 +250,24 @@ defect; each is a claim resting on the specification and on Node rather than on 
 | 8 | dropped | [Untested](#untested) |
 | 9 | done | [09-operator-fixtures.md](findings/09-operator-fixtures.md) |
 | 10 | done | Targets 2, 3 and 4 fixed; target 5 answered by the `messagingMode` send option, maintainer's call 2026-09-06 |
-| 11 | not started | — |
+| 11 | done | Surface judged sound. Its documentation findings and the unmergeable-receipt log line shipped in #94; one item, the typing of `smsIds`, is the maintainer's and is open below |
 
 Phases 1 to 5 were graded before `run.py` learned to fail an empty capture, so a run whose capture
 never started would have scored green on the wire checks while its own assertions carried it. Every
 phase has since been re-run under the stricter grading and every one holds: Kannel 80 frames, Jasmin
 175, Cloudhopper 88, each with its bind and response decoded and both error counts zero. The zeros
 were real.
+
+## Open for the maintainer
+
+**`smsIds` is typed as `string[]` and can hold an empty entry.** An SMSC that names an id for the
+first segment of a concatenated message only — Telesign documents exactly that — leaves the rest
+empty, so the type promises what the value does not keep. Taking the first id, or building a map
+from the array, compiles and then misbehaves, and an empty string collides with another message's in
+a correlation table. `(string | undefined)[]` makes the compiler point at the place the mistake
+happens; the cost is that every consumer narrows, including the majority whose SMSC always names an
+id. Raised by the phase 11 review, 2026-09-08. It is the last thing 1.0.0 locks: after release it
+needs a major version.
 
 Research notes behind this plan, 2026-09-05, are in `research/`: SMSC simulators, ESME clients
 and validators, and operator quirks with one source URL per claim. Ask before trusting a claim here
