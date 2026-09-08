@@ -2278,11 +2278,15 @@ describe('the server\'s onRequest hook', () => {
 		const answered = await submitTo(session, '46709771337', 'declined by the hook');
 		const sms = await incoming;
 
+		await session.send({ cmdName: 'enquire_link' });
+		await session.unbind();
+
 		assert.ok(answered.pduObj);
 		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
 		assert.equal(paramText(answered.pduObj.params.message_id), answeredId);
 		assert.equal(sms.message, 'declined by the hook');
-		assert.deepEqual(seen, ['submit_sm']);
+		// The keepalive and the shutdown are the hook's too, which is why it has to guard on the name.
+		assert.deepEqual(seen, ['submit_sm', 'enquire_link', 'unbind']);
 	});
 
 	test('reports a hook that throws and answers nothing for it', async t => {

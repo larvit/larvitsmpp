@@ -335,7 +335,7 @@ describe('README: Errors', () => {
 				return;
 			}
 
-			log.error('the session failed', { message: err.message });
+			log.error('a session failure or lost traffic', { message: err.message });
 		});
 
 		const reported = once<Error>(resolve => { session.on('sessionError', resolve); });

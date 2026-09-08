@@ -296,11 +296,11 @@ response on the peer's sequence number would be worse than none. The peer's own 
 settles it, so a hook that must reach a decision either way makes that decision itself.
 `authenticate` fails the same way, leaving the bind itself unanswered.
 
-Every request a bound peer sends reaches the hook, `enquire_link` and `unbind` among them, where
-failing costs more than the one request a response timeout settles: an unanswered `enquire_link` has
-the peer drop the link at its own idle timer, and an unanswered `unbind` skips the close this end
-would have run on it. Guard on the command name, as the example above does, and a hook that fails
-takes nothing but its own request with it.
+`enquire_link` and `unbind` reach the hook too, where failing costs more than the one request a
+response timeout settles: an unanswered `enquire_link` has the peer drop the link at its own idle
+timer, and an unanswered `unbind` skips the close this end would have run on it. Guard on the
+command name, as the example above does, and a hook that fails takes nothing but its own request
+with it.
 
 A `Session` you construct yourself (see [Bind direction](#bind-direction)) takes the same hook as a
 session option, and handles a failing one the same way; it is also where a peer's bind gets accepted,
@@ -375,9 +375,8 @@ rest:
 - **Everything else**: the session or the socket failing, and a hook or listener that threw or, if it
   was `async`, rejected.
 
-Only the first is separable by type. The last two are both a plain `Error`, told apart from each
-other by their message text alone, so the example below alerts on a lost concatenated message as
-well as on a session that failed.
+The last two are both a plain `Error`, told apart from each other by their message text alone, so
+the example below alerts on a lost concatenated message as well as on a session that failed.
 
 ```javascript
 import { PduRefusedError } from '@larvit/smpp';
@@ -392,7 +391,7 @@ session.on('sessionError', err => {
 		return;
 	}
 
-	log.error('the session failed', { message: err.message });
+	log.error('a session failure or lost traffic', { message: err.message });
 });
 ```
 
@@ -542,11 +541,11 @@ if (isCommand(pduObj, 'submit_sm')) {
 `params.short_message` is decoded with the PDU's own `data_coding`; `shortMessageOctets` is that
 same field exactly as it arrived. Neither holds the body of a PDU that carried it in the
 `message_payload` TLV instead, which a `data_sm` always does — `messageOctets(pduObj)` is the one
-answer to which of the two the peer used, and gives back the octets undecoded: `decodeMessage()`
-turns them into text with the PDU's own `data_coding`, and hands back the UDH where the PDU carries
-one. `concatOf(pduObj)` is the same for concatenation: the `part`, `total` and `reference` a PDU
-declares, and the `spelling` — `'udh'` or `'sar'` — that carried them, or `undefined` where the PDU
-is a whole message.
+answer to which of the two the peer used, and gives back the octets undecoded:
+`decodeMessage(octets, pduObj.params.data_coding, pduObj.params.esm_class)` turns them into text and
+hands back the UDH where the PDU carries one. `concatOf(pduObj)` is the same for concatenation: the
+`part`, `total` and `reference` a PDU declares, and the `spelling` — `'udh'` or `'sar'` — that
+carried them, or `undefined` where the PDU is a whole message.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.
