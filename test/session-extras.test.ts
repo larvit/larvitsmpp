@@ -1471,8 +1471,10 @@ describe('sendDlr()', () => {
 	});
 });
 
-function segment(reference: number, part: number, total: number): PduObject {
-	const udh = Buffer.from([0x05, 0x00, 0x03, reference, total, part]);
+function segment(reference: number, part: number, total: number, width: 8 | 16 = 8): PduObject {
+	const udh = width === 8
+		? Buffer.from([0x05, 0x00, 0x03, reference, total, part])
+		: Buffer.from([0x06, 0x08, 0x04, reference >>> 8, reference & 0xff, total, part]);
 	const body = Buffer.concat([udh, Buffer.from('fragment')]);
 
 	return {
@@ -1544,6 +1546,11 @@ describe('where a segment says it is concatenated', () => {
 	test('names the spelling a segment was numbered by, alongside the reference', () => {
 		assert.deepEqual(concatOf(sarSegment(5, 2, 3)), { part: 2, reference: 5, spelling: 'sar', total: 3 });
 		assert.deepEqual(concatOf(segment(5, 2, 3)), { part: 2, reference: 5, spelling: 'udh', total: 3 });
+		assert.deepEqual(
+			concatOf(segment(0x2af1, 2, 3, 16)),
+			{ part: 2, reference: 0x2af1, spelling: 'udh', total: 3 },
+			'GSM 03.40 element 0x08 numbers a segment as element 0x00 does, two octets wider',
+		);
 	});
 
 	test('reads a segment carrying both spellings from its UDH', () => {
