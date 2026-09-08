@@ -199,11 +199,14 @@ exactly 140.
 - Test data uses real randomised UUID v7 values, never `aaaa-0000` placeholders.
 - Fixtures that encode the wire are shared so no two files can drift on it: `test/raw-pdus.ts` builds
   the octets a test writes straight to a socket, the PDUs `objToPdu()` refuses to build included. So
-  is the peer a test drives the library against: `test/dummy-smsc.ts` is the one dummy SMSC, because
-  two copies drift in what they answer rather than in what a test asserts, and one that silently
-  stops answering `enquire_link` fails the file that copied it for a reason nothing in that file
-  names. The waiting helpers each file carries are copies, tolerated because a wrong one fails that
-  file's own tests and nothing else.
+  is the peer that answers on its own: `test/dummy-smsc.ts` is the one auto-answering SMSC, because
+  two copies drift in what they answer rather than in what a test asserts, and one that quietly stops
+  answering `enquire_link` fails the file that copied it for a reason nothing in that file names.
+  Reach for it where the peer's answers are not what the test is about; where they are, `smscPeer()`
+  in `test/session.test.ts` answers the bind and hands every other PDU to the test to answer, and
+  stays there because that is a different peer rather than a second copy of this one. The waiting
+  helpers each file carries are copies, tolerated because a wrong one fails that file's own tests and
+  nothing else.
 - `message_id` values the library generates are UUID v7.
 - A test that needs a dummy peer must `resume()` its sockets. An unread socket never processes the
   peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
@@ -779,10 +782,10 @@ Grouped by what each one constrains.
   `dist/index.js`, the one published entry. Valid while that map is what a reader navigates by.
 
 - **`test/` stays flat too, and a file there is named for the question it answers rather than for the
-  module it covers.** Architecture review, 2026-09-08, on the file count reaching 21: `node --test
-  test/*.test.ts` is the whole runner configuration, and a directory split would need a second glob
-  for no change to what runs. What keeps the count honest is the naming rule rather than a tree —
-  `operator-receipts.test.ts` holds a corpus defined by where it came from, cutting across four
-  modules, where filing it by module would enter each new operator twice. The shared helpers are the
-  exception that is not a test file: `teardown.ts`, `raw-pdus.ts` and `dummy-smsc.ts` carry no tests
-  of their own. Valid while the runner takes one glob.
+  module it covers.** Architecture review, 2026-09-08, at 18 test files: what keeps that count honest
+  is the naming rule rather than a tree — `operator-receipts.test.ts` holds a corpus defined by where
+  it came from, cutting across four modules, where filing it by module would enter each new operator
+  twice. A split also has to be made twice, since `test` and `test:compiled` each carry a path of
+  their own. The four files that are not tests are the exception the rule needs stated:
+  `dummy-smsc.ts`, `raw-pdus.ts`, `reference-smpp.d.ts` and `teardown.ts` answer no question and are
+  named for what they hold.

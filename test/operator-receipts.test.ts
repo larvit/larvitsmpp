@@ -265,12 +265,11 @@ describe('the status codes operators publish', () => {
 		for (const { codes, operator, source } of documentedCodes) {
 			for (const code of codes) {
 				const dlr = dlrFromPdu(deliverSm(`id:ec421e62 stat:${code} err:000 text:`));
-				const named = code === 'UNKNOWN' ? 'UNKNOWN' : 'a state of its own';
 
 				assert.ok(dlr);
 				assert.equal(
-					dlr.statusMsg === 'UNKNOWN' ? 'UNKNOWN' : 'a state of its own',
-					named,
+					dlr.statusMsg === 'UNKNOWN',
+					code === 'UNKNOWN',
 					`${operator} documents stat:${code}, read as ${dlr.statusMsg} — ${source}`,
 				);
 				assert.equal(dlr.intermediate, code === 'ENROUTE', `${operator} stat:${code} — ${source}`);
@@ -472,7 +471,7 @@ describe('an SMSC that reports each segment under an id of its own', () => {
 		const sent = await session.sendSms({ dlr: true, message: 'x'.repeat(400), ...message });
 
 		assert.equal(sent.err, undefined);
-		assert.equal(smsc.submits.length, 3, 'every segment goes out whatever the peer answers');
+		assert.equal(smsc.octets.length, 3, 'every segment goes out whatever the peer answers');
 		assert.deepEqual(sent.smsIds, [id, '', '']);
 	});
 });

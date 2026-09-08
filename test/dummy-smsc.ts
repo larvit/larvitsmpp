@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
-import type { PduObject } from '../src/pdu.ts';
 import type { Session } from '../src/session.ts';
 import type { TestContext } from 'node:test';
 import { PduFramer } from '../src/pdu-framer.ts';
@@ -16,7 +15,6 @@ export type DummySmsc = {
 	/** Every submit_sm the ESME wrote, exactly as it arrived on the socket. */
 	octets: Buffer[];
 	port: number;
-	submits: PduObject[];
 };
 
 export type DummySmscOptions = {
@@ -25,15 +23,14 @@ export type DummySmscOptions = {
 };
 
 /**
- * An SMSC that answers every request the ESME sends and starts nothing of its own, so a test says
- * what the peer does by driving it rather than by configuring it. Where `server()` would do, use
- * that instead: this exists for the peers `server()` cannot be — one whose message ids the test
- * chooses, or one that answers a request differently from how this library would.
+ * An SMSC that answers every request the ESME sends and starts nothing of its own. It exists for the
+ * peers `server()` cannot be — one whose message ids the test chooses, or one that answers a request
+ * differently from how this library would. A test that answers the peer's requests itself wants
+ * `smscPeer()` in `session.test.ts` instead, which answers the bind and hands over the rest.
  */
 export async function dummySmsc(t: TestContext, options: DummySmscOptions = {}): Promise<DummySmsc> {
 	const octets: Buffer[] = [];
 	const sockets: net.Socket[] = [];
-	const submits: PduObject[] = [];
 	let answered = 0;
 	let delivered = 0;
 	const listener = net.createServer(sock => {
@@ -58,7 +55,6 @@ export async function dummySmsc(t: TestContext, options: DummySmscOptions = {}):
 				}
 
 				octets.push(pdu);
-				submits.push(pduObj);
 
 				const messageId = options.messageIds ? options.messageIds[answered++] ?? '' : uuidv7();
 				const taken = pduReturn(pduObj, 'ESME_ROK', { message_id: messageId });
@@ -91,7 +87,6 @@ export async function dummySmsc(t: TestContext, options: DummySmscOptions = {}):
 		},
 		octets,
 		port: typeof address === 'object' && address !== null ? address.port : 0,
-		submits,
 	};
 }
 
