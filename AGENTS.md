@@ -438,12 +438,12 @@ Grouped by what each one constrains.
   researched ones are `FAILED` and CM.com's `DELIVERD`.** Maintainer's call, 2026-09-08, from the
   operator-fixture phase: Kaleyra and Route Mobile both document `FAILED` in that field as a terminal
   delivery failure, and the research attributes it to Vonage as well; CM.com's own code table prints
-  `DELIVERD` — eight characters — beside six correct ones. Where a code nothing names
-  left `statusMsg` at `UNKNOWN` — the same answer a receipt really saying `stat:UNKNOWN` gets, so an
-  application could not tell an operator's "it failed" from its "I do not know", and `DlrMerger`
-  ranks `UNKNOWN` below `EXPIRED`, reporting a multipart send carrying a failed segment as expired.
-  It joins `receiptStates` alone: `receiptCodes` goes on writing `UNDELIV`, so nothing this library
-  sends gains a spelling 3.4 does not define. Rejected: a `FAILED` member of `MESSAGE_STATE`, which
+  `DELIVERD` — eight characters — beside six correct ones. Both were left at `statusMsg: UNKNOWN` —
+  the same answer a receipt really saying `stat:UNKNOWN` gets, so an application could not tell an
+  operator's "it failed" from its "I do not know", nor a delivered message from one whose state
+  could not be read; and `DlrMerger` ranks `UNKNOWN` below `EXPIRED`, reporting a multipart send
+  carrying a failed segment as expired. They join `receiptStates` alone: `receiptCodes` goes on
+  writing the seven characters 3.4 defines, so nothing this library sends gains either spelling. Rejected: a `FAILED` member of `MESSAGE_STATE`, which
   is 3.4's own numbered table — the code has no number there, so one would have to be invented, and
   every consumer's switch would grow a case no `message_state` TLV can carry. Rejected: leaving it
   `UNKNOWN` and sending the application to `dlr.receipt.stat` for the state, which reports a terminal

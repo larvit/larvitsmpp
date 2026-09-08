@@ -127,12 +127,14 @@ by fetching it.
 **Reproducer.** `operator-receipts.test.ts` "names a state of its own for every one of them", whose
 CM.com row now carries the published spelling, and the CM.com fixture.
 
-**Severity.** The same class as `stat:FAILED` below, on the most common status there is: an
+**Severity.** The same class as the `stat:FAILED` defect above, on the most common status there is: an
 application could not tell a delivered message from one whose state the library could not read.
 
 **Fixed** in this phase: one entry in `receiptStates`. Whether CM.com's table is a typo or its wire
 spelling, reading it costs nothing — no other code could be meant, and `receiptCodes` still writes
-only `DELIVRD`.
+only `DELIVRD`. This supersedes the research file's CM.com line, which records the code as `DELIVRD`
+and asks for an assertion that every `stat:` is exactly seven characters: written today, that
+assertion fails against the page it cites.
 
 ### A receipt date carrying its century dropped
 
@@ -197,9 +199,9 @@ the fixtures pin that a reader would not otherwise expect:
 - What `stat:` tyntec's buffered receipt actually carries. The library reads any of `ENROUTE`,
   `SCHEDULED` or `esm_class` 0x20 as non-final, so all three plausible answers behave correctly; a
   fourth, vendor-invented token would read as `UNKNOWN` and final.
-- Whether any operator writes a `stat:` outside Appendix B other than `FAILED`. The
-  documented-codes table in `operator-receipts.test.ts` is the place a new one goes, and it fails
-  loudly for anything nothing names.
+- Whether any operator writes a `stat:` outside Appendix B beyond the two this phase found,
+  `FAILED` and CM.com's `DELIVERD`. The documented-codes table in `operator-receipts.test.ts` is
+  the place a new one goes, and it fails loudly for anything nothing names.
 - Whether `smsIds` carrying an empty entry for a segment the SMSC took but named no id for is the
   right shape for a caller, or whether that case wants saying differently. It is documented in
   `README.md` and pinned by the Telesign scenario; the question is a product one, not a correctness

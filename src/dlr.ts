@@ -10,8 +10,8 @@ import { paramNumber, paramText } from './defs/types.ts';
 import { udhLength } from './udh.ts';
 
 /**
- * The seven-character status codes carried in a receipt's `stat:` field, mapped to the
- * message_state values they correspond to.
+ * The status codes carried in a receipt's `stat:` field, mapped to the message_state values they
+ * correspond to. Two of them are not the seven characters the field is meant to hold.
  */
 const receiptStates: Record<string, MessageState> = {
 	ACCEPTD: 'ACCEPTED',
