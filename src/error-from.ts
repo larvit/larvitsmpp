@@ -9,7 +9,7 @@ export function errorFrom(reason: unknown): Error {
 	}
 }
 
-/** What a refusal names a rejected option back as: the value where printing one helps, else its type. */
+/** String() throws on a null-prototype object or a symbol, so only a string or number is printed. */
 export function namedValue(value: unknown): string {
 	return typeof value === 'string' || typeof value === 'number' ? String(value) : typeof value;
 }

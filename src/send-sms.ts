@@ -6,7 +6,7 @@ import type { Result } from './result.ts';
 import type { SmppLog } from './log.ts';
 import type { SmsIdNotation } from './sms-id.ts';
 import { UnansweredError } from './unanswered-error.ts';
-import { consts, isMessagingMode, isSubmitMessagingMode, submitMessagingModes } from './defs/constants.ts';
+import { consts, defaultMessagingMode, isMessagingMode, isSubmitMessagingMode, submitMessagingModes } from './defs/constants.ts';
 import { detect } from './defs/encodings.ts';
 import { namedValue } from './error-from.ts';
 import { normaliseSmsId } from './sms-id.ts';
@@ -79,7 +79,7 @@ function dataCodingFor(encoding: EncodingName, flash: boolean): number {
 function esmClassFor(mode: SubmitMessagingMode | undefined, multipart: boolean): number {
 	const udh = multipart ? consts.ESM_CLASS.UDH_INDICATOR : 0;
 
-	return consts.MESSAGING_MODE[mode ?? 'SMSC_DEFAULT'] | udh;
+	return consts.MESSAGING_MODE[mode ?? defaultMessagingMode] | udh;
 }
 
 export function submitSmParams(
@@ -130,11 +130,11 @@ function checkedMode(
 	return { messagingMode };
 }
 
-export function checkMessagingMode(
+function checkMessagingMode(
 	mode: unknown,
 	dlr: boolean,
 ): Result<{ messagingMode: SubmitMessagingMode }> {
-	if (mode === undefined) return checkedMode('SMSC_DEFAULT', dlr);
+	if (mode === undefined) return checkedMode(defaultMessagingMode, dlr);
 	if (isSubmitMessagingMode(mode)) return checkedMode(mode, dlr);
 
 	return { err: refusedMode(mode) };

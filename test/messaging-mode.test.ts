@@ -91,7 +91,7 @@ function recordingDeps(attempts: PduObjectInput[]): SendSmsDeps {
 		send: input => {
 			attempts.push(input);
 
-			return Promise.resolve({ err: new Error('nothing should reach the wire') });
+			return Promise.resolve({ err: new Error('the recording peer never answers') });
 		},
 	};
 }
@@ -218,8 +218,8 @@ describe('sendSms() messagingMode', () => {
 		const datagram = await submitSms(deps, { from, message: 'Hello world', messagingMode: 'DATAGRAM', to });
 		const reported = await submitSms(deps, { dlr: true, from, message: 'Hello world', to });
 
-		assert.equal(datagram.err?.message, 'nothing should reach the wire');
-		assert.equal(reported.err?.message, 'nothing should reach the wire');
+		assert.equal(datagram.err?.message, 'the recording peer never answers');
+		assert.equal(reported.err?.message, 'the recording peer never answers');
 		assert.equal(attempts.length, 2);
 	});
 });

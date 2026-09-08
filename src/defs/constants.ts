@@ -121,7 +121,9 @@ export type MessageState = keyof typeof consts.MESSAGE_STATE;
 export type MessagingMode = keyof typeof consts.MESSAGING_MODE;
 
 /** SMPP 3.4 2.10.3 carries transaction mode on `data_sm` alone, so a `submit_sm` never asks for it. */
-const transactionMode = 'FORWARD';
+const transactionMode = 'FORWARD' satisfies MessagingMode;
+
+export const defaultMessagingMode = 'SMSC_DEFAULT' satisfies MessagingMode;
 
 export type SubmitMessagingMode = Exclude<MessagingMode, typeof transactionMode>;
 
