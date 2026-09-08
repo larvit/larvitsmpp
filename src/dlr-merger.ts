@@ -114,7 +114,11 @@ export class DlrMerger {
 		const { base, part: number } = numbering;
 		const group = this.groups.get(base);
 
-		if (!group) return undefined;
+		if (!group) {
+			this.log.debug('dlrMerger - receipt names no message being merged', { base, smsId: dlr.smsId });
+
+			return undefined;
+		}
 
 		if (!group.expected.has(number)) return undefined;
 

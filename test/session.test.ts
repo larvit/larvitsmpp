@@ -2260,7 +2260,7 @@ describe('the server\'s onRequest hook', () => {
 		assert.deepEqual(seen, [], 'a bind, and everything a peer sends before one, is never the hook\'s');
 	});
 
-	test('passes a request the hook declines through to the sms event', async t => {
+	test('passes a declined request to the sms event, and offers the keepalive and the unbind too', async t => {
 		const seen: string[] = [];
 		const smpp = await startServer(t, {
 			onRequest: (_bound, pduObj) => { seen.push(pduObj.cmdName); return false; },
@@ -2278,11 +2278,14 @@ describe('the server\'s onRequest hook', () => {
 		const answered = await submitTo(session, '46709771337', 'declined by the hook');
 		const sms = await incoming;
 
+		await session.send({ cmdName: 'enquire_link' });
+		await session.unbind();
+
 		assert.ok(answered.pduObj);
 		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
 		assert.equal(paramText(answered.pduObj.params.message_id), answeredId);
 		assert.equal(sms.message, 'declined by the hook');
-		assert.deepEqual(seen, ['submit_sm']);
+		assert.deepEqual(seen, ['submit_sm', 'enquire_link', 'unbind']);
 	});
 
 	test('reports a hook that throws and answers nothing for it', async t => {
@@ -2447,9 +2450,9 @@ describe('merged delivery report bounds', () => {
 		};
 	}
 
-	function merger(options: { max?: number; now?: () => number } = {}): DlrMerger {
+	function merger(options: { log?: SmppLog; max?: number; now?: () => number } = {}): DlrMerger {
 		return new DlrMerger({
-			log: silentLog,
+			log: options.log ?? silentLog,
 			max: options.max ?? 10,
 			now: options.now ?? (() => 0),
 			timeout: 60,
@@ -2469,6 +2472,26 @@ describe('merged delivery report bounds', () => {
 		assert.equal(merged.smsId, 'whole');
 		assert.equal(merged.segments.length, 2);
 		assert.equal(dlrMerger.size, 0);
+	});
+
+	// An id answered in one notation and reported in another merges nothing and reports nothing.
+	test('logs the receipt of a base no send is waiting on, and stays quiet for a single-part id', () => {
+		const debugged: Record<string, boolean | number | string>[] = [];
+		const dlrMerger = merger({
+			log: { ...silentLog, debug: (msg, metadata) => { debugged.push({ msg, ...metadata }); } },
+		});
+
+		dlrMerger.expect(['1a2b-1', '1a2b-2']);
+
+		assert.equal(dlrMerger.collect(receipt('6699-1')), undefined);
+		assert.deepEqual(debugged, [{
+			base: '6699',
+			msg: 'dlrMerger - receipt names no message being merged',
+			smsId: '6699-1',
+		}]);
+
+		assert.equal(dlrMerger.collect(receipt('019878e0e3d97b2c9d8a4f6b1c0e5a73')), undefined);
+		assert.equal(debugged.length, 1, 'a single-part receipt was never expected to merge');
 	});
 
 	// Telesign answers only the first segment of a concatenated submit with a message id.
