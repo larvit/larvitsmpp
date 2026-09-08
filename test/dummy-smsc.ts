@@ -33,6 +33,7 @@ export async function dummySmsc(t: TestContext, options: DummySmscOptions = {}):
 	const sockets: net.Socket[] = [];
 	let answered = 0;
 	let delivered = 0;
+	const nextId = (): string => (options.messageIds ? options.messageIds[answered++] ?? '' : uuidv7());
 	const listener = net.createServer(sock => {
 		const framer = new PduFramer();
 
@@ -46,20 +47,16 @@ export async function dummySmsc(t: TestContext, options: DummySmscOptions = {}):
 				// A response answers nothing; the ESME's deliver_sm_resp is the one that arrives here.
 				if (!pduObj || pduObj.cmdName.endsWith('_resp')) continue;
 
-				if (pduObj.cmdName !== 'submit_sm') {
-					const other = pduReturn(pduObj, 'ESME_ROK', { system_id: 'dummy' });
+				// Only a submit takes an id from the list; a bind answered off it shifts every fixture.
+				const answer = pduObj.cmdName === 'submit_sm'
+					? pduReturn(pduObj, 'ESME_ROK', { message_id: nextId() })
+					: pduReturn(pduObj, 'ESME_ROK', { system_id: 'dummy' });
 
-					if (other.buffer) sock.write(other.buffer);
+				if (pduObj.cmdName === 'submit_sm') octets.push(pdu);
 
-					continue;
-				}
-
-				octets.push(pdu);
-
-				const messageId = options.messageIds ? options.messageIds[answered++] ?? '' : uuidv7();
-				const taken = pduReturn(pduObj, 'ESME_ROK', { message_id: messageId });
-
-				if (taken.buffer) sock.write(taken.buffer);
+				// Writing nothing leaves the test waiting out its own timeout with nothing naming why.
+				assert.ok(answer.buffer, `the dummy SMSC has no answer for ${pduObj.cmdName}`);
+				sock.write(answer.buffer);
 			}
 		});
 	});

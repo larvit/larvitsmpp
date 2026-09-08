@@ -43,12 +43,22 @@ Three things in topic 5 could not be taken at face value, and are recorded rathe
 - **Telesign's `message_parts_count` TLV has no published tag id** in either sourced page, so no
   fixture names one. The behaviour it accompanies (only the first segment answered with a
   `message_id`) is covered without it.
-- **The Telesign fixture's body and TLV deliberately disagree**, where its own page says the status
-  is given redundantly in both. The disagreement is forced rather than sourced: `message_state` 9 is
-  Telesign's `SKIPPED`, and Appendix B has no seven-character code for it, so the body carries
-  `stat:UNKNOWN` — which is what this library itself writes for that state (`receiptCodes.SKIPPED`).
-  The fixture is there for the TLV-wins rule over a state only a vendor names; nothing in it should
-  be read as a claim about what Telesign puts in the two fields together.
+- **Telesign's `message_state` 9 is not a receipt body shape**, so it is not in the operator table.
+  Appendix B has no seven-character code for `SKIPPED`, so a fixture pairing the two would have had
+  Telesign's body and TLV contradict each other where its own page says the status is stated
+  redundantly in both. The TLV rule is asserted where it belongs instead — `dlr.test.ts` "names a
+  state only the TLV can spell" — and the Telesign fixture states one status in both fields, as
+  documented. The research file of 2026-09-05 is the source for 9 = `SKIPPED`; the TLV page no
+  longer shows that table.
+- **Vonage's `stat:` set could not be re-fetched** during review (the support article answers 403).
+  Kaleyra and Route Mobile both verify independently and both define `FAILED` as a terminal delivery
+  failure, which is what the library change rests on; Vonage's own developer page documents a
+  lower-case status set for its HTTP callbacks, which is a different surface from the seven-character
+  `stat:` field. The fixture keeps the research's attribution, and `src/dlr.ts` cites the two that
+  verify.
+- **Clickatell's cited page no longer resolves** — `archive.clickatell.com/developers/api-docs/pdu-details/`
+  now redirects to `docs.clickatell.com`. The body shape is quoted verbatim in the research file of
+  2026-09-05, which is what the fixture was built from.
 
 Two further items in topic 5 are not receipt-body shapes at all and are out of this phase:
 Syniverse's and Route Mobile's numeric status tables are vendor fields of their own rather than the
@@ -58,19 +68,19 @@ seven characters `stat:` holds, and LINK Mobility's `registered_delivery=0x21` i
 
 | Id | Result | Evidence |
 | --- | --- | --- |
-| C16 LINK Mobility: `sub:000`, `dlvrd:000`, empty `text:`, finals only | pass | `operator-receipts.test.ts` "LINK Mobility, whose sub and dlvrd are always 000…" — `receipt.sub`/`receipt.dlvrd` read 0 and nothing is derived from them, `receipt.text` is `''`; "reads none of LINK Mobility's as anything but final" |
+| C16 LINK Mobility: `sub:000`, `dlvrd:000`, empty `text:`, finals only | pass | `operator-receipts.test.ts` "LINK Mobility, whose sub and dlvrd are always 000…" — `receipt.sub`/`receipt.dlvrd` read 0 and nothing is derived from them, `receipt.text` is `''`; "finds none of LINK Mobility's among the transient ones" |
 | C16 Vonage: `stat:FAILED` outside Appendix B, eight-value set, `err:` off `DELIVRD`/`ACCEPTD` only | fail, then fixed | "Vonage, whose stat:FAILED is six characters and outside Appendix B" and "names a state of its own for every one of them" — both failed against `83176f5`; see Defects |
 | C16 Vonage: one receipt per segment | pass | "reports every segment and merges nothing" — three `dlr` events under the SMSC's own three unrelated ids, no `messageDlr` |
 | C16 tyntec: a buffered receipt then a final one for one id | pass | "hands both receipts to the application rather than taking the second for a duplicate" — two `dlr` events, `intermediate` `[true, false]`, one `smsId` |
 | C16 Infobip: `stat:ENROUTE` marked `esm_class` 0x04 | pass | "Infobip, reporting ENROUTE in an ordinary receipt that carries no text field at all" — `intermediate` true off the state where the marker says final, and `receipt.text` stays `undefined` |
 | C16 Clickatell: the exact documented body | pass | "Clickatell, whose dates carry seconds" — every field of the documented order, 12-octet dates |
-| C16 Telesign: hex `err:`, `message_state` 9, one id per concatenated send | pass | "Telesign, whose err is hexadecimal and whose message_state 9 the body has no code for"; "hands back what landed where only the first segment is answered with one" |
-| C16 CM.com: a body with neither `sub:` nor `dlvrd:` | pass | "CM.com, which writes neither sub nor dlvrd and states the same status twice" — absent fields stay `undefined`, and the `message_state` TLV agrees with `stat:` |
+| C16 Telesign: hex `err:`, one id per concatenated send | pass | "Telesign, whose err is hexadecimal and whose status is stated in the body and the TLVs alike"; "hands the err field over as it arrived, whichever width the operator writes"; "hands back what landed where only the first segment is answered with one" |
+| C16 CM.com: a four-digit year, no `sub:` or `dlvrd:` | fail, then fixed | "CM.com, which writes a four-digit year, neither sub nor dlvrd, and the status twice" — absent fields stay `undefined` and the `message_state` TLV agrees with `stat:`, but the documented `yyyyMMddHHmmss` date failed against `83176f5`; see Defects |
 | C16 a receipt with no `id:` at all | pass | "settles a status against no message where a marked receipt names no id" — marked, `smsId` is undefined and the status still settles; unmarked, the same body arrives as an `sms`. "takes the id from the TLV where the body names none" covers the third case |
 | C16 fields in another order | pass | "reads the same fields whatever order they arrive in"; "reads the rest of the line as the text where a peer does not write text last" |
 | C16 hex `message_id` against a decimal `id:` | pass | "correlates the receipt against the send once both notations are named" and "leaves the two incomparable where neither notation is named" |
 | C16 a zero-padded id | pass | "strips the padding an operator writes the same number with" |
-| C16 dates with and without seconds | pass | The LINK Mobility and Infobip fixtures carry 10-octet dates, Clickatell and Telesign 12-octet ones; every one asserts the `Date` it resolves to |
+| C16 dates with and without seconds | pass | The LINK Mobility and Infobip fixtures carry 10-octet dates, Clickatell and Telesign 12-octet ones and CM.com a 14-octet one; every one asserts the `Date` it resolves to, and `dlr.test.ts` "reads a receipt date whichever of the three widths the peer writes it in" pins all three against each other |
 | C8 UDH 16-bit | pass | `session-extras.test.ts` "names the spelling a segment was numbered by, alongside the reference" reads GSM 03.40 element 0x08, and "assembles a message numbered by a 16-bit UDH reference" carries two of them through the `Reassembler` into one whole text — the width was previously exercised only by the jsmpp peer run ([05-java-clients.md](05-java-clients.md)) |
 | C9 MO or receipt on `data_sm` | pass, already covered | `dlr.test.ts` "reads a receipt the peer carried in message_payload, on deliver_sm and on data_sm"; `session-extras.test.ts` "reads a data_sm as the command its direction makes it" |
 | C10 unknown command id, malformed and vendor TLVs | pass, already covered | `test/raw-pdus.ts` and the `session.test.ts` refusal suites |
@@ -103,6 +113,28 @@ operator's "it failed" from its "I do not know", and `DlrMerger` ranks `UNKNOWN`
 untouched, so this library still only ever writes `UNDELIV`. Decision recorded in the root
 `AGENTS.md` under "The wire".
 
+### A receipt date carrying its century dropped
+
+**What happened.** `dlr.doneDate` and every other parsed date came back `undefined` for a receipt
+whose dates are 14 digits, while `dlr.receipt.doneDate` still carried the raw string — so the loss
+was silent.
+
+**What the operator's docs say.** CM.com gives its receipt body template as
+`id:… submit date:yyyyMMddHHmmss done date:yyyyMMddHHmmss stat:SSSSSSS err:EEE`, with "Formatted:
+yyyyMMddHHmmss" spelled out (https://developers.cm.com/messaging/docs/smpp). `receiptDate()` read 10
+and 12 digits only — smpp.org's `YYMMDDhhmm` and the same with seconds.
+
+**Reproducer.** `dlr.test.ts` "reads a receipt date whichever of the three widths the peer writes it
+in", and the CM.com row of the operator table.
+
+**Severity.** Goal 3: a date the receipt states plainly is one the library can determine, and
+dropping it leaves the application to re-parse `dlr.receipt.doneDate` itself. The three widths are
+10, 12 and 14, so none can be read as another and nothing is guessed.
+
+**Fixed** in this phase: `receiptDate()` in `src/dlr.ts` takes a four-digit year as the year, where a
+two-digit one still means this century, and the rolled-over check now covers the year as well —
+`Date.UTC` reads 26 as 1926.
+
 ## Peer quirks
 
 Not peer behaviour this time — operator behaviour, from documentation rather than from a run. What
@@ -128,12 +160,26 @@ the fixtures pin that a reader would not otherwise expect:
 
 ## Open questions
 
+- **Whether LINK Mobility really writes a space after the colon.** Its guide prints the extended
+  format as `id: xxx sub:000 dlvrd:000 submit date: yyMMddHHmm ... stat: <status> err: <error code>
+  text:` — spaced before every placeholder and unspaced before both literal `000`s, which reads as a
+  typographic convention for placeholders rather than as the wire shape. The fixture takes the
+  unspaced form every other operator documents. It matters because the parser reads a field as
+  ending at the first space, so a genuinely spaced receipt yields every field empty, and an unmarked
+  one would arrive as an inbound message. Tolerating a space cannot simply be added: `sub: stat:UNDELIV`
+  would then read `stat:UNDELIV` as the value of `sub`, which is the same ambiguity the other way
+  round. A single receipt off a real LINK link settles it; until then the shape is not guessed at.
 - Whether Telesign's `err:` is really three hex characters or eight. Both readings reach the
-  application unchanged, so nothing in this library turns on it, but a real Telesign link would
-  settle it in one receipt.
+  application unchanged — "hands the err field over as it arrived, whichever width the operator
+  writes" pins that — so nothing in this library turns on it, but a real Telesign link would settle
+  it in one receipt.
 - What `stat:` tyntec's buffered receipt actually carries. The library reads any of `ENROUTE`,
   `SCHEDULED` or `esm_class` 0x20 as non-final, so all three plausible answers behave correctly; a
   fourth, vendor-invented token would read as `UNKNOWN` and final.
 - Whether any operator writes a `stat:` outside Appendix B other than `FAILED`. The
   documented-codes table in `operator-receipts.test.ts` is the place a new one goes, and it fails
   loudly for anything nothing names.
+- Whether `smsIds` carrying an empty entry for a segment the SMSC took but named no id for is the
+  right shape for a caller, or whether that case wants saying differently. It is documented in
+  `README.md` and pinned by the Telesign scenario; the question is a product one, not a correctness
+  one, and belongs to the phase 11 product-owner pass.

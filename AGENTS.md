@@ -206,7 +206,8 @@ exactly 140.
   in `test/session.test.ts` answers the bind and hands every other PDU to the test to answer, and
   stays there because that is a different peer rather than a second copy of this one. The waiting
   helpers each file carries are copies, tolerated because a wrong one fails that file's own tests and
-  nothing else.
+  nothing else, and a helper that only names the parameters of one `objToPdu()` call is on that same
+  footing — it encodes no wire fact `objToPdu()` does not already own.
 - `message_id` values the library generates are UUID v7.
 - A test that needs a dummy peer must `resume()` its sockets. An unread socket never processes the
   peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
@@ -435,7 +436,8 @@ Grouped by what each one constrains.
 
 - **A `stat:` an operator spells outside Appendix B is read as the state it names, and `FAILED` is
   the only researched one that is.** Maintainer's call, 2026-09-08, from the operator-fixture phase:
-  Vonage, Kaleyra and Route Mobile all document `FAILED` in that field, where a code nothing names
+  Kaleyra and Route Mobile both document `FAILED` in that field as a terminal delivery failure, and
+  the research attributes it to Vonage as well, where a code nothing names
   left `statusMsg` at `UNKNOWN` — the same answer a receipt really saying `stat:UNKNOWN` gets, so an
   application could not tell an operator's "it failed" from its "I do not know", and `DlrMerger`
   ranks `UNKNOWN` below `EXPIRED`, reporting a multipart send carrying a failed segment as expired.
@@ -449,6 +451,8 @@ Grouped by what each one constrains.
   their own rather than the seven characters `stat:` holds. Accepted: all three of those operators
   document `FAILED` and `UNDELIV` as separate codes, and both now resolve to `UNDELIVERABLE` — an
   application that must tell them apart reads `dlr.receipt.stat`, which carries what the SMSC wrote.
+  Accepted: an unmarked `deliver_sm` whose body says `FAILED` now reaches the application as a report
+  where it used to arrive as an inbound message, which is what every code already in the table does.
 
 - **A transient state goes out as an intermediate delivery notification (0x20), every other state as
   a delivery receipt (0x04).** Appendix B makes a receipt's `stat` the message's final status, so

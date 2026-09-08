@@ -150,53 +150,53 @@ const fixtures: readonly ReceiptFixture[] = [
 		source: 'https://archive.clickatell.com/developers/api-docs/pdu-details/',
 	},
 	{
-		body: 'id:5be9f816f19992a78c8e26442f8afa50 submit date:2609051430 done date:2609051433 stat:DELIVRD err:000',
+		body: 'id:5be9f816f19992a78c8e26442f8afa50 submit date:20260905143012 done date:20260905143345 stat:DELIVRD err:000',
 		dlr: {
-			doneDate: '2026-09-05T14:33:00.000Z',
+			doneDate: '2026-09-05T14:33:45.000Z',
 			errorCode: '000',
 			intermediate: false,
 			smsId: '5be9f816f19992a78c8e26442f8afa50',
 			statusId: consts.MESSAGE_STATE.DELIVERED,
 			statusMsg: 'DELIVERED',
 		},
-		name: 'CM.com, which writes neither sub nor dlvrd and states the same status twice',
+		name: 'CM.com, which writes a four-digit year, neither sub nor dlvrd, and the status twice',
 		receipt: {
 			dlvrd: undefined,
-			doneDate: '2609051433',
+			doneDate: '20260905143345',
 			err: '000',
 			id: '5be9f816f19992a78c8e26442f8afa50',
 			stat: 'DELIVRD',
 			sub: undefined,
-			submitDate: '2609051430',
+			submitDate: '20260905143012',
 			text: undefined,
 		},
 		source: 'https://developers.cm.com/messaging/docs/smpp',
 		tlvs: { message_state: { tagValue: consts.MESSAGE_STATE.DELIVERED } },
 	},
 	{
-		body: 'id:e9ca671b2497d778d771938333dc0c52 sub:001 dlvrd:000 submit date:260905143000 done date:260905143010 stat:UNKNOWN err:4A6 text:',
+		body: 'id:e9ca671b2497d778d771938333dc0c52 sub:001 dlvrd:000 submit date:260905143000 done date:260905143010 stat:UNDELIV err:4A6 text:',
 		dlr: {
 			doneDate: '2026-09-05T14:30:10.000Z',
 			errorCode: '4A6',
 			intermediate: false,
 			smsId: 'e9ca671b2497d778d771938333dc0c52',
-			statusId: consts.MESSAGE_STATE.SKIPPED,
-			statusMsg: 'SKIPPED',
+			statusId: consts.MESSAGE_STATE.UNDELIVERABLE,
+			statusMsg: 'UNDELIVERABLE',
 		},
-		name: 'Telesign, whose err is hexadecimal and whose message_state 9 the body has no code for',
+		name: 'Telesign, whose err is hexadecimal and whose status is stated in the body and the TLVs alike',
 		receipt: {
 			dlvrd: 0,
 			doneDate: '260905143010',
 			err: '4A6',
 			id: 'e9ca671b2497d778d771938333dc0c52',
-			stat: 'UNKNOWN',
+			stat: 'UNDELIV',
 			sub: 1,
 			submitDate: '260905143000',
 			text: '',
 		},
-		source: 'https://developer.telesign.com/enterprise/docs/sms-smpp-tlvs',
+		source: 'https://developer.telesign.com/enterprise/docs/smpp-protocol',
 		tlvs: {
-			message_state: { tagValue: 9 },
+			message_state: { tagValue: consts.MESSAGE_STATE.UNDELIVERABLE },
 			receipted_message_id: { tagValue: 'e9ca671b2497d778d771938333dc0c52' },
 		},
 	},
@@ -277,14 +277,14 @@ describe('the status codes operators publish', () => {
 		}
 	});
 
-	// LINK Mobility supports no intermediate receipts at all, so it publishes no transient code.
+	// "Only none or final delivery ... are supported" — the SMSC-SMPP User Guide 1.5, sourced below.
 	test('finds none of LINK Mobility\'s among the transient ones', () => {
 		const link = documentedCodes.find(one => one.operator === 'LINK Mobility');
 
 		const transient = transientStates.map(state => receiptCodes[state]);
 
 		assert.ok(link);
-		assert.deepEqual(link.codes.filter(code => transient.includes(code)), []);
+		assert.deepEqual(link.codes.filter(code => transient.includes(code)), [], link.source);
 	});
 });
 
@@ -315,6 +315,22 @@ describe('a receipt whose fields are not where the spec puts them', () => {
 		assert.equal(marked.statusMsg, 'DELIVERED');
 		assert.equal(marked.receipt?.id, undefined);
 		assert.equal(dlrFromPdu(deliverSm(bodyless, undefined, 0)), undefined, 'unmarked, it is a message');
+	});
+
+	// Telesign's page calls err a 3-octet hex code and then gives eight-digit examples of it.
+	test('hands the err field over as it arrived, whichever width the operator writes', () => {
+		for (const err of ['000', '4A6', '000004A6']) {
+			assert.equal(dlrFromPdu(deliverSm(`id:x stat:UNDELIV err:${err}`))?.errorCode, err);
+		}
+	});
+
+	// Every other code the operators publish reclassifies an unmarked deliver_sm the same way.
+	test('reads an unmarked deliver_sm reporting stat:FAILED as a report, not as a message', () => {
+		const dlr = dlrFromPdu(deliverSm('id:2a1f0f1d stat:FAILED err:051 text:none', undefined, 0));
+
+		assert.ok(dlr);
+		assert.equal(dlr.statusMsg, 'UNDELIVERABLE');
+		assert.equal(dlr.smsId, '2a1f0f1d');
 	});
 
 	test('takes the id from the TLV where the body names none', () => {

@@ -2476,9 +2476,10 @@ describe('merged delivery report bounds', () => {
 		const dlrMerger = merger();
 
 		dlrMerger.expect(['5cb0ea53b5d61093529174ca44e23871', '', '']);
-		dlrMerger.expect(['bf53ad8b-1', '40ccdce2-2']);
+		assert.equal(dlrMerger.size, 0, 'an id the peer never named numbers nothing');
 
-		assert.equal(dlrMerger.size, 0, 'nor where every id is numbered off a base of its own');
+		dlrMerger.expect(['bf53ad8b-1', '40ccdce2-2']);
+		assert.equal(dlrMerger.size, 0, 'nor do ids numbered off a base each');
 	});
 
 	// A receipt for whole-3 would otherwise fill the slot whole-2 was registered for, truncating the report.

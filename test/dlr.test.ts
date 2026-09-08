@@ -151,6 +151,29 @@ describe('dlrFromPdu()', () => {
 		}
 	});
 
+	// CM.com documents its receipt dates as yyyyMMddHHmmss; 10, 12 and 14 are three distinct widths.
+	test('reads a receipt date whichever of the three widths the peer writes it in', () => {
+		const at = (date: string): string | undefined =>
+			dlrFromPdu(deliverSm(`id:x stat:DELIVRD done date:${date}`))?.doneDate?.toISOString();
+
+		assert.equal(at('2508251431'), '2025-08-25T14:31:00.000Z');
+		assert.equal(at('250825143145'), '2025-08-25T14:31:45.000Z');
+		assert.equal(at('20250825143145'), '2025-08-25T14:31:45.000Z');
+		assert.equal(at('202508251431'), undefined, 'twelve digits is YYMMDDhhmmss, not a year and no seconds');
+	});
+
+	// message_state 9 is Telesign's SKIPPED, which the seven-character stat field has no code for.
+	test('names a state only the TLV can spell', () => {
+		const dlr = dlrFromPdu(deliverSm('id:x stat:UNKNOWN err:000 text:', {
+			message_state: { tagValue: consts.MESSAGE_STATE.SKIPPED },
+		}));
+
+		assert.ok(dlr);
+		assert.equal(dlr.statusMsg, 'SKIPPED');
+		assert.equal(dlr.statusId, 9);
+		assert.equal(dlr.intermediate, false);
+	});
+
 	test('leaves an impossible receipt date undefined rather than rolling it over', () => {
 		const rolled = dlrFromPdu(deliverSm('id:x stat:DELIVRD done date:9902310000'));
 
