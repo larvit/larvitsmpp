@@ -19,6 +19,8 @@ const receiptStates: Record<string, MessageState> = {
 	DELIVRD: 'DELIVERED',
 	ENROUTE: 'ENROUTE',
 	EXPIRED: 'EXPIRED',
+	// Vonage, Kaleyra and Route Mobile all document this one, and none of them is 3.4's spelling.
+	FAILED: 'UNDELIVERABLE',
 	REJECTD: 'REJECTED',
 	UNDELIV: 'UNDELIVERABLE',
 	UNKNOWN: 'UNKNOWN',

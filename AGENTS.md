@@ -427,6 +427,19 @@ Grouped by what each one constrains.
   nothing, maintainer's call, 2026-09-03, since the codec refuses a zero-length integer TLV and so an
   absent one cannot land there.
 
+- **A `stat:` an operator spells outside Appendix B is read as the state it names, and `FAILED` is
+  the only researched one that is.** Maintainer's call, 2026-09-08, from the operator-fixture phase:
+  Vonage, Kaleyra and Route Mobile all document `FAILED` in that field, where a code nothing names
+  left `statusMsg` at `UNKNOWN` — the same answer a receipt really saying `stat:UNKNOWN` gets, so an
+  application could not tell an operator's "it failed" from its "I do not know", and `DlrMerger`
+  ranks `UNKNOWN` below `EXPIRED`, reporting a multipart send carrying a failed segment as expired.
+  It joins `receiptStates` alone: `receiptCodes` goes on writing `UNDELIV`, so nothing this library
+  sends gains a spelling 3.4 does not define. Rejected: a `FAILED` member of `MESSAGE_STATE`, which
+  is 3.4's own numbered table — the code has no number there, so one would have to be invented, and
+  every consumer's switch would grow a case no `message_state` TLV can carry. Rejected: reading the
+  numeric status tables Syniverse and Route Mobile publish beside it, which are vendor fields of
+  their own rather than the seven characters `stat:` holds.
+
 - **A transient state goes out as an intermediate delivery notification (0x20), every other state as
   a delivery receipt (0x04).** Appendix B makes a receipt's `stat` the message's final status, so
   0x04 over `ENROUTE` emits the two disagreeing spellings of finality the reading side above has to
