@@ -2260,7 +2260,7 @@ describe('the server\'s onRequest hook', () => {
 		assert.deepEqual(seen, [], 'a bind, and everything a peer sends before one, is never the hook\'s');
 	});
 
-	test('passes a request the hook declines through to the sms event', async t => {
+	test('passes a declined request to the sms event, and offers the keepalive and the unbind too', async t => {
 		const seen: string[] = [];
 		const smpp = await startServer(t, {
 			onRequest: (_bound, pduObj) => { seen.push(pduObj.cmdName); return false; },
@@ -2285,7 +2285,6 @@ describe('the server\'s onRequest hook', () => {
 		assert.equal(answered.pduObj.cmdStatus, 'ESME_ROK');
 		assert.equal(paramText(answered.pduObj.params.message_id), answeredId);
 		assert.equal(sms.message, 'declined by the hook');
-		// The keepalive and the shutdown are the hook's too, which is why it has to guard on the name.
 		assert.deepEqual(seen, ['submit_sm', 'enquire_link', 'unbind']);
 	});
 
