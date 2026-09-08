@@ -1,12 +1,14 @@
 import type { EncodingName } from './defs/encodings.ts';
 import type { ParamValue } from './defs/types.ts';
+import type { SubmitMessagingMode } from './defs/constants.ts';
 import type { PduObject, PduObjectInput } from './pdu.ts';
 import type { Result } from './result.ts';
 import type { SmppLog } from './log.ts';
 import type { SmsIdNotation } from './sms-id.ts';
 import { UnansweredError } from './unanswered-error.ts';
-import { consts } from './defs/constants.ts';
+import { consts, defaultMessagingMode, isMessagingMode, isSubmitMessagingMode, submitMessagingModes } from './defs/constants.ts';
 import { detect } from './defs/encodings.ts';
+import { namedValue } from './error-from.ts';
 import { normaliseSmsId } from './sms-id.ts';
 import { paramText } from './defs/types.ts';
 import { maxSegments, smppTime, splitMessage } from './message.ts';
@@ -21,12 +23,17 @@ export type SendSmsOptions = {
 	/** Refuse before sending anything if the message needs more than this many segments. */
 	maxSegments?: number;
 	message: string;
+	/** The esm_class messaging mode, SMPP 3.4 5.2.12. Absent leaves the choice to the SMSC. */
+	messagingMode?: SubmitMessagingMode;
 	scheduleDeliveryTime?: Date | number | string;
 	sourceAddrNpi?: number;
 	sourceAddrTon?: number;
 	to: string;
 	validityPeriod?: Date | number | string;
 };
+
+/** The options as they arrive: a caller without types can put anything in the checked field. */
+export type SendSmsInput = Omit<SendSmsOptions, 'messagingMode'> & { messagingMode?: unknown };
 
 /** Both arrays hold what the peer accepted, so a partial failure names what is already delivered. */
 export type SendSmsResult = {
@@ -52,6 +59,7 @@ export type SendSmsDeps = {
 
 type SegmentOptions = {
 	encoding: EncodingName;
+	messagingMode?: SubmitMessagingMode;
 	multipart: boolean;
 };
 
@@ -67,8 +75,15 @@ function dataCodingFor(encoding: EncodingName, flash: boolean): number {
 	return encoding === 'UCS2' ? 0x18 : 0x10;
 }
 
+/** The mode the caller named sits beside the UDH indicator, which a segment carrying one must keep. */
+function esmClassFor(mode: SubmitMessagingMode | undefined, multipart: boolean): number {
+	const udh = multipart ? consts.ESM_CLASS.UDH_INDICATOR : 0;
+
+	return consts.MESSAGING_MODE[mode ?? defaultMessagingMode] | udh;
+}
+
 export function submitSmParams(
-	sms: SendSmsOptions,
+	sms: SendSmsInput,
 	segment: Buffer,
 	options: SegmentOptions,
 ): Record<string, ParamValue> {
@@ -77,13 +92,13 @@ export function submitSmParams(
 		destination_addr: sms.to,
 		dest_addr_npi: sms.destinationAddrNpi ?? 0,
 		dest_addr_ton: sms.destinationAddrTon ?? addressTon(sms.to),
+		esm_class: esmClassFor(options.messagingMode, options.multipart),
 		short_message: segment,
 		source_addr: sms.from,
 		source_addr_npi: sms.sourceAddrNpi ?? 0,
 		source_addr_ton: sms.sourceAddrTon ?? addressTon(sms.from),
 	};
 
-	if (options.multipart) params.esm_class = consts.ESM_CLASS.UDH_INDICATOR;
 	if (sms.dlr === true) params.registered_delivery = consts.REGISTERED_DELIVERY.FINAL;
 	if (sms.scheduleDeliveryTime !== undefined) {
 		params.schedule_delivery_time = smppTime.encode(sms.scheduleDeliveryTime);
@@ -93,6 +108,36 @@ export function submitSmParams(
 	}
 
 	return params;
+}
+
+function refusedMode(mode: unknown): Error {
+	if (isMessagingMode(mode)) {
+		return new Error(`messagingMode ${mode} is data_sm only (SMPP 3.4 2.10.3), name ${submitMessagingModes.join(', ')}`);
+	}
+
+	return new Error(`messagingMode must be ${submitMessagingModes.join(', ')}, got ${namedValue(mode)}`);
+}
+
+/** SMPP 3.4 2.10.2 defines the delivery report away under datagram mode, so one asked for never comes. */
+function checkedMode(
+	messagingMode: SubmitMessagingMode,
+	dlr: boolean,
+): Result<{ messagingMode: SubmitMessagingMode }> {
+	if (dlr && messagingMode === 'DATAGRAM') {
+		return { err: new Error('messagingMode DATAGRAM has no delivery report to ask for, so dlr must be false') };
+	}
+
+	return { messagingMode };
+}
+
+function checkMessagingMode(
+	mode: unknown,
+	dlr: boolean,
+): Result<{ messagingMode: SubmitMessagingMode }> {
+	if (mode === undefined) return checkedMode(defaultMessagingMode, dlr);
+	if (isSubmitMessagingMode(mode)) return checkedMode(mode, dlr);
+
+	return { err: refusedMode(mode) };
 }
 
 /** Nothing goes on the wire until the whole message fits: a half-sent message bills twice. */
@@ -140,7 +185,11 @@ function collectSent(
 }
 
 /** Puts a message on the wire as one submit_sm per segment. */
-export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise<SendSmsResult> {
+export async function submitSms(deps: SendSmsDeps, sms: SendSmsInput): Promise<SendSmsResult> {
+	const mode = checkMessagingMode(sms.messagingMode, sms.dlr === true);
+
+	if (mode.err) return unsent(mode.err);
+
 	const allowed = sms.maxSegments ?? maxSegments;
 	const encoding = sms.encoding ?? detect(sms.message);
 	const segments = splitMessage(sms.message, { encoding, reference: deps.reference });
@@ -156,7 +205,7 @@ export async function submitSms(deps: SendSmsDeps, sms: SendSmsOptions): Promise
 	// segment before answering — this library's own server does — would otherwise deadlock.
 	const sent = await Promise.all(segments.map(segment => deps.send({
 		cmdName: 'submit_sm',
-		params: submitSmParams(sms, segment, { encoding, multipart }),
+		params: submitSmParams(sms, segment, { encoding, messagingMode: mode.messagingMode, multipart }),
 	})));
 
 	return collectSent(sent, deps.respIdNotation);

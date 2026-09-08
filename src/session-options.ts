@@ -10,6 +10,7 @@ import type { Sms } from './sms.ts';
 import type { Socket } from 'node:net';
 import { backoffDefaults } from './reconnect-loop.ts';
 import { isSmsIdNotation, smsIdNotations, smsIdPlaces } from './sms-id.ts';
+import { namedValue } from './error-from.ts';
 
 export type SessionEvents = {
 	close: [];
@@ -227,8 +228,7 @@ function checkSmsIdFormat(smsIdFormat: unknown): VoidResult {
 
 		if (notation === undefined || isSmsIdNotation(notation)) continue;
 
-		// String() throws on a null-prototype object, and this value is whatever the caller passed.
-		const got = typeof notation === 'string' ? notation : typeof notation;
+		const got = namedValue(notation);
 
 		return { err: new Error(`smsIdFormat.${place} must be ${smsIdNotations.join(' or ')}, got ${got}`) };
 	}

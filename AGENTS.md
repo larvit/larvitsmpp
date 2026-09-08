@@ -76,7 +76,7 @@ src/
 	concat.ts            How a PDU says it is a segment: its UDH, or the sar_* TLVs
 	dlr.ts               Delivery receipts: text and TLV parsing, receipt status codes
 	dlr-merger.ts        DlrMerger: per-segment receipts counted into one MessageDlr
-	error-from.ts        errorFrom(): whatever was thrown or rejected, as an Error
+	error-from.ts        An untyped value as error material: errorFrom() an Error, namedValue() a name
 	expiring-groups.ts   ExpiringGroups: the capped, expiring store both of those share
 	held-messages.ts     HeldMessages: capped, expiring messages the application has not answered
 	idle-waiters.ts      IdleWaiters: waiting for a count to fall to zero, and what is left of a budget
@@ -358,6 +358,29 @@ Grouped by what each one constrains.
   arrive, which goal 2 prefers to a message assembled from two counters. Receive-only: `sendSms()`
   goes on writing a UDH with an 8-bit reference, where a send-side `sar_*` would be a second
   spelling of one message whose only difference is which peers accept it.
+
+- **`sendSms()` takes the messaging mode by name, and it is the only part of `esm_class` a caller
+  writes.** Maintainer's call, 2026-09-06, closing target 5 of the interoperability plan: every peer
+  the suite ran took the 0x40 this library sends on a concatenated segment, but Route Mobile and
+  Kaleyra both document `esm_class` 0x43 for one, and a caller facing either had to hand-build every
+  segment through `send()` — giving up the split, the per-segment ids, the send window and the
+  receipt merge, which is what goal 6 means by beating "the application can do this itself". The four
+  modes of SMPP 3.4 5.2.12 are a `MESSAGING_MODE` constant group and the option takes one of their
+  names, so 0x43 is a composition this library makes rather than a value a caller states, and the UDH
+  indicator a segment carrying a header needs cannot be cleared by anything the option can express.
+  It takes three of those four: 2.10.3 carries transaction mode on `data_sm` alone, and none goes out
+  of here, so `FORWARD` stays in the group that mirrors the spec table and `sendSms()` refuses it by
+  that reason rather than as an unknown name — a mode this library cannot deliver is a promise goal 6
+  will not let it make. `DATAGRAM` with `dlr: true` is refused on the same footing: 2.10.2 defines the
+  report away, so arming `DlrMerger` for one is goal 2's wrong answer, where the mode alone and a
+  report under any other mode both go out untouched. Those three names left `ESM_CLASS`, where they
+  had `constsById.ESM_CLASS` read 0x03 as a whole `esm_class`. Rejected: a raw `esmClass` number,
+  which is exactly that clearable state and would need refusing bit by bit to be safe. Rejected:
+  taking a number beside a name, two spellings of one goal — which is why a value naming no mode is
+  refused, by name, before a segment goes out. Rejected: a session-level default with a per-send
+  override; an operator's requirement is a property of the link, but the library can verify nothing
+  the caller's own options object does not, and shipping both buys a precedence rule to document and
+  test for that. `SMSC_DEFAULT` is named so pinning the default deliberately is sayable.
 
 - **An inbound `data_sm` stands in for whichever of `submit_sm` and `deliver_sm` its direction makes
   it, and none goes out.** Maintainer's call, 2026-09-06, from the Jasmin interoperability phase:

@@ -8,3 +8,8 @@ export function errorFrom(reason: unknown): Error {
 		return new Error('A thrown value that cannot be converted to a string');
 	}
 }
+
+/** String() throws on a null-prototype object or a symbol, so only a string or number is printed. */
+export function namedValue(value: unknown): string {
+	return typeof value === 'string' || typeof value === 'number' ? String(value) : typeof value;
+}

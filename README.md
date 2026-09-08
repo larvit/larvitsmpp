@@ -101,6 +101,7 @@ await session.sendSms({
 	from:                 'MyBrand',   // alphanumeric -> TON 5, digits -> TON 1
 	maxSegments:          10,          // refuse a longer message instead of sending it
 	message:              'Hello world',
+	messagingMode:        'SMSC_DEFAULT', // or DATAGRAM or STORE_FORWARD
 	scheduleDeliveryTime: new Date(Date.now() + 3600_000),
 	sourceAddrNpi:        0,           // override the numbering plan of the sender
 	sourceAddrTon:        5,
@@ -111,6 +112,15 @@ await session.sendSms({
 
 `sourceAddrTon` and `destinationAddrTon` default to 5 for an alphanumeric address and 1 for a
 numeric one; the NPI fields default to 0. Set them for an operator that requires something else.
+
+`messagingMode` names the `esm_class` messaging mode: `SMSC_DEFAULT`, which is what an omitted option
+sends, or `DATAGRAM` or `STORE_FORWARD`. Every segment of a long message carries the user data header
+indicator beside it, so an operator that requires `esm_class` 0x43 on a concatenated message gets
+exactly that from `STORE_FORWARD`. SMPP carries transaction mode on `data_sm`, which this never
+sends, so reach for one of the three above rather than `consts.MESSAGING_MODE.FORWARD`. Datagram mode
+defines the delivery report away, so pair it with `dlr: true` and the send is refused rather than
+leaving you waiting for a report that cannot come — as is any value naming no mode, both before a
+segment goes out.
 
 Messages too long for one SMS are split automatically and sent as a concatenated message. You get
 one id per segment:
@@ -546,6 +556,11 @@ promises and the rough edges taken off.
   for a status code the library does not know, with the raw number in `pduObj.cmdStatusId`.
 - **`defs.filters` is gone.** It was declared on every command and TLV but never invoked, so it did
   nothing. SMPP time formatting, the one part worth keeping, is exported as `smppTime`.
+- **`DATAGRAM`, `FORWARD` and `STORE_FORWARD` moved from `consts.ESM_CLASS` to
+  `consts.MESSAGING_MODE`**, which also names the fourth mode, `SMSC_DEFAULT`. They are bits 1-0 of
+  `esm_class` rather than whole values of it. Read them from the new group, or let `sendSms()` write
+  one for you as `messagingMode`; a stale `consts.ESM_CLASS.STORE_FORWARD` now reads `undefined`,
+  which OR-s into an `esm_class` that silently carries no mode at all.
 - **The `error` event is `sessionError`** (and `serverError` on the server handle).
 - **`log`** takes any object with `debug`, `error`, `info`, `verbose` and `warn` methods instead of a
   `larvitutils` one, and is silent by default. See [Logging](#logging).
