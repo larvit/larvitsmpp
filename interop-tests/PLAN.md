@@ -200,6 +200,8 @@ newer changes stayed consistent with them.
 | `reconnect: { fromStart: true }` (#80) | `client()` resolves only once bound, and only the caller's signal ends the wait. Is that obvious enough that nobody ships a process that hangs at startup? |
 | A receipt's body read as octets (#81) | `dlr.receipt` now parses for peers where it used to be garbage. Anything an application could have been relying on in the broken case? |
 | The abortable send window (in flight) | What an aborted send returns, and whether it counts as `unanswered` — the field an application reads to decide whether resending risks a duplicate. |
+| The named messaging mode (#92) | A caller may now name the `esm_class` messaging mode. Two values are refused — the forward mode outright, and a delivery report asked for under datagram mode. Are those refusals discoverable before they happen, and is refusing better than letting the operator refuse? |
+| An empty entry in `smsIds` (#93) | The SMSC took a segment but named no id for it, so the array carries a gap. It is documented now rather than accidental, but is an array with holes the right thing to hand an application reconciling against later receipts? |
 | The held-message cap against a peer's window (phase 7) | A peer whose window is wider than the 1000 messages this library will hold unanswered makes it evict, so the peer is never answered for those and re-sends or times out. The cap is deliberate and on a constant an application cannot raise, but it is the peer's window that decides whether it is ever reached. Does an application learn it is happening in time to slow down? |
 | All of them together | `sessionError` now carries refused PDUs, lost reassembly groups and failed hooks. Is one channel carrying too many meanings for an application to act on any of them? |
 
@@ -247,7 +249,8 @@ defect; each is a claim resting on the specification and on Node rather than on 
 | 7 | done | [07-load.md](findings/07-load.md) |
 | 8 | dropped | [Untested](#untested) |
 | 9 | done | [09-operator-fixtures.md](findings/09-operator-fixtures.md) |
-| 10–11 | not started | — |
+| 10 | done | Targets 2, 3 and 4 fixed; target 5 answered by the `messagingMode` send option, maintainer's call 2026-09-06 |
+| 11 | not started | — |
 
 Phases 1 to 5 were graded before `run.py` learned to fail an empty capture, so a run whose capture
 never started would have scored green on the wire checks while its own assertions carried it. Every
