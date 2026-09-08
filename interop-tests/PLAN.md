@@ -246,7 +246,8 @@ defect; each is a claim resting on the specification and on Node rather than on 
 | 6 | done | [06-python-php.md](findings/06-python-php.md) |
 | 7 | done | [07-load.md](findings/07-load.md) |
 | 8 | dropped | [Untested](#untested) |
-| 9–11 | not started | — |
+| 9 | done | [09-operator-fixtures.md](findings/09-operator-fixtures.md) |
+| 10–11 | not started | — |
 
 Phases 1 to 5 were graded before `run.py` learned to fail an empty capture, so a run whose capture
 never started would have scored green on the wire checks while its own assertions carried it. Every

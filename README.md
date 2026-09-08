@@ -129,6 +129,10 @@ one id per segment:
 const { err, pduObjs, smsIds, unanswered } = await session.sendSms({ from, message, to });
 ```
 
+`smsIds` is positional with `pduObjs`, and an entry is empty where the SMSC accepted the segment
+without naming an id for it — some name one for the first segment only. No receipt ever matches an
+empty entry.
+
 `err` is set when the SMSC refuses a segment, and it names the status it refused with. Because every
 segment goes on the wire together, `pduObjs` and `smsIds` then hold what the SMSC did accept — enough
 to reconcile against a later receipt, not enough to resend the rest, so treat a partial failure as a
@@ -158,7 +162,9 @@ to tell the two apart. `esm_class` is what tells them apart; where it names no m
 `receipted_message_id` TLV does, and failing both the message body is read for the standard
 `id:` and `stat:` receipt fields. That body is read as text whatever `data_coding` the receipt
 declares, since SMSCs commonly copy the reported message's onto it. An intermediate delivery
-notification is the SMSC reporting as well, not an inbound message.
+notification is the SMSC reporting as well, not an inbound message. `stat:FAILED`, which several
+operators write and SMPP does not define, reads as `UNDELIVERABLE`; `dlr.receipt.stat` carries the
+code the SMSC wrote.
 
 Where the body sits, and which command carried it, changes none of that. An SMSC that leaves
 `sm_length` 0 and puts the body in the `message_payload` TLV — SMPP's way of carrying up to 64 KB,

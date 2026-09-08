@@ -10,15 +10,19 @@ import { paramNumber, paramText } from './defs/types.ts';
 import { udhLength } from './udh.ts';
 
 /**
- * The seven-character status codes carried in a receipt's `stat:` field, mapped to the
- * message_state values they correspond to.
+ * The status codes carried in a receipt's `stat:` field, mapped to the message_state values they
+ * correspond to. Two of them are not the seven characters the field is meant to hold.
  */
 const receiptStates: Record<string, MessageState> = {
 	ACCEPTD: 'ACCEPTED',
 	DELETED: 'DELETED',
+	// CM.com publishes this eight-character spelling of DELIVRD in its own code table.
+	DELIVERD: 'DELIVERED',
 	DELIVRD: 'DELIVERED',
 	ENROUTE: 'ENROUTE',
 	EXPIRED: 'EXPIRED',
+	// Kaleyra and Route Mobile document it as a terminal failure; Appendix B does not define it.
+	FAILED: 'UNDELIVERABLE',
 	REJECTD: 'REJECTED',
 	UNDELIV: 'UNDELIVERABLE',
 	UNKNOWN: 'UNKNOWN',
@@ -82,18 +86,21 @@ function toNumber(value: string | undefined): number | undefined {
 	return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-/** Delivery receipt dates are YYMMDDhhmm, sometimes with seconds. */
+/** Delivery receipt dates are YYMMDDhhmm, sometimes with seconds, and CM.com states the century. */
 function receiptDate(value: string | undefined): Date | undefined {
 	if (value === undefined) return undefined;
 
-	const match = /^(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)?$/.exec(value);
+	// Ten, twelve and fourteen digits, so no width can be read as another.
+	const match = /^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)$/.exec(value)
+		?? /^(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)?$/.exec(value);
 
 	if (!match) return undefined;
 
 	const [, years, months, days, hours, minutes, seconds] = match;
-	const century = Math.floor(new Date().getUTCFullYear() / 100) * 100;
+	const century = years?.length === 4 ? 0 : Math.floor(new Date().getUTCFullYear() / 100) * 100;
+	const year = century + Number(years);
 	const date = new Date(Date.UTC(
-		century + Number(years),
+		year,
 		Number(months) - 1,
 		Number(days),
 		Number(hours),
@@ -101,8 +108,9 @@ function receiptDate(value: string | undefined): Date | undefined {
 		Number(seconds ?? 0),
 	));
 
-	// Date.UTC rolls 31 February over into March rather than refusing it.
-	const rolled = date.getUTCMonth() !== Number(months) - 1
+	// Date.UTC rolls 31 February into March rather than refusing it, and reads year 26 as 1926.
+	const rolled = date.getUTCFullYear() !== year
+		|| date.getUTCMonth() !== Number(months) - 1
 		|| date.getUTCDate() !== Number(days)
 		|| date.getUTCHours() !== Number(hours)
 		|| date.getUTCMinutes() !== Number(minutes)

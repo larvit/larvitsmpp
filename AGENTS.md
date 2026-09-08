@@ -198,9 +198,16 @@ exactly 140.
   preambles or restate what the code says.
 - Test data uses real randomised UUID v7 values, never `aaaa-0000` placeholders.
 - Fixtures that encode the wire are shared so no two files can drift on it: `test/raw-pdus.ts` builds
-  the octets a test writes straight to a socket, the PDUs `objToPdu()` refuses to build included. The
-  waiting helpers each file carries are copies, tolerated because a wrong one fails that file's own
-  tests and nothing else.
+  the octets a test writes straight to a socket, the PDUs `objToPdu()` refuses to build included. So
+  is the peer that answers on its own: `test/dummy-smsc.ts` is the one auto-answering SMSC, because
+  two copies drift in what they answer rather than in what a test asserts, and one that quietly stops
+  answering `enquire_link` fails the file that copied it for a reason nothing in that file names.
+  Reach for it where the peer's answers are not what the test is about; where they are, `smscPeer()`
+  in `test/session.test.ts` answers the bind and hands every other PDU to the test to answer, and
+  stays there because that is a different peer rather than a second copy of this one. The waiting
+  helpers each file carries are copies, tolerated because a wrong one fails that file's own tests and
+  nothing else, and a helper that only names the parameters of one `objToPdu()` call is on that same
+  footing — it encodes no wire fact `objToPdu()` does not already own.
 - `message_id` values the library generates are UUID v7.
 - A test that needs a dummy peer must `resume()` its sockets. An unread socket never processes the
   peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
@@ -426,6 +433,31 @@ Grouped by what each one constrains.
   `SCHEDULED` and undefined in 3.4; a peer that writes it is read as transient rather than as saying
   nothing, maintainer's call, 2026-09-03, since the codec refuses a zero-length integer TLV and so an
   absent one cannot land there.
+
+- **A `stat:` an operator spells outside Appendix B is read as the state it names, and the two
+  researched ones are `FAILED` and CM.com's `DELIVERD`.** Maintainer's call, 2026-09-08, from the
+  operator-fixture phase: Kaleyra and Route Mobile both document `FAILED` in that field as a terminal
+  delivery failure, and the research attributes it to Vonage as well; CM.com's own code table prints
+  `DELIVERD` — eight characters — beside six correct ones. Both were left at `statusMsg: UNKNOWN` —
+  the same answer a receipt really saying `stat:UNKNOWN` gets, so an application could not tell an
+  operator's "it failed" from its "I do not know", nor a delivered message from one whose state
+  could not be read; and `DlrMerger` ranks `UNKNOWN` below `EXPIRED`, reporting a multipart send
+  carrying a failed segment as expired. They join `receiptStates` alone: `receiptCodes` goes on
+  writing the seven characters 3.4 defines, so nothing this library sends gains either spelling. Rejected: a `FAILED` member of `MESSAGE_STATE`, which
+  is 3.4's own numbered table — the code has no number there, so one would have to be invented, and
+  every consumer's switch would grow a case no `message_state` TLV can carry. Rejected: leaving it
+  `UNKNOWN` and sending the application to `dlr.receipt.stat` for the state, which reports a terminal
+  failure as undetermined and leaves the merge ranking it below `EXPIRED`. Rejected: reading the
+  numeric status tables Syniverse and Route Mobile publish beside it, which are vendor fields of
+  their own rather than the seven characters `stat:` holds. Accepted: all three of those operators
+  document `FAILED` and `UNDELIV` as separate codes, and both now resolve to `UNDELIVERABLE` — an
+  application that must tell them apart reads `dlr.receipt.stat`, which carries what the SMSC wrote.
+  Accepted: an unmarked `deliver_sm` whose body says one of them now reaches the application as a
+  report where it used to arrive as an inbound message, which is what every code already in the table
+  does. What decides a spelling is whether the corpus in `test/operator-receipts.test.ts` can cite the
+  page it is printed on and no other code could be meant, which is why `DELIVERD` is read and a
+  spelling nobody publishes is not: a mapping that costs nothing where an operator's own docs merely
+  contain a typo saves an application everything where they do not.
 
 - **A transient state goes out as an intermediate delivery notification (0x20), every other state as
   a delivery receipt (0x04).** Appendix B makes a receipt's `stat` the message's final status, so
@@ -757,3 +789,12 @@ Grouped by what each one constrains.
   `link/` for `link-*`, `reconnect-*`, `pdu-transport` and `send-window`, `messages/` for `sms*`,
   `dlr*`, `message*`, `reassembly` and `udh` — rewrites every import for no change to
   `dist/index.js`, the one published entry. Valid while that map is what a reader navigates by.
+
+- **`test/` stays flat too, and a file there is named for the question it answers rather than for the
+  module it covers.** Architecture review, 2026-09-08, at 18 test files: what keeps that count honest
+  is the naming rule rather than a tree — `operator-receipts.test.ts` holds a corpus defined by where
+  it came from, cutting across four modules, where filing it by module would enter each new operator
+  twice. A split also has to be made twice, since `test` and `test:compiled` each carry a path of
+  their own. The four files that are not tests are the exception the rule needs stated:
+  `dummy-smsc.ts`, `raw-pdus.ts`, `reference-smpp.d.ts` and `teardown.ts` answer no question and are
+  named for what they hold.
