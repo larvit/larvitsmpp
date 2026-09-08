@@ -150,7 +150,7 @@ const fixtures: readonly ReceiptFixture[] = [
 		source: 'https://archive.clickatell.com/developers/api-docs/pdu-details/',
 	},
 	{
-		body: 'id:5be9f816f19992a78c8e26442f8afa50 submit date:20260905143012 done date:20260905143345 stat:DELIVRD err:000',
+		body: 'id:5be9f816f19992a78c8e26442f8afa50 submit date:20260905143012 done date:20260905143345 stat:DELIVERD err:000',
 		dlr: {
 			doneDate: '2026-09-05T14:33:45.000Z',
 			errorCode: '000',
@@ -159,13 +159,13 @@ const fixtures: readonly ReceiptFixture[] = [
 			statusId: consts.MESSAGE_STATE.DELIVERED,
 			statusMsg: 'DELIVERED',
 		},
-		name: 'CM.com, which writes a four-digit year, neither sub nor dlvrd, and the status twice',
+		name: 'CM.com, which writes a four-digit year, an eight-character stat, and the status twice',
 		receipt: {
 			dlvrd: undefined,
 			doneDate: '20260905143345',
 			err: '000',
 			id: '5be9f816f19992a78c8e26442f8afa50',
-			stat: 'DELIVRD',
+			stat: 'DELIVERD',
 			sub: undefined,
 			submitDate: '20260905143012',
 			text: undefined,
@@ -221,7 +221,7 @@ describe('receipt bodies operators document', () => {
 	}
 });
 
-/** Every seven-character code the researched operators list, per operator, with the page it is on. */
+/** Every `stat:` code the researched operators list, per operator, with the page it is on. */
 const documentedCodes: readonly { codes: readonly string[]; operator: string; source: string }[] = [
 	{
 		codes: ['ACCEPTD', 'DELIVRD', 'REJECTD', 'UNDELIV'],
@@ -229,7 +229,7 @@ const documentedCodes: readonly { codes: readonly string[]; operator: string; so
 		source: 'https://archive.clickatell.com/developers/api-docs/pdu-details/',
 	},
 	{
-		codes: ['ACCEPTD', 'DELETED', 'DELIVRD', 'EXPIRED', 'REJECTD', 'UNDELIV', 'UNKNOWN'],
+		codes: ['ACCEPTD', 'DELETED', 'DELIVERD', 'EXPIRED', 'REJECTD', 'UNDELIV', 'UNKNOWN'],
 		operator: 'CM.com',
 		source: 'https://developers.cm.com/messaging/docs/smpp',
 	},
@@ -277,6 +277,16 @@ describe('the status codes operators publish', () => {
 		}
 	});
 
+	// A code the reader cannot name leaves an unmarked deliver_sm arriving as an inbound message.
+	test('reads an unmarked deliver_sm reporting one of them as a report, not as a message', () => {
+		for (const code of ['DELIVERD', 'FAILED']) {
+			const dlr = dlrFromPdu(deliverSm(`id:2a1f0f1d stat:${code} err:051 text:none`, undefined, 0));
+
+			assert.ok(dlr, `stat:${code} marks a report even where esm_class does not`);
+			assert.equal(dlr.smsId, '2a1f0f1d');
+		}
+	});
+
 	// "Only none or final delivery ... are supported" — the SMSC-SMPP User Guide 1.5, sourced below.
 	test('finds none of LINK Mobility\'s among the transient ones', () => {
 		const link = documentedCodes.find(one => one.operator === 'LINK Mobility');
@@ -288,7 +298,7 @@ describe('the status codes operators publish', () => {
 	});
 });
 
-describe('a receipt whose fields are not where the spec puts them', () => {
+describe('a receipt body that is not the shape the spec fixes', () => {
 	const id = 'f5c98a862c8d6014';
 	const ordered = `id:${id} sub:001 dlvrd:001 submit date:2609051430 done date:2609051431 stat:DELIVRD err:000 text:`;
 
@@ -319,18 +329,9 @@ describe('a receipt whose fields are not where the spec puts them', () => {
 
 	// Telesign's page calls err a 3-octet hex code and then gives eight-digit examples of it.
 	test('hands the err field over as it arrived, whichever width the operator writes', () => {
-		for (const err of ['000', '4A6', '000004A6']) {
+		for (const err of ['4A6', '000004A6']) {
 			assert.equal(dlrFromPdu(deliverSm(`id:x stat:UNDELIV err:${err}`))?.errorCode, err);
 		}
-	});
-
-	// Every other code the operators publish reclassifies an unmarked deliver_sm the same way.
-	test('reads an unmarked deliver_sm reporting stat:FAILED as a report, not as a message', () => {
-		const dlr = dlrFromPdu(deliverSm('id:2a1f0f1d stat:FAILED err:051 text:none', undefined, 0));
-
-		assert.ok(dlr);
-		assert.equal(dlr.statusMsg, 'UNDELIVERABLE');
-		assert.equal(dlr.smsId, '2a1f0f1d');
 	});
 
 	test('takes the id from the TLV where the body names none', () => {

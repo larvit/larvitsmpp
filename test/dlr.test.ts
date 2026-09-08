@@ -160,6 +160,7 @@ describe('dlrFromPdu()', () => {
 		assert.equal(at('250825143145'), '2025-08-25T14:31:45.000Z');
 		assert.equal(at('20250825143145'), '2025-08-25T14:31:45.000Z');
 		assert.equal(at('202508251431'), undefined, 'twelve digits is YYMMDDhhmmss, not a year and no seconds');
+		assert.equal(at('00250825143145'), undefined, 'Date.UTC would read year 25 as 1925');
 	});
 
 	// message_state 9 is Telesign's SKIPPED, which the seven-character stat field has no code for.

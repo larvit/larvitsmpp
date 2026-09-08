@@ -28,7 +28,7 @@ UDH and `test/session.test.ts` the `DlrMerger` fact the Telesign scenario turned
 
 ## What the research settles, and what it does not
 
-Three things in topic 5 could not be taken at face value, and are recorded rather than guessed at:
+Several things in topic 5 could not be taken at face value, and are recorded rather than guessed at:
 
 - **Telesign's `err` width contradicts itself.** The page calls it "a 3-octet hex code" and then
   gives 8-hex-digit examples (`0x000004A6`), which is four octets
@@ -75,7 +75,7 @@ seven characters `stat:` holds, and LINK Mobility's `registered_delivery=0x21` i
 | C16 Infobip: `stat:ENROUTE` marked `esm_class` 0x04 | pass | "Infobip, reporting ENROUTE in an ordinary receipt that carries no text field at all" — `intermediate` true off the state where the marker says final, and `receipt.text` stays `undefined` |
 | C16 Clickatell: the exact documented body | pass | "Clickatell, whose dates carry seconds" — every field of the documented order, 12-octet dates |
 | C16 Telesign: hex `err:`, one id per concatenated send | pass | "Telesign, whose err is hexadecimal and whose status is stated in the body and the TLVs alike"; "hands the err field over as it arrived, whichever width the operator writes"; "hands back what landed where only the first segment is answered with one" |
-| C16 CM.com: a four-digit year, no `sub:` or `dlvrd:` | fail, then fixed | "CM.com, which writes a four-digit year, neither sub nor dlvrd, and the status twice" — absent fields stay `undefined` and the `message_state` TLV agrees with `stat:`, but the documented `yyyyMMddHHmmss` date failed against `83176f5`; see Defects |
+| C16 CM.com: a four-digit year, an eight-character `stat:`, no `sub:` or `dlvrd:` | fail, then fixed | "CM.com, which writes a four-digit year, an eight-character stat, and the status twice" — absent fields stay `undefined` and the `message_state` TLV agrees with `stat:`, but both the documented `yyyyMMddHHmmss` date and the documented `stat:DELIVERD` failed against `83176f5`; see Defects |
 | C16 a receipt with no `id:` at all | pass | "settles a status against no message where a marked receipt names no id" — marked, `smsId` is undefined and the status still settles; unmarked, the same body arrives as an `sms`. "takes the id from the TLV where the body names none" covers the third case |
 | C16 fields in another order | pass | "reads the same fields whatever order they arrive in"; "reads the rest of the line as the text where a peer does not write text last" |
 | C16 hex `message_id` against a decimal `id:` | pass | "correlates the receipt against the send once both notations are named" and "leaves the two incomparable where neither notation is named" |
@@ -112,6 +112,27 @@ operator's "it failed" from its "I do not know", and `DlrMerger` ranks `UNKNOWN`
 **Fixed** in this phase: one entry added to `receiptStates` in `src/dlr.ts`. `receiptCodes` is
 untouched, so this library still only ever writes `UNDELIV`. Decision recorded in the root
 `AGENTS.md` under "The wire".
+
+### CM.com's own `stat:` spelling read as `UNKNOWN`
+
+**What happened.** A receipt spelled the way CM.com's code table prints it reached the application as
+`statusMsg: 'UNKNOWN'`. Unmarked, it arrived as an inbound `sms` rather than as a report at all.
+
+**What the operator's docs say.** The "Message state values" table at
+https://developers.cm.com/messaging/docs/smpp gives the code column as `DELIVERD` — eight
+characters — beside `EXPIRED`, `DELETED`, `UNDELIV`, `ACCEPTD`, `UNKNOWN` and `REJECTD`, which are
+all correct Appendix B codes. The page prints `DELIVERD` four times and `DELIVRD` not once, verified
+by fetching it.
+
+**Reproducer.** `operator-receipts.test.ts` "names a state of its own for every one of them", whose
+CM.com row now carries the published spelling, and the CM.com fixture.
+
+**Severity.** The same class as `stat:FAILED` below, on the most common status there is: an
+application could not tell a delivered message from one whose state the library could not read.
+
+**Fixed** in this phase: one entry in `receiptStates`. Whether CM.com's table is a typo or its wire
+spelling, reading it costs nothing — no other code could be meant, and `receiptCodes` still writes
+only `DELIVRD`.
 
 ### A receipt date carrying its century dropped
 

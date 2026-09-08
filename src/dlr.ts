@@ -16,6 +16,8 @@ import { udhLength } from './udh.ts';
 const receiptStates: Record<string, MessageState> = {
 	ACCEPTD: 'ACCEPTED',
 	DELETED: 'DELETED',
+	// CM.com publishes this eight-character spelling of DELIVRD in its own code table.
+	DELIVERD: 'DELIVERED',
 	DELIVRD: 'DELIVERED',
 	ENROUTE: 'ENROUTE',
 	EXPIRED: 'EXPIRED',

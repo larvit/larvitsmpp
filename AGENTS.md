@@ -434,10 +434,11 @@ Grouped by what each one constrains.
   nothing, maintainer's call, 2026-09-03, since the codec refuses a zero-length integer TLV and so an
   absent one cannot land there.
 
-- **A `stat:` an operator spells outside Appendix B is read as the state it names, and `FAILED` is
-  the only researched one that is.** Maintainer's call, 2026-09-08, from the operator-fixture phase:
-  Kaleyra and Route Mobile both document `FAILED` in that field as a terminal delivery failure, and
-  the research attributes it to Vonage as well, where a code nothing names
+- **A `stat:` an operator spells outside Appendix B is read as the state it names, and the two
+  researched ones are `FAILED` and CM.com's `DELIVERD`.** Maintainer's call, 2026-09-08, from the
+  operator-fixture phase: Kaleyra and Route Mobile both document `FAILED` in that field as a terminal
+  delivery failure, and the research attributes it to Vonage as well; CM.com's own code table prints
+  `DELIVERD` — eight characters — beside six correct ones. Where a code nothing names
   left `statusMsg` at `UNKNOWN` — the same answer a receipt really saying `stat:UNKNOWN` gets, so an
   application could not tell an operator's "it failed" from its "I do not know", and `DlrMerger`
   ranks `UNKNOWN` below `EXPIRED`, reporting a multipart send carrying a failed segment as expired.
@@ -451,8 +452,12 @@ Grouped by what each one constrains.
   their own rather than the seven characters `stat:` holds. Accepted: all three of those operators
   document `FAILED` and `UNDELIV` as separate codes, and both now resolve to `UNDELIVERABLE` — an
   application that must tell them apart reads `dlr.receipt.stat`, which carries what the SMSC wrote.
-  Accepted: an unmarked `deliver_sm` whose body says `FAILED` now reaches the application as a report
-  where it used to arrive as an inbound message, which is what every code already in the table does.
+  Accepted: an unmarked `deliver_sm` whose body says one of them now reaches the application as a
+  report where it used to arrive as an inbound message, which is what every code already in the table
+  does. What decides a spelling is whether the corpus in `test/operator-receipts.test.ts` can cite the
+  page it is printed on and no other code could be meant, which is why `DELIVERD` is read and a
+  spelling nobody publishes is not: a mapping that costs nothing where an operator's own docs merely
+  contain a typo saves an application everything where they do not.
 
 - **A transient state goes out as an intermediate delivery notification (0x20), every other state as
   a delivery receipt (0x04).** Appendix B makes a receipt's `stat` the message's final status, so

@@ -131,7 +131,7 @@ const { err, pduObjs, smsIds, unanswered } = await session.sendSms({ from, messa
 
 `smsIds` is positional with `pduObjs`, and an entry is empty where the SMSC accepted the segment
 without naming an id for it — some name one for the first segment only. No receipt ever matches an
-empty entry, so a comparison against it stays correct; there is simply nothing to compare.
+empty entry.
 
 `err` is set when the SMSC refuses a segment, and it names the status it refused with. Because every
 segment goes on the wire together, `pduObjs` and `smsIds` then hold what the SMSC did accept — enough

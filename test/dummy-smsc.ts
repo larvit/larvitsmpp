@@ -48,11 +48,12 @@ export async function dummySmsc(t: TestContext, options: DummySmscOptions = {}):
 				if (!pduObj || pduObj.cmdName.endsWith('_resp')) continue;
 
 				// Only a submit takes an id from the list; a bind answered off it shifts every fixture.
-				const answer = pduObj.cmdName === 'submit_sm'
+				const submitted = pduObj.cmdName === 'submit_sm';
+				const answer = submitted
 					? pduReturn(pduObj, 'ESME_ROK', { message_id: nextId() })
 					: pduReturn(pduObj, 'ESME_ROK', { system_id: 'dummy' });
 
-				if (pduObj.cmdName === 'submit_sm') octets.push(pdu);
+				if (submitted) octets.push(pdu);
 
 				// Writing nothing leaves the test waiting out its own timeout with nothing naming why.
 				assert.ok(answer.buffer, `the dummy SMSC has no answer for ${pduObj.cmdName}`);
