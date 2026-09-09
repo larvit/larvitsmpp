@@ -429,8 +429,7 @@ describe('sendSms()', () => {
 		assert.equal(sent.err, undefined);
 		assert.equal(attempts.length, 4);
 
-		// Counted against the same ceiling off the 134-octet budget an unpacked alphabet gets.
-		const latin1 = 'å'.repeat(134 * 4);
+		const latin1 = 'å'.repeat(153 * 3);
 		const overLatin1 = await submitSms(deps, { encoding: 'LATIN1', from: '46701113311', maxSegments: 3, message: latin1, to: '46709771337' });
 
 		assert.ok(overLatin1.err instanceof Error);

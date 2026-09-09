@@ -12,7 +12,6 @@ import {
 // Through the public surface: an application handed a PduObject needs this same answer.
 import { encodings, isEncodingName, messageOctets, objToPdu, pduToObj } from '../src/index.ts';
 
-/** An SMS carries 140 octets on the air, whatever the alphabet. */
 const singleSmsOctets = 140;
 
 describe('bitCount()', () => {
@@ -72,8 +71,6 @@ describe('splitMessage()', () => {
 		}
 	});
 
-	// 153 is the septet count the SMSC packs into 134 octets. Latin-1 is never packed, so budgeting
-	// 153 characters for it put 159 octets on the air against the 140 an SMS carries.
 	test('fits a concatenated Latin-1 segment into the 140 octets an SMS carries', () => {
 		const message = 'å'.repeat(300);
 		const segments = splitMessage(message, { encoding: 'LATIN1', reference: 0x4B });
