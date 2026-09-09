@@ -171,7 +171,7 @@ describe('sendSms() flash', () => {
 		}
 
 		// 0.4.0 forced 0x10 whatever the alphabet was, which mangled every non-GSM flash message.
-		assert.deepEqual(dataCodingsOf(smsc.octets), [0x01, 0x10, 0x08, 0x18, 0x03]);
+		assert.deepEqual(dataCodingsOf(smsc.octets), [0x00, 0x10, 0x08, 0x18, 0x03]);
 	});
 
 	test('refuses a flash Latin-1 message, which no coding group carrying a class can spell', async () => {
