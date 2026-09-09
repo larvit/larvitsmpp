@@ -136,6 +136,21 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
+- [ ] **A send the codec will refuse waits for a link and a window slot first.** `refuse()` in
+      `outgoing-requests.ts` runs `misuse()` and the abort check before the wait, precisely so a call
+      that can never go out does not queue for what it will never use; a body `objToPdu()` refuses on
+      every attempt is the same case, and #98 made it a common one. On a down link the caller waits
+      `responseTimeout` and is told the link failed rather than that the body could not be built —
+      goal 2's wrong answer about what happened. The cheap fix builds the PDU twice, so the shape is
+      the open half. Raised by the architecture review of
+      [#98](https://github.com/larvit/larvitsmpp/pull/98), 2026-09-09.
+
+- [ ] **`message.ts` answers two questions.** Message coding and the SMPP time format (`smppDate`,
+      `smppTime`) share the file, which the architecture map in AGENTS.md already spells out as four
+      concerns. Nothing is wrong today; if the file has to move for another reason, `smpp-time.ts` is
+      the split. Raised by the architecture review of
+      [#98](https://github.com/larvit/larvitsmpp/pull/98), 2026-09-09.
+
 - [ ] **A gate that refuses a floating version anywhere in the repo.** Maintainer's ask on
       [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the `release.yaml`
       pinning thread, which stays open until this lands. Pinning every action and runner by hand is
