@@ -246,21 +246,40 @@ describe('a body the PDU\'s own data_coding cannot carry', () => {
 	});
 
 	test('ignores a short_message on a command that declares none, which the wire never carries', () => {
-		const input: PduObjectInput = {
-			cmdName: 'data_sm',
-			params: { destination_addr: to, short_message: 'x', source_addr: from },
-			tlvs: { message_payload: { tagValue: 'あいう' } },
-		};
-		const built = objToPdu(input);
+		for (const short of ['x', Buffer.from([0xDE, 0xAD])]) {
+			const input: PduObjectInput = {
+				cmdName: 'data_sm',
+				params: { destination_addr: to, short_message: short, source_addr: from },
+				tlvs: { message_payload: { tagValue: 'あいう' } },
+			};
+			const built = objToPdu(input);
 
-		assert.equal(built.err, undefined);
-		assert.ok(built.buffer);
+			assert.equal(built.err, undefined);
+			assert.ok(built.buffer);
 
-		const { pduObj } = pduToObj(built.buffer);
+			const { pduObj } = pduToObj(built.buffer);
 
-		assert.ok(pduObj);
-		assert.equal(pduObj.params.data_coding, 0x08);
-		assert.equal(messageOctets(pduObj)?.toString('hex'), '304230443046');
+			assert.ok(pduObj);
+			assert.equal(pduObj.params.data_coding, 0x08, JSON.stringify(short));
+			assert.equal(messageOctets(pduObj)?.toString('hex'), '304230443046');
+		}
+	});
+
+	test('leaves data_coding at its default where an empty short_message is the whole body', () => {
+		for (const short of ['', Buffer.alloc(0)]) {
+			const built = objToPdu({
+				cmdName: 'submit_sm',
+				params: { destination_addr: to, short_message: short, source_addr: from },
+			});
+
+			assert.equal(built.err, undefined);
+			assert.ok(built.buffer);
+
+			const { pduObj } = pduToObj(built.buffer);
+
+			assert.ok(pduObj);
+			assert.equal(pduObj.params.data_coding, 0, JSON.stringify(short));
+		}
 	});
 
 	test('never refuses a Buffer body, whatever the coding, because that is how binary is sent', () => {
