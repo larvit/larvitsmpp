@@ -132,7 +132,7 @@ export function smppDate(date: Date): string {
 		+ pad(date.getUTCMinutes(), 2);
 }
 
-/** The relative format spells days in two digits, so 99d 23:59:59 is every period it reaches. */
+/** A second count is spelled in days and below: no fixed number of seconds is a month or a year. */
 const maxRelativeSeconds = 99 * 86400 + 86399;
 
 const absoluteTime = /^(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d)(\d\d)([+-])$/;
@@ -143,7 +143,7 @@ export const smppTime = {
 	/**
 	 * A Date becomes an absolute UTC time; a number is a relative period in seconds, expressed in
 	 * days and below; a string is a stamp the caller formatted itself and is passed through. A value
-	 * naming no instant, and a period the relative format cannot hold, are refused.
+	 * naming no instant, and a second count no day field reaches, are refused.
 	 */
 	encode(value: Date | number | string): Result<{ text: string }> {
 		if (typeof value === 'string') return { text: value };
@@ -153,8 +153,12 @@ export const smppTime = {
 
 			const seconds = Math.floor(value);
 
-			if (seconds < 0 || seconds > maxRelativeSeconds) {
-				return { err: new Error(`A relative period runs 0 to ${String(maxRelativeSeconds)} seconds (99d 23:59:59), got ${String(value)}; pass a Date for an instant past that`) };
+			if (seconds < 0) {
+				return { err: new Error(`A relative period cannot be negative, got ${String(value)}`) };
+			}
+
+			if (seconds > maxRelativeSeconds) {
+				return { err: new Error(`A period in seconds is spelled in days and below, so ${String(maxRelativeSeconds)} (99d 23:59:59) is the most, got ${String(value)}; pass a Date for an instant further out`) };
 			}
 
 			return {

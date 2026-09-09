@@ -110,9 +110,10 @@ await session.sendSms({
 }, { signal });                       // optional per-call AbortSignal
 ```
 
-One rule decides every refusal below, and every refusal `session.send()` makes: the library checks
-what it composes for you — an alphabet or a time you named, a string body under a `data_coding` you
-named — and passes on whatever you formed yourself, a `Buffer` body or a stamp you formatted.
+One rule decides which choices of yours this library second-guesses, here and on `session.send()`:
+it checks what it composes for you — an alphabet or a time you named, a string body under a
+`data_coding` you named — and passes on whatever you formed yourself, a `Buffer` body or a stamp you
+formatted.
 
 `sourceAddrTon` and `destinationAddrTon` default to 5 for an alphanumeric address and 1 for a
 numeric one; the NPI fields default to 0. Set them for an operator that requires something else.
@@ -129,8 +130,8 @@ segment goes out.
 `encoding` names the alphabet, and is `ASCII` (GSM 03.38's own 7-bit table), `LATIN1` or `UCS2`;
 anything else is refused by name rather than guessed at. Leave it out and a message that fits GSM
 7-bit goes as `ASCII` and everything else as `UCS2`; `LATIN1` is only ever used when you name it.
-`consts.ENCODING` is not this option's vocabulary: it holds raw `data_coding` values for the
-low-level PDU surface, `FLASH` and the alphabets this library implements no codec for included.
+`consts.ENCODING` is the low-level surface's `data_coding` table rather than this option's list,
+`FLASH` and the alphabets no codec here implements included.
 
 An alphabet you name has to carry the message: `LATIN1` beside a character above U+00FF, or `ASCII`
 beside one GSM 03.38 has no code for, is refused before anything goes out, and the error names the
@@ -142,8 +143,9 @@ body and the `data_coding` you want; see [Working with PDUs directly](#working-w
 
 `scheduleDeliveryTime` and `validityPeriod` take a `Date`, a number of seconds, or a stamp you
 formatted yourself. One that names no time — an invalid `Date`, `NaN`, `Infinity` — is refused
-before anything goes out, and so is a number of seconds outside the 0 to 99 days 23:59:59 SMPP's
-relative format holds: name an instant further out as a `Date`, which goes out absolute.
+before anything goes out, and so is a negative number of seconds or one past 99 days 23:59:59: a
+period counted in seconds is spelled in days and below, since no fixed number of them is a month or
+a year. Name an instant further out as a `Date`, which goes out absolute.
 
 `flash` asks for GSM 03.38 message class 0, the class a handset shows on arrival instead of storing.
 It travels in `data_coding` beside the alphabet, so a flash UCS2 message stays UCS2. Pairing it with
@@ -595,12 +597,11 @@ code point and where it is. A `Buffer` goes out exactly as given under any `data
 how binary payloads, hand-built user data headers and deliberately malformed bodies are sent.
 `session.send()` and `session.sendReturn()` build through the same codec and refuse the same bodies.
 
-Composing a message by hand takes the send-side helpers: `unencodable(message, encoding)` gives
+Composing a message by hand takes the send-side pair: `unencodable(message, encoding)` gives
 `{ char, index }` for the first character an alphabet cannot carry and `undefined` where it carries
-them all, which is the check `sendSms()` makes before it encodes anything, and `unencodableText(at)`
-turns that into the wording every refusal here uses; `smppTime.encode(value)` returns `{ err, text }`
-for a `validity_period` or `schedule_delivery_time`, as `smppTime.decode()` returns `{ err, date }`
-for one that arrived.
+them all, which is the check `sendSms()` makes before it encodes anything; `smppTime.encode(value)`
+returns `{ err, text }` for a `validity_period` or `schedule_delivery_time`, as `smppTime.decode()`
+returns `{ err, date }` for one that arrived.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.

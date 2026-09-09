@@ -639,7 +639,12 @@ Grouped by what each one constrains.
   and deliberately malformed bodies `interop-tests/` builds are all still buildable — and a string
   with no `data_coding` is untouched, detection carrying every character it was picked for. The
   guard is `unencodable()` again rather than a second reading, and `unencodableText()` is the
-  character, its code point and its index said once for both refusals. It is reached through
+  character, its code point and its index said once for both refusals — unexported where
+  `unencodable()` is published, since wording `{ char, index }` into a sentence rewrites no read a
+  caller would get wrong, where asking the codec is, and publishing it would freeze this library's
+  error prose as API for an application whose own refusal should read like itself. Goal 6, from the
+  architecture review of [#99](https://github.com/larvit/larvitsmpp/pull/99), 2026-09-09. It is
+  reached through
   `encodeBody()` in `message.ts`, which is where the `data_coding`-to-text pair already lives:
   `encodeBody(text, dataCoding)` is `decodeMessage(buffer, dataCoding)`'s mirror and resolves the
   alphabet through the same `encodingByDataCoding()`. `send()` and `sendReturn()` inherit it,

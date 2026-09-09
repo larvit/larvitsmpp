@@ -9,7 +9,6 @@ import { objToPdu, pduToObj } from '../src/pdu.ts';
 import { paramNumber, paramText } from '../src/defs/types.ts';
 import { silentLog } from '../src/log.ts';
 import { submitSms } from '../src/send-sms.ts';
-import { unencodable, unencodableText } from '../src/index.ts';
 
 const from = '46701113311';
 const to = '46709771337';
@@ -67,16 +66,6 @@ describe('an alphabet the caller named that cannot carry the message', () => {
 		assert.match(sent.err.message, /U\+00EF/);
 		assert.match(sent.err.message, /index 6/);
 		assert.equal(attempts.length, 0);
-	});
-
-	test('names the character in the wording the published unencodableText() builds', async () => {
-		const message = 'ab\u{1F600}';
-		const sent = await submitSms(recordingDeps([]), { encoding: 'LATIN1', from, message, to });
-		const lost = unencodable(message, 'LATIN1');
-
-		assert.ok(sent.err instanceof Error);
-		assert.ok(lost);
-		assert.ok(sent.err.message.includes(unencodableText(lost)), sent.err.message);
 	});
 
 	test('never refuses UCS2, which carries every character there is', async () => {

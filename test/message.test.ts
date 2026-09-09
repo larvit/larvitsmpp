@@ -243,16 +243,33 @@ describe('smppTime', () => {
 		assert.equal(smppTime.encode(99 * 86400 + 86399).text, '000099235959000R');
 	});
 
-	test('refuses a period outside the relative format rather than clamping it, naming the Date spelling', () => {
-		for (const seconds of [-1, 99 * 86400 + 86400, 86400 * 365]) {
+	test('refuses a second count past the day field rather than clamping it, naming the Date spelling', () => {
+		for (const seconds of [99 * 86400 + 86400, 86400 * 365]) {
 			const encoded = smppTime.encode(seconds);
 
 			assert.ok(encoded.err instanceof Error, String(seconds));
 			assert.equal(encoded.text, undefined);
-			assert.match(encoded.err.message, /Date/);
+			assert.match(encoded.err.message, /pass a Date/);
 		}
 
 		assert.equal(smppTime.encode(0).text, '000000000000000R');
+	});
+
+	test('refuses a negative period without sending the caller to the Date that cannot help', () => {
+		const encoded = smppTime.encode(-1);
+
+		assert.ok(encoded.err instanceof Error);
+		assert.equal(encoded.text, undefined);
+		assert.match(encoded.err.message, /cannot be negative/);
+		assert.doesNotMatch(encoded.err.message, /Date/);
+	});
+
+	// The format carries years and months that no fixed second count maps to, so encode() stops at days.
+	test('decodes the years and months the relative format holds but a second count cannot name', () => {
+		const { err, date } = smppTime.decode('010000000000000R');
+
+		assert.equal(err, undefined);
+		assert.equal(date.getUTCFullYear(), new Date().getUTCFullYear() + 1);
 	});
 
 	test('passes an already-formatted string through', () => {
