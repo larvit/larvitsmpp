@@ -127,16 +127,16 @@ export function tagIdOf(name: string, input: TlvInput): Result<{ tagId: number }
 }
 
 /** Each TLV as its four octet header and the value the tag's own wire type writes. */
-export function writeTlvs(tlvs: Record<string, TlvInput> | undefined): Result<{ chunks: Buffer[] }> {
+export function writeTlvs(inputs: Record<string, TlvInput> | undefined): Result<{ chunks: Buffer[] }> {
 	const chunks: Buffer[] = [];
 
-	for (const [name, tlv] of Object.entries(tlvs ?? {})) {
-		const tag = tagIdOf(name, tlv);
+	for (const [name, input] of Object.entries(inputs ?? {})) {
+		const tag = tagIdOf(name, input);
 
 		if (tag.err) return { err: tag.err };
 
 		const type = tlvsById[tag.tagId]?.type ?? tlvDefault;
-		const sized = type.size(tlv.tagValue);
+		const sized = type.size(input.tagValue);
 
 		if (sized.err) {
 			return { err: new Error(`TLV "${name}": ${sized.err.message}`) };
@@ -151,7 +151,7 @@ export function writeTlvs(tlvs: Record<string, TlvInput> | undefined): Result<{ 
 		chunk.writeUInt16BE(tag.tagId, 0);
 		chunk.writeUInt16BE(sized.size, 2);
 
-		const written = type.write(tlv.tagValue, chunk, 4);
+		const written = type.write(input.tagValue, chunk, 4);
 
 		if (written.err) {
 			return { err: new Error(`TLV "${name}": ${written.err.message}`) };

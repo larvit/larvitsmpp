@@ -97,18 +97,24 @@ function carriesOctets(value: ParamValue | undefined): boolean {
 	return Buffer.isBuffer(value) && value.length > 0;
 }
 
-/** Encoded in place, settling data_coding where the mandatory field carries nothing to read. */
+/** The short_message the command's own table will write, since writeParams() ignores any other. */
+function writtenBody(definition: CommandDefinition, value: ParamValue | undefined): ParamValue | undefined {
+	return definition.params?.short_message === undefined ? undefined : value;
+}
+
+/** Encoded in place, settling data_coding where `settles` says no mandatory field will carry it. */
 function resolveCarried(
 	resolved: ResolvedBody,
-	tlvs: Record<string, TlvInput> | undefined,
+	inputs: Record<string, TlvInput> | undefined,
 	dataCoding: number | undefined,
+	settles: boolean,
 ): VoidResult {
-	for (const carried of carriedBodies(tlvs)) {
+	for (const carried of carriedBodies(inputs)) {
 		const encoded = encodeBody(carried.text, dataCoding);
 
 		if (encoded.err) return { err: new Error(`TLV "${carried.name}": ${encoded.err.message}`) };
 
-		if (!carriesOctets(resolved.params.short_message)) resolved.params.data_coding = encoded.dataCoding;
+		if (settles) resolved.params.data_coding = encoded.dataCoding;
 
 		resolved.tlvs = { ...resolved.tlvs, [carried.name]: { ...carried.tlv, tagValue: encoded.buffer } };
 	}
@@ -122,7 +128,7 @@ function resolveBody(
 	tlvs: Record<string, TlvInput> | undefined,
 	definition: CommandDefinition,
 ): Result<ResolvedBody> {
-	const message = definition.params?.short_message === undefined ? undefined : params.short_message;
+	const message = writtenBody(definition, params.short_message);
 	const resolved: ResolvedBody = { params: { ...params }, tlvs };
 
 	if (Buffer.isBuffer(message) && params.sm_length === undefined) {
@@ -136,15 +142,19 @@ function resolveBody(
 			return { err: new Error(`Parameter "short_message" of "${definition.command}": ${encoded.err.message}`) };
 		}
 
-		resolved.params.data_coding = encoded.dataCoding;
+		if (carriesOctets(encoded.buffer)) resolved.params.data_coding = encoded.dataCoding;
+
 		resolved.params.short_message = encoded.buffer;
 		resolved.params.sm_length = encoded.buffer.length;
 	}
 
+	// Only octets the command's own table will write can settle the alphabet the PDU declares.
+	const settles = !carriesOctets(writtenBody(definition, resolved.params.short_message));
 	const carried = resolveCarried(
 		resolved,
 		tlvs,
-		carriesOctets(resolved.params.short_message) ? codingOf(resolved.params) : codingOf(params),
+		settles ? codingOf(params) : codingOf(resolved.params),
+		settles,
 	);
 
 	return carried.err ? { err: carried.err } : resolved;

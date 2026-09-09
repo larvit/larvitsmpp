@@ -648,7 +648,9 @@ Grouped by what each one constrains.
   order `messageOctets()` reads the two in, so the alphabet a PDU declares is the one its body will
   be read under — and a `short_message` on a command whose table declares none is ignored here as
   `writeParams()` ignores it, so an empty one, an absent one and one the wire cannot carry are the
-  same input rather than three. Every entry carrying the payload tag is resolved, by tag id rather
+  same input rather than three. A `data_coding` on a command that declares no such field is honoured
+  the other way round, since it is `replace_sm`'s only way to name the alphabet its octets are in.
+  Every entry carrying the payload tag is resolved, by tag id rather
   than by record key, since `tagIdOf()` lets a caller name it anything and a spelling that escaped
   the guard would be a second spelling that disagrees about correctness. Rejected: refusing a string
   `message_payload` outright and demanding
