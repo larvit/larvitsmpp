@@ -441,9 +441,9 @@ Grouped by what each one constrains.
   class 0 rather than special-cased into a wrong answer; 01xx is read for the same reason, 03.38
   coding it exactly as 00xx. Rejected: reading only the two groups the defect named, which needs an
   extra test to produce a wrong answer for a class the spec puts in plain sight. Send-side: `flash`
-  is that class, so it goes out as 0x18 beside UCS2 and 0x10 beside GSM 7-bit, and `encoding:
-  'LATIN1'` beside it is refused before a segment goes out, the way a messaging mode this library
-  cannot deliver is — 03.38's class groups hold GSM 7-bit, 8-bit data and UCS2, and Latin-1 is
+  is that class, so it goes out as 0x18 beside UCS2 and 0x10 beside GSM 7-bit, while
+  `encoding: 'LATIN1'` beside it is refused before a segment goes out, the way a messaging mode this
+  library cannot deliver is — 03.38's class groups hold GSM 7-bit, 8-bit data and UCS2, and Latin-1 is
   SMPP's own flat-table alphabet, so the pair has no spelling. Rejected: 0x10 with Latin-1 octets,
   which declares an alphabet the body is not in; rejected: 0x14, 8-bit data, which is not text to
   the handset that would display it; rejected: promoting it to UCS2, which overrides the one option
