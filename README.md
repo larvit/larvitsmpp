@@ -130,9 +130,7 @@ An alphabet you name has to carry the message: `LATIN1` beside a character above
 beside one GSM 03.38 has no code for, is refused before anything goes out, and the error names the
 character, its code point and where in the message it is. Leaving `encoding` out is never refused —
 what detection picks always fits. `LATIN1` still carries every octet, so an 8-bit binary body sent
-as `buffer.toString('latin1')` goes out unchanged. `unencodable(message, encoding)` gives the same
-answer ahead of a send: `{ char, index }` for the first character that alphabet cannot carry, or
-`undefined`.
+as `buffer.toString('latin1')` goes out unchanged.
 
 `scheduleDeliveryTime` and `validityPeriod` take a `Date`, a number of seconds, or a stamp you
 formatted yourself. One that names no time — an invalid `Date`, `NaN`, `Infinity` — is refused
@@ -579,6 +577,12 @@ same for the GSM 03.38 message class: `0` for the flash class `sms.flash` alread
 and `3` for the ME-, SIM- and TE-specific ones, and `undefined` where that `data_coding`'s coding
 group carries no class at all.
 
+Composing a message by hand takes the send-side pair: `unencodable(message, encoding)` gives
+`{ char, index }` for the first character an alphabet cannot carry and `undefined` where it carries
+them all, which is the check `sendSms()` makes before it encodes anything; `smppTime.encode(value)`
+returns `{ err, text }` for a `validity_period` or `schedule_delivery_time`, as `smppTime.decode()`
+returns `{ err, date }` for one that arrived.
+
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.
 
@@ -607,8 +611,7 @@ promises and the rough edges taken off.
 - **`pduObj.isResp()` is now the standalone `isResp(pduObj)`**, and `pduObj.cmdStatus` is `undefined`
   for a status code the library does not know, with the raw number in `pduObj.cmdStatusId`.
 - **`defs.filters` is gone.** It was declared on every command and TLV but never invoked, so it did
-  nothing. SMPP time formatting, the one part worth keeping, is exported as `smppTime`, whose
-  `encode()` returns `{ err, text }` the way its `decode()` returns `{ err, date }`.
+  nothing. SMPP time formatting, the one part worth keeping, is exported as `smppTime`.
 - **`DATAGRAM`, `FORWARD` and `STORE_FORWARD` moved from `consts.ESM_CLASS` to
   `consts.MESSAGING_MODE`**, which also names the fourth mode, `SMSC_DEFAULT`. They are bits 1-0 of
   `esm_class` rather than whole values of it. Read them from the new group, or let `sendSms()` write
@@ -636,11 +639,6 @@ have worked around any of these, remove the workaround:
   GSM alphabet on a Latin-1 message that has no `data_coding` at all — that pair is refused now.
   Inbound, only a `data_coding` of exactly 0x10 counted as flash, so a flash UCS2 message and the
   whole 0xF0 coding group arrived as ordinary messages.
-- An alphabet named on a message it cannot carry corrupted it and reported success: `LATIN1` wrote
-  the low octet of every code point, so `あいう` went out as `BDF`, and `ASCII` flattened every
-  character outside GSM 03.38 to a space. Both are refused before anything goes out now.
-- A `scheduleDeliveryTime` or `validityPeriod` naming no time — an invalid `Date` above all — went
-  into the PDU as a string of `NaN`s. That send is refused now.
 - The multipart reference counter was shared by every session in the process.
 - `tls: true` never performed a handshake, so the connection was not actually encrypted.
 - Alphanumeric senders were sent with TON 1 (international) instead of TON 5.

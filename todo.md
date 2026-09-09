@@ -141,6 +141,17 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
+- [ ] **`objToPdu()` corrupts a string body the same way `sendSms()` used to.**
+      `resolveShortMessage()` in `pdu.ts` picks the codec off the caller's own `data_coding` and
+      encodes a string `short_message` with it, so
+      `objToPdu({ params: { data_coding: 3, short_message: 'あいう' } })` returns `42 44 46` —
+      `"BDF"` — with no error, and `data_coding` 0 flattens to spaces. Same goal 2 defect as the one
+      the `unencodable()` guard closed at `sendSms()`, one layer down and on the published codec. The
+      guard is the same call on the branch where `data_coding` is a number and the body is a string;
+      the `detect()` branch needs none. Held back only because a refusal there may fail
+      `interop-tests/`, which is being edited elsewhere and cannot be verified from here. Raised by
+      the architecture review of [#97](https://github.com/larvit/larvitsmpp/pull/97), 2026-09-09.
+
 - [ ] **A gate that refuses a floating version anywhere in the repo.** Maintainer's ask on
       [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the `release.yaml`
       pinning thread, which stays open until this lands. Pinning every action and runner by hand is

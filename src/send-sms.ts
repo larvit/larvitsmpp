@@ -100,7 +100,7 @@ function esmClassFor(mode: SubmitMessagingMode | undefined, multipart: boolean):
 }
 
 export function submitSmParams(
-	sms: SendSmsInput,
+	sms: Omit<SendSmsInput, 'scheduleDeliveryTime' | 'validityPeriod'>,
 	segment: Buffer,
 	options: SegmentOptions,
 ): Record<string, ParamValue> {
