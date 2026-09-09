@@ -131,7 +131,8 @@ segment goes out.
 anything else is refused by name rather than guessed at. Leave it out and a message that fits GSM
 7-bit goes as `ASCII` and everything else as `UCS2`; `LATIN1` is only ever used when you name it.
 `consts.ENCODING` is the low-level surface's `data_coding` table rather than this option's list,
-`FLASH` and the alphabets no codec here implements included.
+`FLASH` and the alphabets no codec here implements included — its `ASCII` is SMPP's own IA5 entry at
+0x01, and not the coding an `encoding: 'ASCII'` message goes out under.
 
 An alphabet you name has to carry the message: `LATIN1` beside a character above U+00FF, or `ASCII`
 beside one GSM 03.38 has no code for, is refused before anything goes out, and the error names the
@@ -599,7 +600,10 @@ how binary payloads, hand-built user data headers and deliberately malformed bod
 
 Composing a message by hand takes the send-side pair: `unencodable(message, encoding)` gives
 `{ char, index }` for the first character an alphabet cannot carry and `undefined` where it carries
-them all, which is the check `sendSms()` makes before it encodes anything; `smppTime.encode(value)`
+them all, which is the check `sendSms()` makes before it encodes anything;
+`dataCodingByEncoding[encoding]` is the `data_coding` this library writes for each alphabet — 0x00
+for `ASCII`, 0x03 for `LATIN1`, 0x08 for `UCS2` — which is what to put beside octets
+`encodeMessage()` handed back; `smppTime.encode(value)`
 returns `{ err, text }` for a `validity_period` or `schedule_delivery_time`, as `smppTime.decode()`
 returns `{ err, date }` for one that arrived.
 
@@ -659,6 +663,10 @@ have worked around any of these, remove the workaround:
   GSM alphabet on a Latin-1 message that has no `data_coding` at all — that pair is refused now.
   Inbound, only a `data_coding` of exactly 0x10 counted as flash, so a flash UCS2 message and the
   whole 0xF0 coding group arrived as ordinary messages.
+- A GSM 03.38 message declared `data_coding` 0x01, which SMPP 3.4 5.2.19 defines as IA5 rather than
+  the alphabet those octets are in, so `$` and `@` reached a peer honouring the field as STX and NUL.
+  It goes out as 0x00, the SMSC default alphabet, which is what every peer submits under. Latin-1 and
+  UCS2 are unmoved at 0x03 and 0x08, and an inbound 0x01 is still read as GSM 03.38.
 - The multipart reference counter was shared by every session in the process.
 - `tls: true` never performed a handshake, so the connection was not actually encrypted.
 - Alphanumeric senders were sent with TON 1 (international) instead of TON 5.

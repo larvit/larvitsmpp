@@ -152,6 +152,7 @@ naming the behaviour.
 | Short segments | `splitMsg` accumulates a full segment then pushes `msgPart.slice(0, -1)`, so every segment is one character short: 152 GSM characters instead of 153, 66 UCS2 instead of 67. Long messages are split into more segments than they need, and each extra segment is billed |
 | DLR month off by one | `smppDate()` uses `getMonth()` (0-based) without `+1`, so January renders as `00` |
 | Non-standard DLR status | Receipts emit `stat:UNDELIVERABLE`; the spec's field is 7 characters (`UNDELIV`) |
+| GSM 03.38 declared as IA5 | `sendSms` resolves its encoding through `consts.ENCODING`, so a GSM body goes out under `data_coding` 0x01 — SMPP 3.4 5.2.19's IA5 (CCITT T.50), where `$` and `@` are STX and NUL |
 | Flash destroys UCS2 | `flash: true` overwrites `data_coding` with 0x10, discarding the UCS2 alphabet, which needs 0x18 |
 | Shared concat reference | The concatenation reference counter is a module-level global shared by every session in the process |
 | `send()` never times out | Each call adds a listener keyed on the sequence number; a peer that never answers leaks it and the promise never settles |
@@ -669,6 +670,33 @@ Grouped by what each one constrains.
   octets, which contradicts `short_message` on the same PDU. Rejected: guarding every string-valued
   field, which `data_coding` says nothing about — an address is a C-Octet String and ASCII by 3.4's
   own definition.
+
+- **A GSM 03.38 message declares `data_coding` 0x00, and an inbound 0x01 is still read as GSM.**
+  Maintainer's call, 2026-09-09: `dataCodingFor()` and `encodeBody()` both resolved an alphabet
+  through `consts.ENCODING`, so `encoding: 'ASCII'` went out as 0x01 — SMPP 3.4 5.2.19's *IA5 (CCITT
+  T.50)/ASCII* — while the codec writes GSM 03.38, where `$` is 0x02 and `@` is 0x00 against IA5's
+  STX and NUL. Goal 1 owns it, and this library's own reader hid it by resolving both codings to the
+  same codec. `dataCodingByEncoding` is the single answer to which coding an alphabet is written
+  under, as `unencodable()` is to whether one can carry a message: the mirror of
+  `encodingByDataCoding()`, beside it, so the two cannot drift, and reached by both the `sendSms()`
+  path and `encodeBody()`'s detected one rather than each spelling the map again. It is exported for
+  the reason `unencodable()` is — a caller pairing `encodeMessage()`'s octets with a `data_coding` of
+  its own had only `consts.ENCODING` to reach for, which is the trap. 0x00 is the *SMSC's* default
+  alphabet rather than 03.38 by name, so it is a convention rather than a guarantee; it is also what
+  every peer in `interop-tests/` submits under and what LINK Mobility, Route Mobile and Telesign all
+  publish 03.38 as, where 0x01 names a different alphabet from the one written and so is wrong
+  whatever the peer makes of it. Reading is untouched, goal 3: those same three map 0x01 to 03.38
+  too, and Kaleyra and Route Mobile publish that value as known to cause problems, so no researched
+  peer means IA5 by it. The two tables agree over most of the printable range and part exactly at
+  0x00-0x1F, 0x24, 0x40, 0x5B-0x60 and 0x7F, which is where a peer that did mean IA5 is misread.
+  Rejected: moving `consts.ENCODING.ASCII` to 0x00, which would make that table contradict the
+  section it exists to spell — the group is SMPP's flat `data_coding` table, not the `encoding`
+  option's vocabulary, the distinction the `FLASH` removal already drew. Rejected: reading 0x01 as
+  Latin-1, the closest codec here to IA5, which mojibakes every peer that means GSM for one nothing
+  researched has found. Accepted: a message already in flight is unmoved — both codings resolve to
+  the same codec, `messageClassOf()` finds no class in either, and `Reassembler` groups on the
+  concatenation reference rather than on `data_coding` — so a receipt or a segment that crossed the
+  change reads exactly as it did.
 
 ### The session's life
 

@@ -130,7 +130,8 @@ describe('parsing real PDUs', () => {
 });
 
 describe('encoding submit_sm', () => {
-	test('produces the same bytes as 0.4.0 for a GSM message', () => {
+	// 0.4.0 declared IA5 for the GSM octets it wrote; that one field is the whole difference.
+	test('produces the 0.4.0 bytes for a GSM message, under the alphabet those octets are in', () => {
 		const pdu = encode({
 			cmdName: 'submit_sm',
 			cmdStatus: 'ESME_ROK',
@@ -144,7 +145,7 @@ describe('encoding submit_sm', () => {
 
 		assert.equal(
 			pdu.toString('hex'),
-			'0000004200000004000000000000000c00000034363730313131333331310000003436373039373731333337000000000000000001000b48656c6c6f20776f726c64',
+			'0000004200000004000000000000000c00000034363730313131333331310000003436373039373731333337000000000000000000000b48656c6c6f20776f726c64',
 		);
 	});
 

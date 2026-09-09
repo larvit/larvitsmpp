@@ -174,6 +174,16 @@ function messageClassEncoding(dataCoding: number): EncodingName | undefined {
 }
 
 /**
+ * The `data_coding` an alphabet is written under, the mirror of `encodingByDataCoding()`. GSM 03.38
+ * takes 0x00, the SMSC default alphabet, rather than SMPP 3.4 5.2.19's 0x01, which is IA5.
+ */
+export const dataCodingByEncoding: Record<EncodingName, number> = {
+	ASCII: 0x00,
+	LATIN1: 0x03,
+	UCS2: 0x08,
+};
+
+/**
  * SMPP data_coding is a flat table for 0x00-0x0E, and the message class ranges are how a flash UCS2
  * message arrives as 0x18. The 8-bit binary codings resolve to LATIN1, the one codec here that maps
  * every octet to a code point and back unchanged, so a binary payload survives; alphabets with no
