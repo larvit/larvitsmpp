@@ -143,7 +143,7 @@ export const smppTime = {
 	/**
 	 * A Date becomes an absolute UTC time; a number is a relative period in seconds, expressed in
 	 * days and below; a string is a stamp the caller formatted itself and is passed through. A value
-	 * naming no instant, and a second count no day field reaches, are refused.
+	 * naming no instant or period, and a second count no day field reaches, are refused.
 	 */
 	encode(value: Date | number | string): Result<{ text: string }> {
 		if (typeof value === 'string') return { text: value };

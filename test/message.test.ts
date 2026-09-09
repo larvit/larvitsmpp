@@ -238,6 +238,7 @@ describe('smppTime', () => {
 	});
 
 	test('encodes a relative time given in seconds', () => {
+		assert.equal(smppTime.encode(0).text, '000000000000000R');
 		assert.equal(smppTime.encode(3600).text, '000000010000000R');
 		assert.equal(smppTime.encode(99 * 86400).text, '000099000000000R');
 		assert.equal(smppTime.encode(99 * 86400 + 86399).text, '000099235959000R');
@@ -251,8 +252,6 @@ describe('smppTime', () => {
 			assert.equal(encoded.text, undefined);
 			assert.match(encoded.err.message, /pass a Date/);
 		}
-
-		assert.equal(smppTime.encode(0).text, '000000000000000R');
 	});
 
 	test('refuses a negative period without sending the caller to the Date that cannot help', () => {
@@ -264,14 +263,21 @@ describe('smppTime', () => {
 		assert.doesNotMatch(encoded.err.message, /Date/);
 	});
 
-	// The format carries years and months that no fixed second count maps to, so encode() stops at days.
 	test('decodes the years and months the relative format holds but a second count cannot name', () => {
 		const before = Date.now();
-		const { err, date } = smppTime.decode('010000000000000R');
+		const year = smppTime.decode('010000000000000R');
+		const months = smppTime.decode('001000000000000R');
+		const day = 86400_000;
 
-		assert.equal(err, undefined);
-		assert.ok(date.getTime() >= before + 365 * 86400_000, date.toISOString());
-		assert.ok(date.getTime() <= Date.now() + 366 * 86400_000, date.toISOString());
+		assert.equal(year.err, undefined);
+		assert.ok(year.date, 'a year is a period the format holds');
+		assert.ok(year.date.getTime() >= before + 365 * day, year.date.toISOString());
+		assert.ok(year.date.getTime() <= Date.now() + 366 * day, year.date.toISOString());
+
+		assert.equal(months.err, undefined);
+		assert.ok(months.date, 'ten months is a period the format holds');
+		assert.ok(months.date.getTime() >= before + 290 * day, months.date.toISOString());
+		assert.ok(months.date.getTime() <= Date.now() + 320 * day, months.date.toISOString());
 	});
 
 	test('passes an already-formatted string through', () => {
