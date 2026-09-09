@@ -122,6 +122,10 @@ defines the delivery report away, so pair it with `dlr: true` and the send is re
 leaving you waiting for a report that cannot come — as is any value naming no mode, both before a
 segment goes out.
 
+`encoding` names the alphabet, and is `ASCII` (GSM 03.38's own 7-bit table), `LATIN1` or `UCS2`;
+anything else is refused by name rather than guessed at. Leave it out and the narrowest one that
+fits the message is chosen.
+
 `flash` asks for GSM 03.38 message class 0, the class a handset shows on arrival instead of storing.
 It travels in `data_coding` beside the alphabet, so a flash UCS2 message stays UCS2. Pairing it with
 `encoding: 'LATIN1'` is the one combination with nowhere to go — no `data_coding` carries a message
@@ -162,11 +166,9 @@ session.on('sms', async sms => {
 });
 ```
 
-`sms.flash` is true where the message's `data_coding` carries GSM 03.38 message class 0, in either
-coding group that carries a class — so `0x10`, `0x18` and `0xF0` alike. The other three classes name
-where the handset stores the message rather than that it displays it, so they are not flash;
-`messageClassOf(dataCoding)` gives back whichever class a `data_coding` carries, or `undefined` where
-its coding group carries none.
+`sms.flash` is true where the message's `data_coding` carries GSM 03.38 message class 0, in every
+coding group that carries one — so `0x10`, `0x18`, `0x50` and `0xF0` alike. The other three classes
+name where the handset stores the message rather than that it displays it, so they are not flash.
 
 Delivery receipts travel on the same SMPP command but reach you as `dlr`, so nothing you write has
 to tell the two apart. `esm_class` is what tells them apart; where it names no message type a
@@ -556,7 +558,10 @@ answer to which of the two the peer used, and gives back the octets undecoded:
 `decodeMessage(octets, pduObj.params.data_coding, pduObj.params.esm_class)` turns them into text and
 hands back the UDH where the PDU carries one. `concatOf(pduObj)` is the same for concatenation: the
 `part`, `total` and `reference` a PDU declares, and the `spelling` — `'udh'` or `'sar'` — that
-carried them, or `undefined` where the PDU is a whole message.
+carried them, or `undefined` where the PDU is a whole message. `messageClassOf(dataCoding)` is the
+same for the GSM 03.38 message class: `0` for the flash class `sms.flash` already reports, `1`, `2`
+and `3` for the ME-, SIM- and TE-specific ones, and `undefined` where that `data_coding`'s coding
+group carries no class at all.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.

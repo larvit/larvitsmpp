@@ -207,7 +207,10 @@ exactly 140.
   stays there because that is a different peer rather than a second copy of this one. The waiting
   helpers each file carries are copies, tolerated because a wrong one fails that file's own tests and
   nothing else, and a helper that only names the parameters of one `objToPdu()` call is on that same
-  footing — it encodes no wire fact `objToPdu()` does not already own.
+  footing — it encodes no wire fact `objToPdu()` does not already own. So is a stub standing in for a
+  collaborator the type system already keeps in step: `recordingDeps()` in `messaging-mode.test.ts`
+  and `message-class.test.ts` is one `SendSmsDeps.send` that answers nothing, and a field added to
+  that type fails to compile in both copies at once.
 - `message_id` values the library generates are UUID v7.
 - A test that needs a dummy peer must `resume()` its sockets. An unread socket never processes the
   peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
@@ -447,8 +450,15 @@ Grouped by what each one constrains.
   SMPP's own flat-table alphabet, so the pair has no spelling. Rejected: 0x10 with Latin-1 octets,
   which declares an alphabet the body is not in; rejected: 0x14, 8-bit data, which is not text to
   the handset that would display it; rejected: promoting it to UCS2, which overrides the one option
-  the caller wrote in order to override a choice. Accepted: `flash` is now false for `data_coding`
-  0x11 to 0x13, which no peer means as immediate display.
+  the caller wrote in order to override a choice. Rejected with them: `encoding: 'FLASH'`, which
+  named `data_coding` 0x10 among the alphabets and so reached the class through the option that
+  chooses a charset — a second spelling of `flash: true` that also flattened every non-GSM character
+  to a space on the way. It leaves `EncodingName`, which is now exactly the three codecs `detect()`
+  and `encodingByDataCoding()` return, and `encoding` is checked by name like `messagingMode` so a
+  caller without types gets a refusal rather than a throw out of the codec table. `consts.ENCODING`
+  keeps its `FLASH` entry: the low-level surface reaches raw constants, and nothing reads that group
+  as an alphabet any more. Accepted: `flash` is now false for `data_coding` 0x11 to 0x13, which no
+  peer means as immediate display.
 
 - **A report is final unless its `esm_class` or its state says otherwise, and only `ENROUTE` and
   `SCHEDULED` say otherwise.** SMPP 3.4 Appendix B lists every other receipt state as final,

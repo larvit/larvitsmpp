@@ -195,4 +195,31 @@ describe('sendSms() flash', () => {
 		assert.equal(flash.err?.message, 'the recording peer never answers');
 		assert.equal(attempts.length, 2);
 	});
+
+	// FLASH named data_coding 0x10 among the alphabets, so the class was reachable through the option
+	// that chooses a charset — and a non-GSM body sent that way was flattened to spaces, unrefused.
+	test('refuses the message class posing as an alphabet, naming the option that means it', async () => {
+		const attempts: PduObjectInput[] = [];
+		const sent = await submitSms(recordingDeps(attempts), { encoding: 'FLASH', from, message: 'Hello world', to });
+
+		assert.ok(sent.err instanceof Error);
+		assert.match(sent.err.message, /encoding FLASH is a message class/);
+		assert.match(sent.err.message, /flash: true/);
+		assert.equal(attempts.length, 0);
+	});
+
+	test('refuses an encoding naming no alphabet rather than throwing out of the send', async () => {
+		const attempts: PduObjectInput[] = [];
+		const deps = recordingDeps(attempts);
+
+		for (const encoding of ['utf8', 'ascii', 8, {}]) {
+			const sent = await submitSms(deps, { encoding, from, message: 'Hello world', to });
+
+			assert.ok(sent.err instanceof Error, JSON.stringify(encoding));
+			assert.match(sent.err.message, /encoding must be ASCII, LATIN1, UCS2/);
+			assert.deepEqual(sent.smsIds, []);
+		}
+
+		assert.equal(attempts.length, 0, 'a refused encoding puts nothing on the wire');
+	});
 });

@@ -7,7 +7,7 @@ import type { SmppLog } from './log.ts';
 import type { SmsIdNotation } from './sms-id.ts';
 import { UnansweredError } from './unanswered-error.ts';
 import { consts, defaultMessagingMode, isMessagingMode, isSubmitMessagingMode, submitMessagingModes } from './defs/constants.ts';
-import { detect } from './defs/encodings.ts';
+import { detect, encodingNames, isEncodingName } from './defs/encodings.ts';
 import { namedValue } from './error-from.ts';
 import { normaliseSmsId } from './sms-id.ts';
 import { paramText } from './defs/types.ts';
@@ -32,8 +32,11 @@ export type SendSmsOptions = {
 	validityPeriod?: Date | number | string;
 };
 
-/** The options as they arrive: a caller without types can put anything in the checked field. */
-export type SendSmsInput = Omit<SendSmsOptions, 'messagingMode'> & { messagingMode?: unknown };
+/** The options as they arrive: a caller without types can put anything in the checked fields. */
+export type SendSmsInput = Omit<SendSmsOptions, 'encoding' | 'messagingMode'> & {
+	encoding?: unknown;
+	messagingMode?: unknown;
+};
 
 /** Both arrays hold what the peer accepted, so a partial failure names what is already delivered. */
 export type SendSmsResult = {
@@ -140,6 +143,21 @@ function checkMessagingMode(
 	return { err: refusedMode(mode) };
 }
 
+function refusedEncoding(encoding: unknown): Error {
+	if (encoding === 'FLASH') {
+		return new Error('encoding FLASH is a message class rather than an alphabet; ask for it as flash: true beside the alphabet you want');
+	}
+
+	return new Error(`encoding must be ${encodingNames.join(', ')}, got ${namedValue(encoding)}`);
+}
+
+function checkEncoding(encoding: unknown, message: string): Result<{ encoding: EncodingName }> {
+	if (encoding === undefined) return { encoding: detect(message) };
+	if (isEncodingName(encoding)) return { encoding };
+
+	return { err: refusedEncoding(encoding) };
+}
+
 /** GSM 03.38 section 4 gives the class groups GSM 7-bit, 8-bit data and UCS2, and no Latin-1 at all. */
 function checkFlash(encoding: EncodingName, flash: boolean): Error | undefined {
 	if (!flash || encoding !== 'LATIN1') return undefined;
@@ -197,10 +215,18 @@ export async function submitSms(deps: SendSmsDeps, sms: SendSmsInput): Promise<S
 
 	if (mode.err) return unsent(mode.err);
 
+	const chosen = checkEncoding(sms.encoding, sms.message);
+
+	if (chosen.err) return unsent(chosen.err);
+
+	const encoding = chosen.encoding;
+	const unspellable = checkFlash(encoding, sms.flash === true);
+
+	if (unspellable) return unsent(unspellable);
+
 	const allowed = sms.maxSegments ?? maxSegments;
-	const encoding = sms.encoding ?? detect(sms.message);
 	const segments = splitMessage(sms.message, { encoding, reference: deps.reference });
-	const refused = checkFlash(encoding, sms.flash === true) ?? checkSegments(allowed, segments.length);
+	const refused = checkSegments(allowed, segments.length);
 
 	if (refused) return unsent(refused);
 

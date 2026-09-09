@@ -1,4 +1,4 @@
-export type EncodingName = 'ASCII' | 'FLASH' | 'LATIN1' | 'UCS2';
+export type EncodingName = 'ASCII' | 'LATIN1' | 'UCS2';
 
 export type Encoding = {
 	decode: (buffer: Uint8Array) => string;
@@ -104,10 +104,15 @@ const ucs2: Encoding = {
 
 export const encodings: Record<EncodingName, Encoding> = {
 	ASCII: ascii,
-	FLASH: ascii,
 	LATIN1: latin1,
 	UCS2: ucs2,
 };
+
+export const encodingNames: readonly string[] = Object.keys(encodings);
+
+export function isEncodingName(value: unknown): value is EncodingName {
+	return typeof value === 'string' && Object.hasOwn(encodings, value);
+}
 
 export function detect(value: string): EncodingName {
 	if (encodings.ASCII.match(value)) return 'ASCII';
@@ -128,7 +133,11 @@ export function messageClassOf(dataCoding: number): number | undefined {
 	return (dataCoding & 0xF0) === 0xF0 ? dataCoding & 0x03 : undefined;
 }
 
-/** A class group puts the alphabet in bits 3-2, or in bit 2 alone above 0xF0. */
+/**
+ * A class group puts the alphabet in bits 3-2, or in bit 2 alone above 0xF0. Below 0x10 SMPP's own
+ * flat table contradicts 03.38 and wins — 0x03 is Latin-1 here, GSM 7-bit there — so a class is the
+ * only evidence a peer below 0x80 is spelling 03.38 at all, and 0x48 keeps the flat table's answer.
+ */
 function messageClassEncoding(dataCoding: number): EncodingName | undefined {
 	if (messageClassOf(dataCoding) === undefined) return undefined;
 
