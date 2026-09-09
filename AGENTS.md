@@ -599,9 +599,9 @@ Grouped by what each one constrains.
   so the guard cannot drift from what the encoder writes for any one character, and a fourth
   alphabet answers by having a codec at all. It is exported for the reason `concatOf()` is: a caller
   composing a `submit_sm` through `send()` and `encodeMessage()` would otherwise rewrite the read
-  this fixed. `match()` cannot be that answer —
-  it doubles as the auto-selection policy `detect()` reads, where LATIN1 is hardcoded false so
-  nothing picks it, and using it would refuse the 8-bit binary body Latin-1 is kept for. The guard is
+  this fixed. `match()` cannot be that answer — it doubles as the auto-selection policy `detect()`
+  reads, where LATIN1 is hardcoded false so nothing picks it, and using it would refuse the 8-bit
+  binary body Latin-1 is kept for. The guard is
   on the named branch alone, so an unspecified send is untouched: every alphabet `detect()` returns
   carries every character it was picked for, over the whole code point range. `smppTime.encode()`
   returns a `Result`, where the three encoding helpers stayed total: that argument was that
@@ -620,7 +620,7 @@ Grouped by what each one constrains.
   period past the 99d 23:59:59 the format holds is still clamped to it. Accepted: GSM's 0x1B is an
   extension prefix rather than a character, so a bare ESC beside one of the ten extension bases is
   the one input a per-character reading passes and the encoder then writes as the extended character
-  — the only composition in any of the three codecs, and no alphabet a message would be written in.
+  — the only composition in any of the three codecs, and not a character a message is written in.
 
 ### The session's life
 

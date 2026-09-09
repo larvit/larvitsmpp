@@ -237,7 +237,7 @@ describe('smppTime', () => {
 		assert.equal(smppTime.encode(new Date(Date.UTC(2026, 7, 25, 14, 30, 0))).text, '260825143000000+');
 	});
 
-	test('encodes a relative time given in seconds', () => {
+	test('encodes a relative time given in seconds, clamped to what the format holds', () => {
 		assert.equal(smppTime.encode(3600).text, '000000010000000R');
 		assert.equal(smppTime.encode(99 * 86400).text, '000099000000000R');
 		assert.equal(smppTime.encode(100 * 86400).text, '000099235959000R');
