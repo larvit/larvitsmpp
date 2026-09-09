@@ -205,6 +205,64 @@ describe('a body the PDU\'s own data_coding cannot carry', () => {
 		assert.deepEqual(messageOctets(pduObj), short);
 	});
 
+	test('encodes every entry carrying the body tag, so a second one cannot go out truncated', () => {
+		const built = objToPdu({
+			cmdName: 'data_sm',
+			params: { data_coding: 0x08, destination_addr: to, source_addr: from },
+			tlvs: { alias: { tagId: 0x0424, tagValue: 'あいう' }, message_payload: { tagValue: 'あいう' } },
+		});
+
+		assert.equal(built.err, undefined);
+		assert.ok(built.buffer);
+
+		const hex = built.buffer.toString('hex');
+
+		assert.equal(hex.split('304230443046').length - 1, 2, 'both entries carry the UCS2 octets');
+		assert.ok(!hex.includes('424446'), 'no entry goes out as the low octets of its code points');
+	});
+
+	test('leaves the alphabet to the body TLV wherever short_message carries no octets', () => {
+		for (const short of [undefined, '', Buffer.alloc(0)]) {
+			const built = objToPdu({
+				cmdName: 'deliver_sm',
+				params: {
+					destination_addr: to,
+					source_addr: from,
+					...(short === undefined ? {} : { short_message: short }),
+				},
+				tlvs: { message_payload: { tagValue: 'あいう' } },
+			});
+			const name = short === undefined ? 'absent' : JSON.stringify(short);
+
+			assert.equal(built.err, undefined, name);
+			assert.ok(built.buffer);
+
+			const { pduObj } = pduToObj(built.buffer);
+
+			assert.ok(pduObj);
+			assert.equal(pduObj.params.data_coding, 0x08, name);
+			assert.equal(messageOctets(pduObj)?.toString('hex'), '304230443046', name);
+		}
+	});
+
+	test('ignores a short_message on a command that declares none, which the wire never carries', () => {
+		const input: PduObjectInput = {
+			cmdName: 'data_sm',
+			params: { destination_addr: to, short_message: 'x', source_addr: from },
+			tlvs: { message_payload: { tagValue: 'あいう' } },
+		};
+		const built = objToPdu(input);
+
+		assert.equal(built.err, undefined);
+		assert.ok(built.buffer);
+
+		const { pduObj } = pduToObj(built.buffer);
+
+		assert.ok(pduObj);
+		assert.equal(pduObj.params.data_coding, 0x08);
+		assert.equal(messageOctets(pduObj)?.toString('hex'), '304230443046');
+	});
+
 	test('never refuses a Buffer body, whatever the coding, because that is how binary is sent', () => {
 		const payload = Buffer.from([0x30, 0x42, 0xC3, 0x28, 0xFF, 0x00]);
 
@@ -255,7 +313,7 @@ describe('a body the PDU\'s own data_coding cannot carry', () => {
 	});
 
 	test('refuses the same body through session.send(), with nothing reaching the socket', async t => {
-		const smsc = await dummySmsc(t, { messageIds: ['01a086fc-1ae8-7910-ac2c-34c2bd8bea19'] });
+		const smsc = await dummySmsc(t);
 		const session = await bindToSmsc(t, smsc.port, { reconnect: false });
 		const sent = await session.send({
 			cmdName: 'submit_sm',
