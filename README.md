@@ -122,6 +122,11 @@ defines the delivery report away, so pair it with `dlr: true` and the send is re
 leaving you waiting for a report that cannot come — as is any value naming no mode, both before a
 segment goes out.
 
+`flash` asks for GSM 03.38 message class 0, the class a handset shows on arrival instead of storing.
+It travels in `data_coding` beside the alphabet, so a flash UCS2 message stays UCS2. Pairing it with
+`encoding: 'LATIN1'` is the one combination with nowhere to go — no `data_coding` carries a message
+class beside that alphabet — and the send is refused before anything goes out.
+
 Messages too long for one SMS are split automatically and sent as a concatenated message. You get
 one id per segment:
 
@@ -156,6 +161,12 @@ session.on('sms', async sms => {
 	await sms.sendResp();
 });
 ```
+
+`sms.flash` is true where the message's `data_coding` carries GSM 03.38 message class 0, in either
+coding group that carries a class — so `0x10`, `0x18` and `0xF0` alike. The other three classes name
+where the handset stores the message rather than that it displays it, so they are not flash;
+`messageClassOf(dataCoding)` gives back whichever class a `data_coding` carries, or `undefined` where
+its coding group carries none.
 
 Delivery receipts travel on the same SMPP command but reach you as `dlr`, so nothing you write has
 to tell the two apart. `esm_class` is what tells them apart; where it names no message type a
@@ -599,7 +610,10 @@ have worked around any of these, remove the workaround:
 - Every receipt went out as `esm_class` 0x04, which SMPP 3.4 defines as the report of a message's
   final state. A receipt for a transient state — `sendDlr('ENROUTE')` — is now marked 0x20, the
   intermediate delivery notification.
-- `flash: true` discarded UCS2, mangling flash messages containing non-GSM characters.
+- `flash: true` discarded UCS2, mangling flash messages containing non-GSM characters, and put the
+  GSM alphabet on a Latin-1 message that has no `data_coding` at all — that pair is refused now.
+  Inbound, only a `data_coding` of exactly 0x10 counted as flash, so a flash UCS2 message and the
+  whole 0xF0 coding group arrived as ordinary messages.
 - The multipart reference counter was shared by every session in the process.
 - `tls: true` never performed a handshake, so the connection was not actually encrypted.
 - Alphanumeric senders were sent with TON 1 (international) instead of TON 5.

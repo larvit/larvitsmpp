@@ -140,6 +140,13 @@ function checkMessagingMode(
 	return { err: refusedMode(mode) };
 }
 
+/** GSM 03.38 section 4 gives the class groups GSM 7-bit, 8-bit data and UCS2, and no Latin-1 at all. */
+function checkFlash(encoding: EncodingName, flash: boolean): Error | undefined {
+	if (!flash || encoding !== 'LATIN1') return undefined;
+
+	return new Error('flash has no Latin-1 spelling: no data_coding carries a message class beside that alphabet, so send it as UCS2 or drop flash');
+}
+
 /** Nothing goes on the wire until the whole message fits: a half-sent message bills twice. */
 function checkSegments(allowed: number, segments: number): Error | undefined {
 	if (!Number.isInteger(allowed) || allowed < 1 || allowed > maxSegments) {
@@ -193,7 +200,7 @@ export async function submitSms(deps: SendSmsDeps, sms: SendSmsInput): Promise<S
 	const allowed = sms.maxSegments ?? maxSegments;
 	const encoding = sms.encoding ?? detect(sms.message);
 	const segments = splitMessage(sms.message, { encoding, reference: deps.reference });
-	const refused = checkSegments(allowed, segments.length);
+	const refused = checkFlash(encoding, sms.flash === true) ?? checkSegments(allowed, segments.length);
 
 	if (refused) return unsent(refused);
 

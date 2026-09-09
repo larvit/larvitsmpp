@@ -145,9 +145,12 @@ describe('an inbound message', () => {
 			},
 		});
 
+		const [sms] = peer.received;
+
 		assert.equal(sent.err, undefined);
-		assert.equal(peer.received[0]?.message, 'تست');
-		assert.equal(peer.received[0]?.flash, true);
+		assert.ok(sms);
+		assert.equal(sms.message, 'تست');
+		assert.equal(sms.flash, true);
 	});
 });
 

@@ -120,11 +120,6 @@ session message is a change to every call site.
       another message's in a correlation table. The cost is that every consumer narrows, including
       the majority whose SMSC always names an id. Raised by the phase 11 product review, 2026-09-08.
       **This one is 1.0.0-or-never** — after release it needs a major version.
-- [ ] `sms.flash` is true only for the 0x10 coding group, never for 0xF0. GSM 03.38 gives 0xF0–0xF3
-      as data coding plus message class, where class 0 is immediate display — flash. `encodings.ts`
-      already reads the 0xF0 group for the alphabet; `sms.ts` does not read it for flash. SMPPSim
-      observed and recorded it as not-flash (`findings/02-smppsim.md`, C17), so it is measured, not
-      suspected. Either read the group or say in the README that `flash` means the 0x10 spelling.
 - [ ] Tag `v1.0.0` to publish.
 - [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.

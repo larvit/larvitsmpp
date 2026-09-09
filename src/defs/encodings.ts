@@ -116,21 +116,31 @@ export function detect(value: string): EncodingName {
 	return 'UCS2';
 }
 
-/** The 0x1X and 0xFX ranges carry a GSM message class and put the alphabet in bits 3-2 or bit 2. */
-function messageClassEncoding(dataCoding: number): EncodingName | undefined {
-	if ((dataCoding & 0xF0) === 0x10) {
-		const alphabet = (dataCoding >> 2) & 0x03;
-
-		if (alphabet === 0x01) return 'LATIN1';
-
-		return alphabet === 0x02 ? 'UCS2' : 'ASCII';
+/**
+ * The GSM 03.38 section 4 message class in bits 1-0, or undefined where the coding group carries
+ * none. Below 0x80 bit 4 says whether one is there; the 0xF0 group always carries one.
+ */
+export function messageClassOf(dataCoding: number): number | undefined {
+	if ((dataCoding & 0x80) === 0) {
+		return (dataCoding & 0x10) === 0x10 ? dataCoding & 0x03 : undefined;
 	}
+
+	return (dataCoding & 0xF0) === 0xF0 ? dataCoding & 0x03 : undefined;
+}
+
+/** A class group puts the alphabet in bits 3-2, or in bit 2 alone above 0xF0. */
+function messageClassEncoding(dataCoding: number): EncodingName | undefined {
+	if (messageClassOf(dataCoding) === undefined) return undefined;
 
 	if ((dataCoding & 0xF0) === 0xF0) {
 		return (dataCoding & 0x04) === 0x04 ? 'LATIN1' : 'ASCII';
 	}
 
-	return undefined;
+	const alphabet = (dataCoding >> 2) & 0x03;
+
+	if (alphabet === 0x01) return 'LATIN1';
+
+	return alphabet === 0x02 ? 'UCS2' : 'ASCII';
 }
 
 /**

@@ -421,6 +421,35 @@ Grouped by what each one constrains.
   which goal 2 reports as undetermined rather than guessed. An inbound message is untouched: nothing
   but `data_coding` can say how a message was written.
 
+- **A message class is read where GSM 03.38 puts it, `flash` is class 0 alone, and a flash message
+  with no alphabet to carry it is refused.** Maintainer's call, 2026-09-09, closing the last target
+  of the interoperability plan: `sms.flash` was `(data_coding & 0xF0) === 0x10`, which called the
+  ME-, SIM- and TE-specific classes immediate display and missed the 0xF0 group entirely — the only
+  one SMPP 3.4 5.2.19 names, since it marks 0x0F to 0xBF reserved and hands 0xF0 to 0xFF to GSM
+  03.38, and the one SMPPSim demonstrated
+  ([interop-tests/findings/02-smppsim.md](interop-tests/findings/02-smppsim.md), C17).
+  `messageClassOf()` is the single answer to whether a `data_coding` carries a class and which, as
+  `concatOf()` is to how a PDU says it is a segment: 03.38 section 4 puts the class in bits 1-0,
+  carried where bit 4 says so in every group below 0x80 and always in the 0xF0 group, and
+  `encodingByDataCoding()` reads the alphabet off that same test rather than repeating the group
+  masks beside it. It is exported for the reason `concatOf()` is — an application that needs a class
+  other than 0 would otherwise rewrite the read this fixed. Rejected: a `messageClass` field on the
+  `sms` event, which pays goal 6 for three classes nothing here acts on, where the boolean the
+  application already had covers the one it does. Compressed text is out of scope and stays out —
+  nothing here implements 3GPP TS 23.042, so a compressed body reaches the application as whatever
+  its declared alphabet makes of it — but bit 5 does not move the class bits, so 0x30 is read as
+  class 0 rather than special-cased into a wrong answer; 01xx is read for the same reason, 03.38
+  coding it exactly as 00xx. Rejected: reading only the two groups the defect named, which needs an
+  extra test to produce a wrong answer for a class the spec puts in plain sight. Send-side: `flash`
+  is that class, so it goes out as 0x18 beside UCS2 and 0x10 beside GSM 7-bit, and `encoding:
+  'LATIN1'` beside it is refused before a segment goes out, the way a messaging mode this library
+  cannot deliver is — 03.38's class groups hold GSM 7-bit, 8-bit data and UCS2, and Latin-1 is
+  SMPP's own flat-table alphabet, so the pair has no spelling. Rejected: 0x10 with Latin-1 octets,
+  which declares an alphabet the body is not in; rejected: 0x14, 8-bit data, which is not text to
+  the handset that would display it; rejected: promoting it to UCS2, which overrides the one option
+  the caller wrote in order to override a choice. Accepted: `flash` is now false for `data_coding`
+  0x11 to 0x13, which no peer means as immediate display.
+
 - **A report is final unless its `esm_class` or its state says otherwise, and only `ENROUTE` and
   `SCHEDULED` say otherwise.** SMPP 3.4 Appendix B lists every other receipt state as final,
   `UNKNOWN` and `ACCEPTED` included, so a peer writing `ACCEPTD` for a carrier-accepted step is taken
