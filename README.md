@@ -110,6 +110,10 @@ await session.sendSms({
 }, { signal });                       // optional per-call AbortSignal
 ```
 
+One rule decides every refusal below, and every refusal `session.send()` makes: the library checks
+what it composes for you — an alphabet or a time you named, a string body under a `data_coding` you
+named — and passes on whatever you formed yourself, a `Buffer` body or a stamp you formatted.
+
 `sourceAddrTon` and `destinationAddrTon` default to 5 for an alphanumeric address and 1 for a
 numeric one; the NPI fields default to 0. Set them for an operator that requires something else.
 
@@ -125,12 +129,16 @@ segment goes out.
 `encoding` names the alphabet, and is `ASCII` (GSM 03.38's own 7-bit table), `LATIN1` or `UCS2`;
 anything else is refused by name rather than guessed at. Leave it out and a message that fits GSM
 7-bit goes as `ASCII` and everything else as `UCS2`; `LATIN1` is only ever used when you name it.
+`consts.ENCODING` is not this option's vocabulary: it holds raw `data_coding` values for the
+low-level PDU surface, `FLASH` and the alphabets this library implements no codec for included.
 
 An alphabet you name has to carry the message: `LATIN1` beside a character above U+00FF, or `ASCII`
 beside one GSM 03.38 has no code for, is refused before anything goes out, and the error names the
 character, its code point and where in the message it is. Leaving `encoding` out is never refused —
-what detection picks always fits. `LATIN1` still carries every octet, so an 8-bit binary body sent
-as `buffer.toString('latin1')` goes out unchanged.
+what detection picks always fits. `LATIN1` carries every octet, so an 8-bit body passed as
+`buffer.toString('latin1')` reaches the SMSC byte for byte — but under `data_coding` 0x03, which
+declares Latin-1 text rather than binary. To declare 8-bit binary, hand `session.send()` a `Buffer`
+body and the `data_coding` you want; see [Working with PDUs directly](#working-with-pdus-directly).
 
 `scheduleDeliveryTime` and `validityPeriod` take a `Date`, a number of seconds, or a stamp you
 formatted yourself. One that names no time — an invalid `Date`, `NaN`, `Infinity` — is refused
@@ -432,7 +440,9 @@ A refused inbound `deliver_sm` is lost traffic: a message or a receipt that neve
 `dlr`, and this event is where that loss shows up. A refused *response* is reported twice where a
 call is still waiting on it, once as the `err` that `sendSms()` or `send()` returns and once here.
 That is deliberate: the call answers what became of that one send, and the event is what shows a peer
-answering unreadably at all.
+answering unreadably at all. A `PduRefusedError` is always a PDU that arrived, so that is the only
+way one reaches a send's `err`: what this library refuses to build or send — an alphabet, a time, a
+body a `data_coding` cannot carry — is a plain `Error` in the result.
 
 ## Logging
 
