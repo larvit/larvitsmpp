@@ -678,17 +678,22 @@ Grouped by what each one constrains.
   STX and NUL. Goal 1 owns it, and this library's own reader hid it by resolving both codings to the
   same codec. `dataCodingByEncoding` is the single answer to which coding an alphabet is written
   under, as `unencodable()` is to whether one can carry a message: the mirror of
-  `encodingByDataCoding()`, beside it, so the two cannot drift, and reached by both the `sendSms()`
-  path and `encodeBody()`'s detected one rather than each spelling the map again. It is exported for
-  the reason `unencodable()` is — a caller pairing `encodeMessage()`'s octets with a `data_coding` of
-  its own had only `consts.ENCODING` to reach for, which is the trap. 0x00 is the *SMSC's* default
-  alphabet rather than 03.38 by name, so it is a convention rather than a guarantee; it is also what
-  every peer in `interop-tests/` submits under and what LINK Mobility, Route Mobile and Telesign all
-  publish 03.38 as, where 0x01 names a different alphabet from the one written and so is wrong
-  whatever the peer makes of it. Reading is untouched, goal 3: those same three map 0x01 to 03.38
-  too, and Kaleyra and Route Mobile publish that value as known to cause problems, so no researched
-  peer means IA5 by it. The two tables agree over most of the printable range and part exactly at
-  0x00-0x1F, 0x24, 0x40, 0x5B-0x60 and 0x7F, which is where a peer that did mean IA5 is misread.
+  `encodingByDataCoding()`, and reached by both the `sendSms()` path and `encodeBody()`'s detected
+  one rather than each spelling the map again, which is what `sendDlr()` inherits it through. It is
+  exported for the reason `unencodable()` is — a caller pairing `encodeMessage()`'s octets with a
+  `data_coding` of its own had only `consts.ENCODING` to reach for, which is the trap. 0x00 is the
+  *SMSC's* default alphabet rather than 03.38 by name, so it is a convention rather than a guarantee;
+  it is also what every peer in `interop-tests/` submits under and what LINK Mobility, Route Mobile
+  and Telesign all publish 03.38 as, where 0x01 names a different alphabet from the one written and
+  so is wrong whatever the peer makes of it. Reading is untouched, goal 3: those same three map 0x01
+  to 03.38 too, and Kaleyra and Route Mobile publish that value as known to cause problems, so no
+  researched peer means IA5 by it. The two tables agree over most of the printable range and part at
+  0x00-0x09, 0x0B-0x0C, 0x0E-0x1A, 0x1C-0x1F, 0x24, 0x40, 0x5B-0x60 and 0x7B-0x7F — line feed,
+  carriage return and escape are common to both — which is where a peer that did mean IA5 is
+  misread. Accepted with it: `consts.ENCODING` loses its `ASCII` alias and keeps `IA5`, the two
+  names 5.2.19 gives 0x01, because that alias was the only name the two tables shared at different
+  values and so the only one a reader could carry from the option's vocabulary into SMPP's flat
+  table; `constsById.ENCODING[0x01]` already read `IA5`, so nothing moves but the forward name.
   Rejected: moving `consts.ENCODING.ASCII` to 0x00, which would make that table contradict the
   section it exists to spell — the group is SMPP's flat `data_coding` table, not the `encoding`
   option's vocabulary, the distinction the `FLASH` removal already drew. Rejected: reading 0x01 as

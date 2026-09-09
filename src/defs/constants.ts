@@ -22,7 +22,6 @@ export const consts = {
 		YEARS: 0x0E,
 	},
 	ENCODING: {
-		ASCII: 0x01,
 		BINARY: 0x04,
 		CYRILLIC: 0x06,
 		EXTENDED_KANJI_JIS: 0x0D,

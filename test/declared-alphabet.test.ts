@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 import { bindToSmsc, dummySmsc } from './dummy-smsc.ts';
+import { client } from '../src/client.ts';
+import { closeAfter } from './teardown.ts';
 import { consts } from '../src/defs/constants.ts';
 import { decodeMessage } from '../src/message.ts';
 import { dlrFromPdu } from '../src/dlr.ts';
 import { encodingByDataCoding, encodings } from '../src/defs/encodings.ts';
 import { objToPdu, pduToObj } from '../src/pdu.ts';
 import { paramNumber } from '../src/defs/types.ts';
+import { server } from '../src/server.ts';
 import type { PduObject } from '../src/pdu.ts';
 
 const from = '46701113311';
@@ -101,6 +104,34 @@ describe('the alphabet a message declares is the one its octets are written in',
 		assert.equal((await session.sendSms({ encoding: 'LATIN1', from, message: 'Räksmörgås', to })).err, undefined);
 		assert.equal((await session.sendSms({ from, message: 'あいう', to })).err, undefined);
 		assert.deepEqual(submitted(smsc.octets).map(declaredBy), [0x03, 0x08]);
+	});
+
+	// sendDlr() writes its body as a string with no data_coding, so it takes the detected branch too.
+	test('declares 0x00 on a receipt it writes itself', async t => {
+		const { err, server: smpp } = await server({ port: 0 });
+
+		assert.equal(err, undefined);
+		assert.ok(smpp);
+		closeAfter(t, smpp);
+
+		smpp.on('session', peer => peer.on('sms', async sms => {
+			await sms.sendResp();
+			await sms.sendDlr('DELIVERED');
+		}));
+
+		const connected = await client({ port: smpp.port, reconnect: false });
+
+		assert.equal(connected.err, undefined);
+		assert.ok(connected.session);
+		closeAfter(t, connected.session);
+
+		const session = connected.session;
+		const reported = new Promise<PduObject>(resolve => {
+			session.on('dlr', (_report, pduObj) => { resolve(pduObj); });
+		});
+
+		assert.equal((await session.sendSms({ dlr: true, from, message: bothTables, to })).err, undefined);
+		assert.equal(declaredBy(await reported), 0x00);
 	});
 
 	// The low-level surface settles data_coding off the same detection, so it carried the same defect.
