@@ -616,16 +616,18 @@ Grouped by what each one constrains.
   `holds()` member beside `match()` on `Encoding`, a second per-alphabet table to keep in step with
   the codec. Rejected: validating the `string` spelling of a time, which is a stamp the caller
   formatted for a peer whose format is theirs to name, its width included, where SMPP 3.4 gives the
-  field 1 or 17 octets. Accepted: a relative period outside the 0 to 99d 23:59:59 the format holds
-  is refused rather than clamped or floored to it, `Infinity` and a negative one with it — clamping
-  `86400 * 365` reported success for a year and put 99 days on the wire, the wrong answer about what
-  happened that the rest of this bullet exists to remove. The ceiling belongs to one of the field's
-  two spellings rather than to the request, so the refusal names the `Date` that reaches any instant
-  a two-digit year holds. Rejected: documenting the clamp, which leaves the caller told a true thing
-  and still sent the wrong period. Accepted: GSM's 0x1B is an extension prefix rather than a
-  character, so a bare ESC beside one of the ten extension bases is the one input a per-character
-  reading passes and the encoder then writes as the extended character — the only composition in any
-  of the three codecs, and not a character a message is written in.
+  field 1 or 17 octets. Accepted: a second count past 99d 23:59:59 is refused rather than clamped to
+  it, a negative one and `Infinity` with it — clamping `86400 * 365` reported success for a year and
+  put 99 days on the wire, the wrong answer about what happened that the rest of this bullet exists
+  to remove. The ceiling is this encoder's rather than the format's: 3.4's `YYMMDDhhmmss000R`
+  carries years and months, which `decode()` reads back, and no fixed number of seconds is either
+  one, so spelling a second count in days and below is where the guess would go — which is why the
+  too-long refusal names the `Date` that reaches every instant the absolute form holds, and the
+  negative one names nothing, there being no period to reach. Rejected: documenting the clamp, which
+  leaves the caller told a true thing and still sent the wrong period. Accepted: GSM's 0x1B is an
+  extension prefix rather than a character, so a bare ESC beside one of the ten extension bases is
+  the one input a per-character reading passes and the encoder then writes as the extended character
+  — the only composition in any of the three codecs, and not a character a message is written in.
 
 - **A string body is written in the alphabet its own `data_coding` names, and one that alphabet
   cannot carry is refused by the codec — `message_payload` on the same terms as `short_message`.**

@@ -266,10 +266,12 @@ describe('smppTime', () => {
 
 	// The format carries years and months that no fixed second count maps to, so encode() stops at days.
 	test('decodes the years and months the relative format holds but a second count cannot name', () => {
+		const before = Date.now();
 		const { err, date } = smppTime.decode('010000000000000R');
 
 		assert.equal(err, undefined);
-		assert.equal(date.getUTCFullYear(), new Date().getUTCFullYear() + 1);
+		assert.ok(date.getTime() >= before + 365 * 86400_000, date.toISOString());
+		assert.ok(date.getTime() <= Date.now() + 366 * 86400_000, date.toISOString());
 	});
 
 	test('passes an already-formatted string through', () => {
