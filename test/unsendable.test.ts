@@ -4,8 +4,9 @@ import type { PduObjectInput } from '../src/pdu.ts';
 import type { SendSmsDeps, SendSmsInput } from '../src/send-sms.ts';
 import { bindToSmsc, dummySmsc } from './dummy-smsc.ts';
 import { decodeMessage } from '../src/message.ts';
+import { messageOctets } from '../src/message-body.ts';
+import { objToPdu, pduToObj } from '../src/pdu.ts';
 import { paramNumber, paramText } from '../src/defs/types.ts';
-import { pduToObj } from '../src/pdu.ts';
 import { silentLog } from '../src/log.ts';
 import { submitSms } from '../src/send-sms.ts';
 
@@ -109,6 +110,129 @@ describe('an alphabet the caller named that cannot carry the message', () => {
 		}
 
 		assert.deepEqual(sentAs(smsc.octets), [[0x01, 'Hello world'], [0x08, 'Åsa naïve'], [0x08, 'あいう']]);
+	});
+});
+
+describe('a body the PDU\'s own data_coding cannot carry', () => {
+	/** The octets a built PDU carries as its body, wherever the caller put them. */
+	function bodyOf(built: ReturnType<typeof objToPdu>): Buffer | undefined {
+		assert.equal(built.err, undefined);
+		assert.ok(built.buffer);
+
+		const { pduObj } = pduToObj(built.buffer);
+
+		assert.ok(pduObj);
+
+		return messageOctets(pduObj);
+	}
+
+	// Latin-1 takes the low octet of every code point, so あ (U+3042) went out as 0x42 — the letter B.
+	test('refuses a string short_message the named alphabet cannot carry, naming the character', () => {
+		const built = objToPdu({
+			cmdName: 'submit_sm',
+			params: { data_coding: 0x03, destination_addr: to, short_message: 'あいう', source_addr: from },
+		});
+
+		assert.ok(built.err instanceof Error);
+		assert.equal(built.buffer, undefined);
+		assert.match(built.err.message, /short_message/);
+		assert.match(built.err.message, /LATIN1/);
+		assert.match(built.err.message, /"あ"/);
+		assert.match(built.err.message, /U\+3042/);
+		assert.match(built.err.message, /index 0/);
+	});
+
+	// Å is in the GSM table at 0x0E; ï is the one the encoder flattened to a space.
+	test('refuses a string short_message GSM 03.38 has no code for, naming that one', () => {
+		for (const dataCoding of [0x00, 0x01]) {
+			const built = objToPdu({
+				cmdName: 'submit_sm',
+				params: { data_coding: dataCoding, destination_addr: to, short_message: 'Åsa naïve', source_addr: from },
+			});
+
+			assert.ok(built.err instanceof Error, String(dataCoding));
+			assert.match(built.err.message, /ASCII/);
+			assert.match(built.err.message, /"ï"/);
+			assert.match(built.err.message, /U\+00EF/);
+			assert.match(built.err.message, /index 6/);
+		}
+	});
+
+	test('refuses a string message_payload on the same terms as short_message', () => {
+		const built = objToPdu({
+			cmdName: 'data_sm',
+			params: { data_coding: 0x03, destination_addr: to, source_addr: from },
+			tlvs: { message_payload: { tagValue: 'あいう' } },
+		});
+
+		assert.ok(built.err instanceof Error);
+		assert.equal(built.buffer, undefined);
+		assert.match(built.err.message, /message_payload/);
+		assert.match(built.err.message, /LATIN1/);
+		assert.match(built.err.message, /"あ"/);
+		assert.match(built.err.message, /U\+3042/);
+	});
+
+	test('never refuses a Buffer body, whatever the coding, because that is how binary is sent', () => {
+		const payload = Buffer.from([0x30, 0x42, 0xC3, 0x28, 0xFF, 0x00]);
+
+		for (const dataCoding of [0x00, 0x01, 0x03, 0x04, 0x08, 0xF0]) {
+			const params = { data_coding: dataCoding, destination_addr: to, source_addr: from };
+			const short = objToPdu({ cmdName: 'submit_sm', params: { ...params, short_message: payload } });
+			const carried = objToPdu({
+				cmdName: 'data_sm',
+				params,
+				tlvs: { message_payload: { tagValue: payload } },
+			});
+
+			assert.deepEqual(bodyOf(short), payload, `short_message under data_coding ${String(dataCoding)}`);
+			assert.deepEqual(bodyOf(carried), payload, `message_payload under data_coding ${String(dataCoding)}`);
+		}
+	});
+
+	test('never refuses a string the caller named no data_coding for, since detection always fits', () => {
+		for (const message of ['Hello world', 'Åsa naïve', 'あいう', '😀 beyond the basic plane']) {
+			const built = objToPdu({
+				cmdName: 'submit_sm',
+				params: { destination_addr: to, short_message: message, source_addr: from },
+			});
+
+			assert.equal(built.err, undefined, message);
+		}
+	});
+
+	test('writes a body the coding does carry as the octets that alphabet spells it in', () => {
+		const bodies: [number, string, string][] = [
+			[0x00, 'Hello world', '48656c6c6f20776f726c64'],
+			[0x03, 'Räksmörgås', '52e46b736df67267e573'],
+			[0x08, 'あいう', '304230443046'],
+		];
+
+		for (const [dataCoding, message, hex] of bodies) {
+			const params = { data_coding: dataCoding, destination_addr: to, source_addr: from };
+			const short = objToPdu({ cmdName: 'submit_sm', params: { ...params, short_message: message } });
+			const carried = objToPdu({
+				cmdName: 'data_sm',
+				params,
+				tlvs: { message_payload: { tagValue: message } },
+			});
+
+			assert.equal(bodyOf(short)?.toString('hex'), hex, `short_message: ${message}`);
+			assert.equal(bodyOf(carried)?.toString('hex'), hex, `message_payload: ${message}`);
+		}
+	});
+
+	test('refuses the same body through session.send(), with nothing reaching the socket', async t => {
+		const smsc = await dummySmsc(t, { messageIds: ['01a086fc-1ae8-7910-ac2c-34c2bd8bea19'] });
+		const session = await bindToSmsc(t, smsc.port, { reconnect: false });
+		const sent = await session.send({
+			cmdName: 'submit_sm',
+			params: { data_coding: 0x03, destination_addr: to, short_message: 'あいう', source_addr: from },
+		});
+
+		assert.ok(sent.err instanceof Error);
+		assert.match(sent.err.message, /LATIN1/);
+		assert.deepEqual(smsc.octets, [], 'a body the named alphabet cannot carry never reaches the socket');
 	});
 });
 
