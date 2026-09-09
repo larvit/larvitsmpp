@@ -601,11 +601,10 @@ how binary payloads, hand-built user data headers and deliberately malformed bod
 Composing a message by hand takes the send-side pair: `unencodable(message, encoding)` gives
 `{ char, index }` for the first character an alphabet cannot carry and `undefined` where it carries
 them all, which is the check `sendSms()` makes before it encodes anything;
-`dataCodingByEncoding[encoding]` is the `data_coding` this library writes for each alphabet — 0x00
-for `ASCII`, 0x03 for `LATIN1`, 0x08 for `UCS2` — which is what to put beside octets
-`encodeMessage()` handed back; `smppTime.encode(value)`
-returns `{ err, text }` for a `validity_period` or `schedule_delivery_time`, as `smppTime.decode()`
-returns `{ err, date }` for one that arrived.
+`dataCodingByEncoding[encoding]` is the `data_coding` this library writes for each alphabet — 0x00 for
+`ASCII`, 0x03 for `LATIN1`, 0x08 for `UCS2` — which is what to put beside octets `encodeMessage()`
+handed back; `smppTime.encode(value)` returns `{ err, text }` for a `validity_period` or
+`schedule_delivery_time`, as `smppTime.decode()` returns `{ err, date }` for one that arrived.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.
