@@ -1,4 +1,5 @@
 import type { ParamValue, WireType } from './types.ts';
+import type { Result } from '../result.ts';
 import { tlv } from './types.ts';
 
 export type TlvDefinition = {
@@ -104,3 +105,60 @@ export type Tlv = {
 	tagName: string | undefined;
 	tagValue: ParamValue;
 };
+
+export type TlvInput = {
+	/** Resolved from the record key; pass it for a tag the TLV table does not define. */
+	tagId?: number | undefined;
+	tagValue: ParamValue;
+};
+
+export function tagIdOf(name: string, input: TlvInput): Result<{ tagId: number }> {
+	const tagId = input.tagId ?? tlvs[name]?.id;
+
+	if (tagId === undefined) {
+		return { err: new Error(`TLV "${name}": unknown tag name, give it a tagId`) };
+	}
+
+	if (!Number.isInteger(tagId) || tagId < 0 || tagId > 0xFFFF) {
+		return { err: new Error(`TLV "${name}": tagId ${String(tagId)} out of range 0-65535`) };
+	}
+
+	return { tagId };
+}
+
+/** Each TLV as its four octet header and the value the tag's own wire type writes. */
+export function writeTlvs(inputs: Record<string, TlvInput> | undefined): Result<{ chunks: Buffer[] }> {
+	const chunks: Buffer[] = [];
+
+	for (const [name, input] of Object.entries(inputs ?? {})) {
+		const tag = tagIdOf(name, input);
+
+		if (tag.err) return { err: tag.err };
+
+		const type = tlvsById[tag.tagId]?.type ?? tlvDefault;
+		const sized = type.size(input.tagValue);
+
+		if (sized.err) {
+			return { err: new Error(`TLV "${name}": ${sized.err.message}`) };
+		}
+
+		if (sized.size > 0xffff) {
+			return { err: new Error(`TLV "${name}": ${String(sized.size)} octets overflow the two octet length`) };
+		}
+
+		const chunk = Buffer.alloc(sized.size + 4);
+
+		chunk.writeUInt16BE(tag.tagId, 0);
+		chunk.writeUInt16BE(sized.size, 2);
+
+		const written = type.write(input.tagValue, chunk, 4);
+
+		if (written.err) {
+			return { err: new Error(`TLV "${name}": ${written.err.message}`) };
+		}
+
+		chunks.push(chunk);
+	}
+
+	return { chunks };
+}

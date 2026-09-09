@@ -577,6 +577,13 @@ same for the GSM 03.38 message class: `0` for the flash class `sms.flash` alread
 and `3` for the ME-, SIM- and TE-specific ones, and `undefined` where that `data_coding`'s coding
 group carries no class at all.
 
+Building a PDU is the mirror: a string `short_message`, or a string `message_payload`, is encoded in
+the alphabet the PDU's own `data_coding` names, detected from the text where you name none, and a
+`data_coding` whose alphabet cannot carry one of its characters is refused, naming the character, its
+code point and where it is. A `Buffer` goes out exactly as given under any `data_coding`, which is
+how binary payloads, hand-built user data headers and deliberately malformed bodies are sent.
+`session.send()` and `session.sendReturn()` build through the same codec and refuse the same bodies.
+
 Composing a message by hand takes the send-side pair: `unencodable(message, encoding)` gives
 `{ char, index }` for the first character an alphabet cannot carry and `undefined` where it carries
 them all, which is the check `sendSms()` makes before it encodes anything; `smppTime.encode(value)`

@@ -120,11 +120,6 @@ session message is a change to every call site.
       another message's in a correlation table. The cost is that every consumer narrows, including
       the majority whose SMSC always names an id. Raised by the phase 11 product review, 2026-09-08.
       **This one is 1.0.0-or-never** — after release it needs a major version.
-- [ ] **The interop suite still asserts the defect [#95](https://github.com/larvit/larvitsmpp/pull/95)
-      fixed.** `interop-tests/smppsim.test.ts:621`, `a raw submit_sm with data_coding 0xF0 is not
-      read as flash`, fails on the next `./interop-tests/run.py smppsim`; nothing in CI runs that
-      suite, so it fails silently until someone does. The test name and its assertion both need
-      inverting, and the C17 row in `findings/02-smppsim.md` names that sub-test, so it follows.
 - [ ] Tag `v1.0.0` to publish.
 - [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.
@@ -141,16 +136,20 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
-- [ ] **`objToPdu()` corrupts a string body the same way `sendSms()` used to.**
-      `resolveShortMessage()` in `pdu.ts` picks the codec off the caller's own `data_coding` and
-      encodes a string `short_message` with it, so
-      `objToPdu({ params: { data_coding: 3, short_message: 'あいう' } })` returns `42 44 46` —
-      `"BDF"` — with no error, and `data_coding` 0 flattens to spaces. Same goal 2 defect as the one
-      the `unencodable()` guard closed at `sendSms()`, one layer down and on the published codec. The
-      guard is the same call on the branch where `data_coding` is a number and the body is a string;
-      the `detect()` branch needs none. Held back only because a refusal there may fail
-      `interop-tests/`, which is being edited elsewhere and cannot be verified from here. Raised by
-      the architecture review of [#97](https://github.com/larvit/larvitsmpp/pull/97), 2026-09-09.
+- [ ] **A send the codec will refuse waits for a link and a window slot first.** `refuse()` in
+      `outgoing-requests.ts` runs `misuse()` and the abort check before the wait, precisely so a call
+      that can never go out does not queue for what it will never use; a body `objToPdu()` refuses on
+      every attempt is the same case, and #98 made it a common one. On a down link the caller waits
+      `responseTimeout` and is told the link failed rather than that the body could not be built —
+      goal 2's wrong answer about what happened. The cheap fix builds the PDU twice, so the shape is
+      the open half. Raised by the architecture review of
+      [#98](https://github.com/larvit/larvitsmpp/pull/98), 2026-09-09.
+
+- [ ] **`message.ts` answers two questions.** Message coding and the SMPP time format (`smppDate`,
+      `smppTime`) share the file, which the architecture map in AGENTS.md already spells out as four
+      concerns. Nothing is wrong today; if the file has to move for another reason, `smpp-time.ts` is
+      the split. Raised by the architecture review of
+      [#98](https://github.com/larvit/larvitsmpp/pull/98), 2026-09-09.
 
 - [ ] **A gate that refuses a floating version anywhere in the repo.** Maintainer's ask on
       [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the `release.yaml`

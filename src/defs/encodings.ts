@@ -123,6 +123,13 @@ export function detect(value: string): EncodingName {
 
 export type Unencodable = { char: string; index: number };
 
+/** What an alphabet could not carry, said the one way: the character, its code point and its index. */
+export function unencodableText(at: Unencodable): string {
+	const point = (at.char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0');
+
+	return `${JSON.stringify(at.char)} (U+${point}) at index ${String(at.index)}`;
+}
+
 /** The first character `encoding` cannot carry, or undefined where it carries every one of them. */
 export function unencodable(message: string, encoding: EncodingName): Unencodable | undefined {
 	const codec = encodings[encoding];

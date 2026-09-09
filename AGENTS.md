@@ -109,7 +109,7 @@ src/
 		constants.ts     consts + constsById, and the SMPP version constants
 		encodings.ts     GSM 03.38, LATIN1, UCS2, detection, data_coding resolution
 		errors.ts        errors + errorsById (ESME_*)
-		tlvs.ts          TLV definitions, tlvsById
+		tlvs.ts          TLV definitions, tlvsById, the input shape, and writing a TLV stream
 		types.ts         Wire types: int8/int16/int32/string/cstring/buffer/arrays
 ```
 
@@ -621,6 +621,42 @@ Grouped by what each one constrains.
   extension prefix rather than a character, so a bare ESC beside one of the ten extension bases is
   the one input a per-character reading passes and the encoder then writes as the extended character
   — the only composition in any of the three codecs, and not a character a message is written in.
+
+- **A string body is written in the alphabet its own `data_coding` names, and one that alphabet
+  cannot carry is refused by the codec — `message_payload` on the same terms as `short_message`.**
+  Maintainer's call, 2026-09-09, from the architecture review of
+  [#97](https://github.com/larvit/larvitsmpp/pull/97): `objToPdu()` took the codec off the caller's
+  own `data_coding` and encoded with it whatever the text was, so `data_coding` 3 beside `あいう`
+  returned `42 44 46` — `"BDF"` — reported as built, while a string `message_payload` was cut to its
+  low octets whatever `data_coding` said. Goal 2 owns it, as it owns the `sendSms()` guard above.
+  The line falls at the string: a `Buffer` is octets the caller already chose and goes out as given
+  under any `data_coding`, which is what keeps goal 6's escape hatch open — the raw UDH, 8-bit binary
+  and deliberately malformed bodies `interop-tests/` builds are all still buildable — and a string
+  with no `data_coding` is untouched, detection carrying every character it was picked for. The
+  guard is `unencodable()` again rather than a second reading, and `unencodableText()` is the
+  character, its code point and its index said once for both refusals. It is reached through
+  `encodeBody()` in `message.ts`, which is where the `data_coding`-to-text pair already lives:
+  `encodeBody(text, dataCoding)` is `decodeMessage(buffer, dataCoding)`'s mirror and resolves the
+  alphabet through the same `encodingByDataCoding()`. `send()` and `sendReturn()` inherit it,
+  since both build through `buildPdu()`; `sendSms()` does not, and keeps its own guard, because
+  `splitMessage()` hands the codec a Buffer with nothing left to refuse and the index a segment
+  could name is not the one in the message. The TLV is encoded rather than merely checked because
+  `data_coding` names the alphabet of the body wherever it is carried — that is how
+  `messageOctets()` and `decodeMessage()` read one back, and a `data_sm` has nowhere else to put one
+  — so refusing what Latin-1 cannot hold while still writing UCS-2 text as Latin-1 octets would
+  close half of it. `short_message` settles the `data_coding` wherever it carries octets at all, the
+  order `messageOctets()` reads the two in, so the alphabet a PDU declares is the one its body will
+  be read under — and a `short_message` on a command whose table declares none is ignored here as
+  `writeParams()` ignores it, so an empty one, an absent one and one the wire cannot carry are the
+  same input rather than three. A `data_coding` on a command that declares no such field is honoured
+  the other way round, since it is `replace_sm`'s only way to name the alphabet its octets are in.
+  Every entry carrying the payload tag is resolved, by tag id rather
+  than by record key, since `tagIdOf()` lets a caller name it anything and a spelling that escaped
+  the guard would be a second spelling that disagrees about correctness. Rejected: refusing a string
+  `message_payload` outright and demanding
+  octets, which contradicts `short_message` on the same PDU. Rejected: guarding every string-valued
+  field, which `data_coding` says nothing about — an address is a C-Octet String and ASCII by 3.4's
+  own definition.
 
 ### The session's life
 
