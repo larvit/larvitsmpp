@@ -7,7 +7,7 @@ import type { SmppLog } from './log.ts';
 import type { SmsIdNotation } from './sms-id.ts';
 import { UnansweredError } from './unanswered-error.ts';
 import { consts, defaultMessagingMode, isMessagingMode, isSubmitMessagingMode, submitMessagingModes } from './defs/constants.ts';
-import { detect, encodingNames, isEncodingName, unencodable } from './defs/encodings.ts';
+import { detect, encodingNames, isEncodingName, unencodable, unencodableText } from './defs/encodings.ts';
 import { namedValue } from './error-from.ts';
 import { normaliseSmsId } from './sms-id.ts';
 import { paramText } from './defs/types.ts';
@@ -168,9 +168,7 @@ function refusedEncoding(encoding: unknown): Error {
 }
 
 function refusedText(encoding: EncodingName, at: Unencodable): Error {
-	const point = (at.char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0');
-
-	return new Error(`encoding ${encoding} cannot carry ${JSON.stringify(at.char)} (U+${point}) at index ${String(at.index)}; name UCS2 or leave encoding out`);
+	return new Error(`encoding ${encoding} cannot carry ${unencodableText(at)}; name UCS2 or leave encoding out`);
 }
 
 /** An alphabet the caller named has to carry the message; the one detect() picks always does. */

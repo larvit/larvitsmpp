@@ -1,7 +1,7 @@
 import type { Result } from './result.ts';
 import type { EncodingName } from './defs/encodings.ts';
-import { detect, encodingByDataCoding, encodings } from './defs/encodings.ts';
-import { hasUdh } from './defs/constants.ts';
+import { detect, encodingByDataCoding, encodings, unencodable, unencodableText } from './defs/encodings.ts';
+import { consts, hasUdh } from './defs/constants.ts';
 import { udhLength } from './udh.ts';
 
 /** A single SMS carries 1120 bits, whatever the alphabet. */
@@ -25,6 +25,28 @@ export function encodeMessage(
 	const resolved = encoding ?? detect(message);
 
 	return { buffer: encodings[resolved].encode(message), encoding: resolved };
+}
+
+/**
+ * A message body as octets, under the alphabet `dataCoding` names or one detected where it names
+ * none. An alphabet the caller named has to carry the text; the one detection picks always does.
+ */
+export function encodeBody(
+	text: string,
+	dataCoding: number | undefined,
+): Result<{ buffer: Buffer; dataCoding: number }> {
+	if (dataCoding === undefined) {
+		const detected = encodeMessage(text);
+
+		return { buffer: detected.buffer, dataCoding: consts.ENCODING[detected.encoding] };
+	}
+
+	const encoding = encodingByDataCoding(dataCoding);
+	const lost = unencodable(text, encoding);
+
+	return lost
+		? { err: new Error(`data_coding ${String(dataCoding)} names ${encoding}, which cannot carry ${unencodableText(lost)}; pass a Buffer of octets, or a data_coding whose alphabet carries them`) }
+		: { buffer: encodings[encoding].encode(text), dataCoding };
 }
 
 export function decodeMessage(

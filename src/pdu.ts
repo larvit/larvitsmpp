@@ -6,9 +6,8 @@ import type { Result, VoidResult } from './result.ts';
 import type { Tlv } from './defs/tlvs.ts';
 import { PduRefusedError, framingRefusal } from './pdu-refusal.ts';
 import { cmds, commandNameById, respNameFor } from './defs/commands.ts';
-import { consts, hasUdh } from './defs/constants.ts';
-import { decodeMessage, encodeMessage } from './message.ts';
-import { detect, encodingByDataCoding } from './defs/encodings.ts';
+import { hasUdh } from './defs/constants.ts';
+import { decodeMessage, encodeBody } from './message.ts';
 import { errorNameById, errors, isErrorName } from './defs/errors.ts';
 import { paramNumber } from './defs/types.ts';
 import { tlvDefault, tlvs, tlvsById } from './defs/tlvs.ts';
@@ -85,30 +84,53 @@ function tagIdOf(name: string, input: TlvInput): Result<{ tagId: number }> {
 	return { tagId };
 }
 
-/** Encoding a string short_message settles data_coding and sm_length; a buffer settles sm_length. */
-function resolveShortMessage(
-	params: Record<string, ParamValue | undefined>,
-): Record<string, ParamValue | undefined> {
-	const message = params.short_message;
+type ResolvedBody = {
+	params: Record<string, ParamValue | undefined>;
+	tlvs: Record<string, TlvInput> | undefined;
+};
 
-	if (Buffer.isBuffer(message)) {
-		return params.sm_length === undefined
-			? { ...params, sm_length: message.length }
-			: { ...params };
+function codingOf(params: Record<string, ParamValue | undefined>): number | undefined {
+	return typeof params.data_coding === 'number' ? params.data_coding : undefined;
+}
+
+/**
+ * data_coding names the alphabet of the body wherever the caller put it, so a string in either
+ * place is encoded with it, and short_message settles it for both where a caller filled both — the
+ * order messageOctets() reads them in. A Buffer is octets the caller already chose and is written
+ * as given. Encoding a string settles data_coding and sm_length; a buffer settles sm_length.
+ */
+function resolveBody(
+	params: Record<string, ParamValue | undefined>,
+	tlvs: Record<string, TlvInput> | undefined,
+): Result<ResolvedBody> {
+	const message = params.short_message;
+	const payload = tlvs?.message_payload;
+	const resolved: ResolvedBody = { params: { ...params }, tlvs };
+
+	if (Buffer.isBuffer(message) && params.sm_length === undefined) {
+		resolved.params.sm_length = message.length;
 	}
 
-	if (typeof message !== 'string') return { ...params };
+	if (typeof message === 'string') {
+		const encoded = encodeBody(message, codingOf(params));
 
-	const dataCoding = params.data_coding;
-	const encoding = typeof dataCoding === 'number' ? encodingByDataCoding(dataCoding) : detect(message);
-	const encoded = encodeMessage(message, encoding);
+		if (encoded.err) return { err: new Error(`Parameter "short_message": ${encoded.err.message}`) };
 
-	return {
-		...params,
-		data_coding: typeof dataCoding === 'number' ? dataCoding : consts.ENCODING[encoded.encoding],
-		short_message: encoded.buffer,
-		sm_length: encoded.buffer.length,
-	};
+		resolved.params.data_coding = encoded.dataCoding;
+		resolved.params.short_message = encoded.buffer;
+		resolved.params.sm_length = encoded.buffer.length;
+	}
+
+	if (payload !== undefined && typeof payload.tagValue === 'string') {
+		const encoded = encodeBody(payload.tagValue, codingOf(resolved.params));
+
+		if (encoded.err) return { err: new Error(`TLV "message_payload": ${encoded.err.message}`) };
+
+		resolved.params.data_coding = encoded.dataCoding;
+		resolved.tlvs = { ...tlvs, message_payload: { ...payload, tagValue: encoded.buffer } };
+	}
+
+	return resolved;
 }
 
 function writeParams(
@@ -188,11 +210,15 @@ function buildBody(
 ): Result<{ body: Buffer }> {
 	if (errors[cmdStatus] !== 0 && definition.id >= respBit) return { body: Buffer.alloc(0) };
 
-	const written = writeParams(definition, resolveShortMessage(params), cmdName);
+	const body = resolveBody(params, tlvs);
+
+	if (body.err) return { err: body.err };
+
+	const written = writeParams(definition, body.params, cmdName);
 
 	if (written.err) return { err: written.err };
 
-	const writtenTlvs = writeTlvs(tlvs);
+	const writtenTlvs = writeTlvs(body.tlvs);
 
 	if (writtenTlvs.err) return { err: writtenTlvs.err };
 
