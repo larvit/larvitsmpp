@@ -141,25 +141,6 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
-- [ ] **A named alphabet that cannot hold the message corrupts it instead of refusing it.**
-      `encodeMessage('あいう', 'LATIN1')` returns `42 44 46` — `"BDF"` — and `sendSms()` puts that on
-      the wire: `checkOptions()` refuses an unknown name, `FLASH` and flash-beside-Latin-1, but never
-      asks whether the alphabet the caller named can carry the text. GSM 7-bit does the same, mapping
-      anything outside 03.38 to a space. `Encoding.match()` cannot be the guard — `latin1.match()` is
-      hardcoded `false` because it doubles as the auto-selection policy `detect()` reads, so "can hold
-      this" and "should be picked for this" would have to be separated first. Send-side, so the tag
-      is not blocked on it. Raised by the architecture review of
-      [#96](https://github.com/larvit/larvitsmpp/pull/96), 2026-09-09.
-
-- [ ] **A time nobody can read goes out as `NaN` rather than being refused.**
-      `smppTime.encode(new Date('nope'))` returns `NaNNaNNaNNaNNaNNaNNaN00+` and
-      `smppTime.encode(NaN)` returns `0000NaNNaNNaNNaN000R`; `sendSms({ validityPeriod })` and
-      `scheduleDeliveryTime` write either straight into the PDU with no check at
-      `submitSmParams()`. Goal 2, since the peer reads a field that means nothing. `Date` is not the
-      closed domain hard rule 1's totality clause covers, so this one wants a guard at the send
-      boundary rather than a `Result` on `smppTime`. Raised by the stability review of
-      [#96](https://github.com/larvit/larvitsmpp/pull/96), 2026-09-09.
-
 - [ ] **A gate that refuses a floating version anywhere in the repo.** Maintainer's ask on
       [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the `release.yaml`
       pinning thread, which stays open until this lands. Pinning every action and runner by hand is

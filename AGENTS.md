@@ -586,6 +586,40 @@ Grouped by what each one constrains.
   unpacked-alphabet section above exists to stop. Accepted: a Latin-1 message past the 140 characters
   one SMS holds now costs more segments than it did, and `smsIds` is that much longer.
 
+- **An alphabet the caller named has to carry the message, and a time the format cannot express is
+  refused, both before a segment goes out.** Maintainer's call, 2026-09-09, from the architecture and
+  stability reviews of [#96](https://github.com/larvit/larvitsmpp/pull/96): `encoding: 'LATIN1'` on
+  `あいう` put `42 44 46` — `"BDF"` — on the wire and returned success, `encoding: 'ASCII'` flattened
+  every character outside 03.38 to a space, and `validityPeriod: new Date('nope')` wrote
+  `NaNNaNNaNNaNNaNNaNNaN00+` into the PDU. Goal 2 owns all three: bytes that do not say what the
+  caller asked, reported as sent. `unencodable()` is the single answer to whether an alphabet can
+  carry a message, as `messageClassOf()` is to whether a `data_coding` carries a class, and it asks
+  the codec — `decode(encode(c)) === c` per code point — rather than restating the tables beside it,
+  so the guard cannot drift from what the send would write and a fourth alphabet answers by having a
+  codec at all. It is exported for the reason `concatOf()` is: a caller composing a `submit_sm`
+  through `send()` and `encodeMessage()` would otherwise rewrite the read this fixed. `match()`
+  cannot be that answer — it doubles as the auto-selection policy `detect()` reads, where LATIN1 is
+  hardcoded false so nothing picks it, and using it would refuse the 8-bit binary body Latin-1 is
+  kept for. The guard is on the named branch alone, so an unspecified send is untouched: every
+  alphabet `detect()` returns carries every character it was picked for, over the whole code point
+  range. The error names the character, its code point and its index, since the caller's next
+  question is which one. `smppTime.encode()` returns a `Result`, where the three encoding helpers
+  stayed total: that argument was that `EncodingName` is a closed set the compiler guards, and
+  `Date | number | string` is not — an invalid `Date` and `NaN` inhabit it, which hard rule 1 makes a
+  result "wherever the types admit one", and `decode()` has been fallible for the same reason since
+  it was written. `sendSms()` settles both times in `checkOptions()`, so a message with an unreadable
+  one builds no segment at all. Rejected: transcoding to UCS2, which overrides the one option the
+  caller wrote in order to override a choice — the same reason a flash Latin-1 message is refused
+  rather than promoted, and an operator that accepts only `data_coding` 0x03 would be handed
+  something it never agreed to take. Rejected: guarding `sendSms()` alone and leaving
+  `smppTime.encode()` writing `NaN`s, which leaves this library's own published helper composing the
+  garbage the guard exists to stop — the low-level surface passes through what a caller wrote, never
+  what this code produced. Rejected: a `holds()` member beside `match()` on `Encoding`, a second
+  per-alphabet table to keep in step with the codec. Rejected: validating the `string` spelling of a
+  time, which is a stamp the caller formatted for a peer whose format is theirs to name. Accepted:
+  `Infinity` seconds is refused rather than clamped to 99 days, where a real period past 99 days is
+  still clamped.
+
 ### The session's life
 
 - **A close arriving after our own `unbind` is a clean unbind, not an error.** Maintainer's call,

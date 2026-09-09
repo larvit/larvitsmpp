@@ -1,4 +1,4 @@
-import type { EncodingName } from './defs/encodings.ts';
+import type { EncodingName, Unencodable } from './defs/encodings.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { SubmitMessagingMode } from './defs/constants.ts';
 import type { PduObject, PduObjectInput } from './pdu.ts';
@@ -7,7 +7,7 @@ import type { SmppLog } from './log.ts';
 import type { SmsIdNotation } from './sms-id.ts';
 import { UnansweredError } from './unanswered-error.ts';
 import { consts, defaultMessagingMode, isMessagingMode, isSubmitMessagingMode, submitMessagingModes } from './defs/constants.ts';
-import { detect, encodingNames, isEncodingName } from './defs/encodings.ts';
+import { detect, encodingNames, isEncodingName, unencodable } from './defs/encodings.ts';
 import { namedValue } from './error-from.ts';
 import { normaliseSmsId } from './sms-id.ts';
 import { paramText } from './defs/types.ts';
@@ -60,16 +60,24 @@ export type SendSmsDeps = {
 	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 };
 
+/** The time fields as the wire spells them, settled once for a message rather than per segment. */
+type SendTimes = {
+	scheduleDeliveryTime?: string;
+	validityPeriod?: string;
+};
+
 /** What the checks below settle, before a segment exists to carry it. */
 type CheckedOptions = {
 	encoding: EncodingName;
 	messagingMode: SubmitMessagingMode;
+	times: SendTimes;
 };
 
 type SegmentOptions = {
 	encoding: EncodingName;
 	messagingMode?: SubmitMessagingMode;
 	multipart: boolean;
+	times?: SendTimes;
 };
 
 /** Alphanumeric senders must be TON 5. */
@@ -108,13 +116,12 @@ export function submitSmParams(
 		source_addr_ton: sms.sourceAddrTon ?? addressTon(sms.from),
 	};
 
+	const schedule = options.times?.scheduleDeliveryTime;
+	const validity = options.times?.validityPeriod;
+
 	if (sms.dlr === true) params.registered_delivery = consts.REGISTERED_DELIVERY.FINAL;
-	if (sms.scheduleDeliveryTime !== undefined) {
-		params.schedule_delivery_time = smppTime.encode(sms.scheduleDeliveryTime);
-	}
-	if (sms.validityPeriod !== undefined) {
-		params.validity_period = smppTime.encode(sms.validityPeriod);
-	}
+	if (schedule !== undefined) params.schedule_delivery_time = schedule;
+	if (validity !== undefined) params.validity_period = validity;
 
 	return params;
 }
@@ -157,11 +164,38 @@ function refusedEncoding(encoding: unknown): Error {
 	return new Error(`encoding must be ${encodingNames.join(', ')}, got ${namedValue(encoding)}`);
 }
 
+function refusedText(encoding: EncodingName, at: Unencodable): Error {
+	const point = (at.char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0');
+
+	return new Error(`encoding ${encoding} cannot carry ${JSON.stringify(at.char)} (U+${point}) at index ${String(at.index)}; name UCS2 or leave encoding out`);
+}
+
+/** An alphabet the caller named has to carry the message; the one detect() picks always does. */
 function checkEncoding(encoding: unknown, message: string): Result<{ encoding: EncodingName }> {
 	if (encoding === undefined) return { encoding: detect(message) };
-	if (isEncodingName(encoding)) return { encoding };
+	if (!isEncodingName(encoding)) return { err: refusedEncoding(encoding) };
 
-	return { err: refusedEncoding(encoding) };
+	const lost = unencodable(message, encoding);
+
+	return lost ? { err: refusedText(encoding, lost) } : { encoding };
+}
+
+function checkTimes(sms: SendSmsInput): Result<{ times: SendTimes }> {
+	const times: SendTimes = {};
+
+	for (const option of ['scheduleDeliveryTime', 'validityPeriod'] as const) {
+		const value = sms[option];
+
+		if (value === undefined) continue;
+
+		const encoded = smppTime.encode(value);
+
+		if (encoded.err) return { err: new Error(`${option}: ${encoded.err.message}`) };
+
+		times[option] = encoded.text;
+	}
+
+	return { times };
 }
 
 /** GSM 03.38 section 4 gives the class groups GSM 7-bit, 8-bit data and UCS2, and no Latin-1 at all. */
@@ -185,7 +219,11 @@ function checkOptions(sms: SendSmsInput): Result<CheckedOptions> {
 
 	if (unspellable) return { err: unspellable };
 
-	return { encoding: chosen.encoding, messagingMode: mode.messagingMode };
+	const times = checkTimes(sms);
+
+	if (times.err) return { err: times.err };
+
+	return { encoding: chosen.encoding, messagingMode: mode.messagingMode, times: times.times };
 }
 
 /** Nothing goes on the wire until the whole message fits: a half-sent message bills twice. */
@@ -252,7 +290,12 @@ export async function submitSms(deps: SendSmsDeps, sms: SendSmsInput): Promise<S
 	// segment before answering — this library's own server does — would otherwise deadlock.
 	const sent = await Promise.all(segments.map(segment => deps.send({
 		cmdName: 'submit_sm',
-		params: submitSmParams(sms, segment, { encoding, messagingMode: options.messagingMode, multipart }),
+		params: submitSmParams(sms, segment, {
+			encoding,
+			messagingMode: options.messagingMode,
+			multipart,
+			times: options.times,
+		}),
 	})));
 
 	return collectSent(sent, deps.respIdNotation);

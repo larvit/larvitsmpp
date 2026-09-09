@@ -119,33 +119,42 @@ const relativeTime = /^(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)000R$/;
 /** The SMPP absolute and relative time format, as used by validity_period and friends. */
 export const smppTime = {
 	/**
-	 * A Date becomes an absolute UTC time; a number is a relative period in seconds. Relative
-	 * periods are expressed in days and below, so anything past 99 days is clamped to that.
+	 * A Date becomes an absolute UTC time; a number is a relative period in seconds, expressed in
+	 * days and below, so anything past 99 days is clamped to that; a string is a stamp the caller
+	 * formatted itself and is passed through. A value naming no instant or period is refused.
 	 */
-	encode(value: Date | number | string): string {
-		if (typeof value === 'string') return value;
+	encode(value: Date | number | string): Result<{ text: string }> {
+		if (typeof value === 'string') return { text: value };
 
 		if (typeof value === 'number') {
+			if (!Number.isFinite(value)) return { err: new Error(`Not an SMPP time: ${String(value)}`) };
+
 			const total = Math.max(0, Math.floor(value));
 			const days = Math.min(99, Math.floor(total / 86400));
 			const capped = days === 99 ? 99 * 86400 + 86399 : total;
 
-			return '0000'
-				+ pad(Math.floor(capped / 86400), 2)
-				+ pad(Math.floor(capped / 3600) % 24, 2)
-				+ pad(Math.floor(capped / 60) % 60, 2)
-				+ pad(capped % 60, 2)
-				+ '000R';
+			return {
+				text: '0000'
+					+ pad(Math.floor(capped / 86400), 2)
+					+ pad(Math.floor(capped / 3600) % 24, 2)
+					+ pad(Math.floor(capped / 60) % 60, 2)
+					+ pad(capped % 60, 2)
+					+ '000R',
+			};
 		}
 
-		return pad(value.getUTCFullYear() % 100, 2)
-			+ pad(value.getUTCMonth() + 1, 2)
-			+ pad(value.getUTCDate(), 2)
-			+ pad(value.getUTCHours(), 2)
-			+ pad(value.getUTCMinutes(), 2)
-			+ pad(value.getUTCSeconds(), 2)
-			+ pad(Math.floor(value.getUTCMilliseconds() / 100), 1)
-			+ '00+';
+		if (Number.isNaN(value.getTime())) return { err: new Error('Not an SMPP time: an invalid Date') };
+
+		return {
+			text: pad(value.getUTCFullYear() % 100, 2)
+				+ pad(value.getUTCMonth() + 1, 2)
+				+ pad(value.getUTCDate(), 2)
+				+ pad(value.getUTCHours(), 2)
+				+ pad(value.getUTCMinutes(), 2)
+				+ pad(value.getUTCSeconds(), 2)
+				+ pad(Math.floor(value.getUTCMilliseconds() / 100), 1)
+				+ '00+',
+		};
 	},
 
 	decode(value: string): Result<{ date: Date }> {

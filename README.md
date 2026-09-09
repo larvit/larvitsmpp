@@ -126,6 +126,18 @@ segment goes out.
 anything else is refused by name rather than guessed at. Leave it out and a message that fits GSM
 7-bit goes as `ASCII` and everything else as `UCS2`; `LATIN1` is only ever used when you name it.
 
+An alphabet you name has to carry the message: `LATIN1` beside a character above U+00FF, or `ASCII`
+beside one GSM 03.38 has no code for, is refused before anything goes out, and the error names the
+character, its code point and where in the message it is. Leaving `encoding` out is never refused —
+what detection picks always fits. `LATIN1` still carries every octet, so an 8-bit binary body sent
+as `buffer.toString('latin1')` goes out unchanged. `unencodable(message, encoding)` gives the same
+answer ahead of a send: `{ char, index }` for the first character that alphabet cannot carry, or
+`undefined`.
+
+`scheduleDeliveryTime` and `validityPeriod` take a `Date`, a number of seconds, or a stamp you
+formatted yourself. One that names no time — an invalid `Date`, `NaN`, `Infinity` — is refused
+before anything goes out.
+
 `flash` asks for GSM 03.38 message class 0, the class a handset shows on arrival instead of storing.
 It travels in `data_coding` beside the alphabet, so a flash UCS2 message stays UCS2. Pairing it with
 `encoding: 'LATIN1'` is the one combination with nowhere to go — a message class carries GSM 7-bit,
@@ -595,7 +607,8 @@ promises and the rough edges taken off.
 - **`pduObj.isResp()` is now the standalone `isResp(pduObj)`**, and `pduObj.cmdStatus` is `undefined`
   for a status code the library does not know, with the raw number in `pduObj.cmdStatusId`.
 - **`defs.filters` is gone.** It was declared on every command and TLV but never invoked, so it did
-  nothing. SMPP time formatting, the one part worth keeping, is exported as `smppTime`.
+  nothing. SMPP time formatting, the one part worth keeping, is exported as `smppTime`, whose
+  `encode()` returns `{ err, text }` the way its `decode()` returns `{ err, date }`.
 - **`DATAGRAM`, `FORWARD` and `STORE_FORWARD` moved from `consts.ESM_CLASS` to
   `consts.MESSAGING_MODE`**, which also names the fourth mode, `SMSC_DEFAULT`. They are bits 1-0 of
   `esm_class` rather than whole values of it. Read them from the new group, or let `sendSms()` write
@@ -623,6 +636,11 @@ have worked around any of these, remove the workaround:
   GSM alphabet on a Latin-1 message that has no `data_coding` at all — that pair is refused now.
   Inbound, only a `data_coding` of exactly 0x10 counted as flash, so a flash UCS2 message and the
   whole 0xF0 coding group arrived as ordinary messages.
+- An alphabet named on a message it cannot carry corrupted it and reported success: `LATIN1` wrote
+  the low octet of every code point, so `あいう` went out as `BDF`, and `ASCII` flattened every
+  character outside GSM 03.38 to a space. Both are refused before anything goes out now.
+- A `scheduleDeliveryTime` or `validityPeriod` naming no time — an invalid `Date` above all — went
+  into the PDU as a string of `NaN`s. That send is refused now.
 - The multipart reference counter was shared by every session in the process.
 - `tls: true` never performed a handshake, so the connection was not actually encrypted.
 - Alphanumeric senders were sent with TON 1 (international) instead of TON 5.
