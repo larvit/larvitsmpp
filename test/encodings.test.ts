@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { detect, encodingByDataCoding, encodings } from '../src/defs/encodings.ts';
+import { detect, encodingByDataCoding, encodings, unencodable } from '../src/defs/encodings.ts';
 
 describe('ASCII (GSM 03.38)', () => {
 	const samples: [string, number[]][] = [
@@ -104,6 +104,51 @@ describe('detect()', () => {
 		assert.equal(detect('ʹʺʻʼʽ`'), 'UCS2');
 		assert.equal(detect('تست'), 'UCS2');
 		assert.equal(detect('۱۲۳۴۵۶۷۸۹۰'), 'UCS2');
+	});
+
+	// Exhaustive: sendSms() leaves the automatic path unchecked on this and nothing else.
+	test('never picks an alphabet that loses a character, for any code point there is', () => {
+		for (let code = 0; code <= 0x10FFFF; code++) {
+			if (code >= 0xD800 && code <= 0xDFFF) continue;
+
+			const char = String.fromCodePoint(code);
+			const lost = unencodable(char, detect(char));
+
+			if (lost) assert.fail(`detect() picked ${detect(char)} for U+${code.toString(16)}, which loses it`);
+		}
+	});
+});
+
+describe('unencodable()', () => {
+	test('names the first character an alphabet cannot carry, and nothing where it carries them all', () => {
+		assert.deepEqual(unencodable('あいう', 'LATIN1'), { char: 'あ', index: 0 });
+		assert.deepEqual(unencodable('Åsa naïve', 'ASCII'), { char: 'ï', index: 6 });
+		assert.equal(unencodable('€{}[]\\~^|\f', 'ASCII'), undefined);
+		assert.equal(unencodable('Åsa', 'ASCII'), undefined);
+		assert.equal(unencodable('`ÁáçÚ', 'LATIN1'), undefined);
+		assert.equal(unencodable('あいう😀', 'UCS2'), undefined);
+	});
+
+	test('counts the index in the units the message is written in, so a surrogate pair reads back whole', () => {
+		assert.deepEqual(unencodable('ab😀', 'LATIN1'), { char: '😀', index: 2 });
+		assert.deepEqual(unencodable('a😀b', 'ASCII'), { char: '😀', index: 1 });
+	});
+
+	test('carries every octet through Latin-1, which is what an 8-bit binary body is sent as', () => {
+		const every = Buffer.from(Array.from({ length: 256 }, (_, byte) => byte));
+
+		assert.equal(unencodable(every.toString('latin1'), 'LATIN1'), undefined);
+		assert.deepEqual(unencodable('Ā', 'LATIN1'), { char: 'Ā', index: 0 });
+	});
+
+	test('is not match(), which says what detect() may pick rather than what the alphabet holds', () => {
+		assert.equal(encodings.LATIN1.match('Hello world'), false);
+		assert.equal(unencodable('Hello world', 'LATIN1'), undefined);
+	});
+
+	test('reads a character at a time, so a bare GSM escape beside its base reads as carried', () => {
+		assert.equal(unencodable('\x1Be', 'ASCII'), undefined);
+		assert.deepEqual(encodings.ASCII.encode('\x1Be'), encodings.ASCII.encode('€'));
 	});
 });
 

@@ -121,6 +121,22 @@ export function detect(value: string): EncodingName {
 	return 'UCS2';
 }
 
+export type Unencodable = { char: string; index: number };
+
+/** The first character `encoding` cannot carry, or undefined where it carries every one of them. */
+export function unencodable(message: string, encoding: EncodingName): Unencodable | undefined {
+	const codec = encodings[encoding];
+	let index = 0;
+
+	for (const char of message) {
+		if (codec.decode(codec.encode(char)) !== char) return { char, index };
+
+		index += char.length;
+	}
+
+	return undefined;
+}
+
 /**
  * The GSM 03.38 section 4 message class a `data_coding` octet carries, in bits 1-0, or undefined
  * where its coding group carries none. Below 0x80 bit 4 says whether one is there; 0xF0 always is.

@@ -141,24 +141,16 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
-- [ ] **A named alphabet that cannot hold the message corrupts it instead of refusing it.**
-      `encodeMessage('あいう', 'LATIN1')` returns `42 44 46` — `"BDF"` — and `sendSms()` puts that on
-      the wire: `checkOptions()` refuses an unknown name, `FLASH` and flash-beside-Latin-1, but never
-      asks whether the alphabet the caller named can carry the text. GSM 7-bit does the same, mapping
-      anything outside 03.38 to a space. `Encoding.match()` cannot be the guard — `latin1.match()` is
-      hardcoded `false` because it doubles as the auto-selection policy `detect()` reads, so "can hold
-      this" and "should be picked for this" would have to be separated first. Send-side, so the tag
-      is not blocked on it. Raised by the architecture review of
-      [#96](https://github.com/larvit/larvitsmpp/pull/96), 2026-09-09.
-
-- [ ] **A time nobody can read goes out as `NaN` rather than being refused.**
-      `smppTime.encode(new Date('nope'))` returns `NaNNaNNaNNaNNaNNaNNaN00+` and
-      `smppTime.encode(NaN)` returns `0000NaNNaNNaNNaN000R`; `sendSms({ validityPeriod })` and
-      `scheduleDeliveryTime` write either straight into the PDU with no check at
-      `submitSmParams()`. Goal 2, since the peer reads a field that means nothing. `Date` is not the
-      closed domain hard rule 1's totality clause covers, so this one wants a guard at the send
-      boundary rather than a `Result` on `smppTime`. Raised by the stability review of
-      [#96](https://github.com/larvit/larvitsmpp/pull/96), 2026-09-09.
+- [ ] **`objToPdu()` corrupts a string body the same way `sendSms()` used to.**
+      `resolveShortMessage()` in `pdu.ts` picks the codec off the caller's own `data_coding` and
+      encodes a string `short_message` with it, so
+      `objToPdu({ params: { data_coding: 3, short_message: 'あいう' } })` returns `42 44 46` —
+      `"BDF"` — with no error, and `data_coding` 0 flattens to spaces. Same goal 2 defect as the one
+      the `unencodable()` guard closed at `sendSms()`, one layer down and on the published codec. The
+      guard is the same call on the branch where `data_coding` is a number and the body is a string;
+      the `detect()` branch needs none. Held back only because a refusal there may fail
+      `interop-tests/`, which is being edited elsewhere and cannot be verified from here. Raised by
+      the architecture review of [#97](https://github.com/larvit/larvitsmpp/pull/97), 2026-09-09.
 
 - [ ] **A gate that refuses a floating version anywhere in the repo.** Maintainer's ask on
       [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the `release.yaml`

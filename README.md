@@ -126,6 +126,16 @@ segment goes out.
 anything else is refused by name rather than guessed at. Leave it out and a message that fits GSM
 7-bit goes as `ASCII` and everything else as `UCS2`; `LATIN1` is only ever used when you name it.
 
+An alphabet you name has to carry the message: `LATIN1` beside a character above U+00FF, or `ASCII`
+beside one GSM 03.38 has no code for, is refused before anything goes out, and the error names the
+character, its code point and where in the message it is. Leaving `encoding` out is never refused —
+what detection picks always fits. `LATIN1` still carries every octet, so an 8-bit binary body sent
+as `buffer.toString('latin1')` goes out unchanged.
+
+`scheduleDeliveryTime` and `validityPeriod` take a `Date`, a number of seconds, or a stamp you
+formatted yourself. One that names no time — an invalid `Date`, `NaN`, `Infinity` — is refused
+before anything goes out.
+
 `flash` asks for GSM 03.38 message class 0, the class a handset shows on arrival instead of storing.
 It travels in `data_coding` beside the alphabet, so a flash UCS2 message stays UCS2. Pairing it with
 `encoding: 'LATIN1'` is the one combination with nowhere to go — a message class carries GSM 7-bit,
@@ -566,6 +576,12 @@ carried them, or `undefined` where the PDU is a whole message. `messageClassOf(d
 same for the GSM 03.38 message class: `0` for the flash class `sms.flash` already reports, `1`, `2`
 and `3` for the ME-, SIM- and TE-specific ones, and `undefined` where that `data_coding`'s coding
 group carries no class at all.
+
+Composing a message by hand takes the send-side pair: `unencodable(message, encoding)` gives
+`{ char, index }` for the first character an alphabet cannot carry and `undefined` where it carries
+them all, which is the check `sendSms()` makes before it encodes anything; `smppTime.encode(value)`
+returns `{ err, text }` for a `validity_period` or `schedule_delivery_time`, as `smppTime.decode()`
+returns `{ err, date }` for one that arrived.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.

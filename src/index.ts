@@ -4,7 +4,7 @@ export { Session } from './session.ts';
 
 export { cmds, cmdsById, commandNameById, isCommandName } from './defs/commands.ts';
 export { consts, constsById } from './defs/constants.ts';
-export { detect, encodingByDataCoding, encodings, isEncodingName, messageClassOf } from './defs/encodings.ts';
+export { detect, encodingByDataCoding, encodings, isEncodingName, messageClassOf, unencodable } from './defs/encodings.ts';
 export { errorNameById, errors, errorsById, isErrorName } from './defs/errors.ts';
 export { tlvs, tlvsById } from './defs/tlvs.ts';
 export { types } from './defs/types.ts';
@@ -62,7 +62,7 @@ export type {
 } from './session.ts';
 export type { CommandName, PduParams, PduParamsInput } from './defs/commands.ts';
 export type { ConstGroup, MessageState, SubmitMessagingMode } from './defs/constants.ts';
-export type { Encoding, EncodingName } from './defs/encodings.ts';
+export type { Encoding, EncodingName, Unencodable } from './defs/encodings.ts';
 export type { ErrorName } from './defs/errors.ts';
 export type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
 export type { PduHeader } from './pdu-refusal.ts';
