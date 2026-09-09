@@ -60,6 +60,10 @@ tests passing, `malformed: 0`, `expert errors: 0` in both.
 | C17 (encodings over loopback) | pass | `smppsim - C17 …`, 5 sub-tests: Latin-1, UCS-2, flash (0x10), raw 0xF0 (not flash), raw UDH+8-bit-binary |
 | C18 (`smppsim-outbind`) | pass (record, not judge) | `smppsim-outbind - C18 …`; see below for the wire facts |
 
+C17's `raw 0xF0 (not flash)` recorded a `@larvit/smpp` defect, fixed in
+[#95](https://github.com/larvit/larvitsmpp/pull/95): 0xF0 is GSM 03.38 message class 0, so it reads
+as flash now.
+
 ## Defects in @larvit/smpp
 
 ### A delivery receipt's `data_coding` is trusted to decode its body, even though the spec makes the receipt a fixed text format

@@ -1,4 +1,4 @@
-export type EncodingName = 'ASCII' | 'FLASH' | 'LATIN1' | 'UCS2';
+export type EncodingName = 'ASCII' | 'LATIN1' | 'UCS2';
 
 export type Encoding = {
 	decode: (buffer: Uint8Array) => string;
@@ -104,10 +104,15 @@ const ucs2: Encoding = {
 
 export const encodings: Record<EncodingName, Encoding> = {
 	ASCII: ascii,
-	FLASH: ascii,
 	LATIN1: latin1,
 	UCS2: ucs2,
 };
+
+export const encodingNames: readonly string[] = Object.keys(encodings);
+
+export function isEncodingName(value: unknown): value is EncodingName {
+	return typeof value === 'string' && Object.hasOwn(encodings, value);
+}
 
 export function detect(value: string): EncodingName {
 	if (encodings.ASCII.match(value)) return 'ASCII';
@@ -116,21 +121,33 @@ export function detect(value: string): EncodingName {
 	return 'UCS2';
 }
 
-/** The 0x1X and 0xFX ranges carry a GSM message class and put the alphabet in bits 3-2 or bit 2. */
-function messageClassEncoding(dataCoding: number): EncodingName | undefined {
-	if ((dataCoding & 0xF0) === 0x10) {
-		const alphabet = (dataCoding >> 2) & 0x03;
-
-		if (alphabet === 0x01) return 'LATIN1';
-
-		return alphabet === 0x02 ? 'UCS2' : 'ASCII';
+/**
+ * The GSM 03.38 section 4 message class a `data_coding` octet carries, in bits 1-0, or undefined
+ * where its coding group carries none. Below 0x80 bit 4 says whether one is there; 0xF0 always is.
+ */
+export function messageClassOf(dataCoding: number): number | undefined {
+	if ((dataCoding & 0x80) === 0) {
+		return (dataCoding & 0x10) === 0x10 ? dataCoding & 0x03 : undefined;
 	}
+
+	return (dataCoding & 0xF0) === 0xF0 ? dataCoding & 0x03 : undefined;
+}
+
+// A class is the only evidence a peer below 0x80 is spelling 03.38 rather than SMPP's flat table,
+// which contradicts it and wins: 0x03 is Latin-1 here, GSM 7-bit there.
+/** A class group puts the alphabet in bits 3-2, or in bit 2 alone above 0xF0. */
+function messageClassEncoding(dataCoding: number): EncodingName | undefined {
+	if (messageClassOf(dataCoding) === undefined) return undefined;
 
 	if ((dataCoding & 0xF0) === 0xF0) {
 		return (dataCoding & 0x04) === 0x04 ? 'LATIN1' : 'ASCII';
 	}
 
-	return undefined;
+	const alphabet = (dataCoding >> 2) & 0x03;
+
+	if (alphabet === 0x01) return 'LATIN1';
+
+	return alphabet === 0x02 ? 'UCS2' : 'ASCII';
 }
 
 /**

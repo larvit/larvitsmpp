@@ -207,7 +207,10 @@ exactly 140.
   stays there because that is a different peer rather than a second copy of this one. The waiting
   helpers each file carries are copies, tolerated because a wrong one fails that file's own tests and
   nothing else, and a helper that only names the parameters of one `objToPdu()` call is on that same
-  footing — it encodes no wire fact `objToPdu()` does not already own.
+  footing — it encodes no wire fact `objToPdu()` does not already own. So is a stub standing in for a
+  collaborator the type system already keeps in step: `recordingDeps()` in `messaging-mode.test.ts`
+  and `message-class.test.ts` is one `SendSmsDeps.send` that answers nothing, and a field added to
+  that type fails to compile in both copies at once.
 - `message_id` values the library generates are UUID v7.
 - A test that needs a dummy peer must `resume()` its sockets. An unread socket never processes the
   peer's FIN, so `server.close()` hangs forever — that is a test bug, not a library one.
@@ -420,6 +423,46 @@ Grouped by what each one constrains.
   UCS-2 receipt body that no researched SMSC is — that peer's receipt yields no fields at all here,
   which goal 2 reports as undetermined rather than guessed. An inbound message is untouched: nothing
   but `data_coding` can say how a message was written.
+
+- **A message class is read where GSM 03.38 puts it, `flash` is class 0 alone, and a flash message
+  with no alphabet to carry it is refused.** Maintainer's call, 2026-09-09, closing the last target
+  of the interoperability plan: `sms.flash` was `(data_coding & 0xF0) === 0x10`, which called the
+  ME-, SIM- and TE-specific classes immediate display and missed the 0xF0 group entirely — the only
+  one SMPP 3.4 5.2.19 names, since it marks 0x0F to 0xBF reserved and hands 0xF0 to 0xFF to GSM
+  03.38, and the one SMPPSim demonstrated
+  ([interop-tests/findings/02-smppsim.md](interop-tests/findings/02-smppsim.md), C17).
+  `messageClassOf()` is the single answer to whether a `data_coding` carries a class and which, as
+  `concatOf()` is to how a PDU says it is a segment: 03.38 section 4 puts the class in bits 1-0,
+  carried where bit 4 says so in every group below 0x80 and always in the 0xF0 group, and
+  `encodingByDataCoding()` reads the alphabet off that same test rather than repeating the group
+  masks beside it. It is exported for the reason `concatOf()` is — an application that needs a class
+  other than 0 would otherwise rewrite the read this fixed. Rejected: a `messageClass` field on the
+  `sms` event, which pays goal 6 for three classes nothing here acts on, where the boolean the
+  application already had covers the one it does. Compressed text is out of scope and stays out —
+  nothing here implements 3GPP TS 23.042, so a compressed body reaches the application as whatever
+  its declared alphabet makes of it — but bit 5 does not move the class bits, so 0x30 is read as
+  class 0 rather than special-cased into a wrong answer; 01xx is read for the same reason, 03.38
+  coding it exactly as 00xx. Rejected: reading only the two groups the defect named, which needs an
+  extra test to produce a wrong answer for a class the spec puts in plain sight. Accepted: the
+  alphabet is read only where a class is, so 0x58 is UCS2 while 0x48 — the same alphabet with the
+  class bit clear — stays ASCII, because below 0x10 SMPP's flat table contradicts 03.38 and wins
+  (0x03 is Latin-1 there, GSM 7-bit here) and a class is the only evidence a peer below 0x80 is
+  spelling 03.38 at all. Send-side: `flash`
+  is that class, so it goes out as 0x18 beside UCS2 and 0x10 beside GSM 7-bit, while
+  `encoding: 'LATIN1'` beside it is refused before a segment goes out, the way a messaging mode this
+  library cannot deliver is — 03.38's class groups hold GSM 7-bit, 8-bit data and UCS2, and Latin-1 is
+  SMPP's own flat-table alphabet, so the pair has no spelling. Rejected: 0x10 with Latin-1 octets,
+  which declares an alphabet the body is not in; rejected: 0x14, 8-bit data, which is not text to
+  the handset that would display it; rejected: promoting it to UCS2, which overrides the one option
+  the caller wrote in order to override a choice. Rejected with them: `encoding: 'FLASH'`, which
+  named `data_coding` 0x10 among the alphabets and so reached the class through the option that
+  chooses a charset — a second spelling of `flash: true` that also flattened every non-GSM character
+  to a space on the way. It leaves `EncodingName`, which is now exactly the three codecs `detect()`
+  and `encodingByDataCoding()` return, and `encoding` is checked by name like `messagingMode` so a
+  caller without types gets a refusal rather than a throw out of the codec table. `consts.ENCODING`
+  keeps its `FLASH` entry: the low-level surface reaches raw constants, and nothing reads that group
+  as an alphabet any more. Accepted: `flash` is now false for `data_coding` 0x11 to 0x13, which no
+  peer means as immediate display.
 
 - **A report is final unless its `esm_class` or its state says otherwise, and only `ENROUTE` and
   `SCHEDULED` say otherwise.** SMPP 3.4 Appendix B lists every other receipt state as final,

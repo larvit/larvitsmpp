@@ -4,7 +4,7 @@ export { Session } from './session.ts';
 
 export { cmds, cmdsById, commandNameById, isCommandName } from './defs/commands.ts';
 export { consts, constsById } from './defs/constants.ts';
-export { detect, encodingByDataCoding, encodings } from './defs/encodings.ts';
+export { detect, encodingByDataCoding, encodings, messageClassOf } from './defs/encodings.ts';
 export { errorNameById, errors, errorsById, isErrorName } from './defs/errors.ts';
 export { tlvs, tlvsById } from './defs/tlvs.ts';
 export { types } from './defs/types.ts';

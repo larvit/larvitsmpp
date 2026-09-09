@@ -51,7 +51,7 @@ export function bitCount(message: string, encoding?: EncodingName): number {
 	const encoded = encodings[resolved].encode(message);
 
 	// GSM characters are packed seven bits to a septet; everything else stays octet-aligned.
-	return resolved === 'ASCII' || resolved === 'FLASH' ? encoded.length * 7 : encoded.length * 8;
+	return resolved === 'ASCII' ? encoded.length * 7 : encoded.length * 8;
 }
 
 /**

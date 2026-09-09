@@ -120,11 +120,28 @@ session message is a change to every call site.
       another message's in a correlation table. The cost is that every consumer narrows, including
       the majority whose SMSC always names an id. Raised by the phase 11 product review, 2026-09-08.
       **This one is 1.0.0-or-never** — after release it needs a major version.
-- [ ] `sms.flash` is true only for the 0x10 coding group, never for 0xF0. GSM 03.38 gives 0xF0–0xF3
-      as data coding plus message class, where class 0 is immediate display — flash. `encodings.ts`
-      already reads the 0xF0 group for the alphabet; `sms.ts` does not read it for flash. SMPPSim
-      observed and recorded it as not-flash (`findings/02-smppsim.md`, C17), so it is measured, not
-      suspected. Either read the group or say in the README that `flash` means the 0x10 spelling.
+- [ ] **`bitCount()`, `encodeMessage()` and `splitMessage()` throw on an encoding name they have no
+      codec for**, where `sendSms()` now refuses one by name. All three are value-exported, so this
+      is the published surface, one door over from the one [#95](https://github.com/larvit/larvitsmpp/pull/95)
+      closed — and that PR sharpened the edge, since `encodeMessage(msg, 'FLASH')` used to encode
+      quietly and now throws out of the codec table. `decodeMessage()` is unaffected; it resolves
+      through `encodingByDataCoding()`. Tag-relevant because of the fix shape: guarding them means
+      either a `Result` signature on three published functions, which needs a major version after
+      the tag, or a documented deviation saying a typed caller cannot get here. Maintainer's call.
+      Raised by the architecture review of [#95](https://github.com/larvit/larvitsmpp/pull/95),
+      2026-09-09.
+- [ ] **A concatenated Latin-1 segment is 159 octets, and an SMS carries 140.** `segmentUnits` in
+      `message.ts` budgets 153 for everything that is not UCS2, which is right for GSM 7-bit alone —
+      the SMSC packs 153 septets into 134 octets. Latin-1 is 8-bit and never packed, so a long
+      `encoding: 'LATIN1'` message goes out with segments no SMSC can carry. Same family as the
+      0.4.0 "Short segments" row, in the other direction; goal 1 owns it, so it wants fixing before
+      the tag. One line — 134 octets for both unpacked alphabets — plus a regression test. Raised by
+      the architecture review of [#95](https://github.com/larvit/larvitsmpp/pull/95), 2026-09-09.
+- [ ] **The interop suite still asserts the defect [#95](https://github.com/larvit/larvitsmpp/pull/95)
+      fixed.** `interop-tests/smppsim.test.ts:621`, `a raw submit_sm with data_coding 0xF0 is not
+      read as flash`, fails on the next `./interop-tests/run.py smppsim`; nothing in CI runs that
+      suite, so it fails silently until someone does. The test name and its assertion both need
+      inverting, and the C17 row in `findings/02-smppsim.md` names that sub-test, so it follows.
 - [ ] Tag `v1.0.0` to publish.
 - [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.

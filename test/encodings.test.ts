@@ -122,8 +122,19 @@ describe('encodingByDataCoding()', () => {
 
 	test('reads the alphabet bits when a message class is present', () => {
 		assert.equal(encodingByDataCoding(0x10), 'ASCII');
+		assert.equal(encodingByDataCoding(0x11), 'ASCII');
 		assert.equal(encodingByDataCoding(0x18), 'UCS2');
+		assert.equal(encodingByDataCoding(0x1A), 'UCS2');
 		assert.equal(encodingByDataCoding(0xF0), 'ASCII');
+		assert.equal(encodingByDataCoding(0xF1), 'ASCII');
+	});
+
+	// The compressed and automatic-deletion groups put the alphabet where the plain one does.
+	test('reads them in the compressed and automatic-deletion groups too', () => {
+		assert.equal(encodingByDataCoding(0x30), 'ASCII');
+		assert.equal(encodingByDataCoding(0x38), 'UCS2');
+		assert.equal(encodingByDataCoding(0x54), 'LATIN1');
+		assert.equal(encodingByDataCoding(0x58), 'UCS2');
 	});
 
 	test('resolves the 8-bit binary codings to the codec that keeps every octet', () => {
@@ -135,5 +146,7 @@ describe('encodingByDataCoding()', () => {
 	test('falls back to ASCII for alphabets it has no codec for', () => {
 		assert.equal(encodingByDataCoding(0x05), 'ASCII');
 		assert.equal(encodingByDataCoding(0x0E), 'ASCII');
+		// No class, so nothing says the octet is spelled 03.38 rather than SMPP's own flat table.
+		assert.equal(encodingByDataCoding(0x48), 'ASCII');
 	});
 });

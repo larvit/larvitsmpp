@@ -5,6 +5,7 @@ import type { Result, VoidResult } from './result.ts';
 import type { Session } from './session.ts';
 import { UnansweredError } from './unanswered-error.ts';
 import { consts } from './defs/constants.ts';
+import { messageClassOf } from './defs/encodings.ts';
 import { receiptCodes, transientStates } from './dlr.ts';
 import { smppDate } from './message.ts';
 import { respIdParams, segmentId } from './sms-id.ts';
@@ -35,6 +36,7 @@ export type Sms = {
 	 */
 	answeredOnArrival: boolean;
 	dlr: boolean;
+	/** GSM 03.38 message class 0: shown on arrival and not stored. */
 	flash: boolean;
 	from: string;
 	message: string;
@@ -71,6 +73,9 @@ export type SmsHandlers = {
 	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 };
 
+/** GSM 03.38 section 4 gives class 0 immediate display; every other class is stored somewhere. */
+const immediateDisplayClass = 0;
+
 export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 	const first = input.pduObjs[0];
 	const registered = first?.params.registered_delivery;
@@ -80,7 +85,7 @@ export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
 	const sms: Sms = {
 		answeredOnArrival: input.answeredAs !== undefined,
 		dlr: typeof registered === 'number' && registered !== 0,
-		flash: typeof dataCoding === 'number' && (dataCoding & 0xF0) === 0x10,
+		flash: typeof dataCoding === 'number' && messageClassOf(dataCoding) === immediateDisplayClass,
 		from: input.from,
 		message: input.message,
 		pduObjs: input.pduObjs,
