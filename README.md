@@ -124,13 +124,13 @@ segment goes out.
 
 `encoding` names the alphabet, and is `ASCII` (GSM 03.38's own 7-bit table), `LATIN1` or `UCS2`;
 anything else is refused by name rather than guessed at. Leave it out and a message that fits GSM
-7-bit goes as `ASCII` and everything else as `UCS2` — `LATIN1` is only ever used when you name it,
-so name it for a Latin-1 message that would otherwise cost twice the segments as UCS2.
+7-bit goes as `ASCII` and everything else as `UCS2`; `LATIN1` is only ever used when you name it.
 
 `flash` asks for GSM 03.38 message class 0, the class a handset shows on arrival instead of storing.
 It travels in `data_coding` beside the alphabet, so a flash UCS2 message stays UCS2. Pairing it with
-`encoding: 'LATIN1'` is the one combination with nowhere to go — no `data_coding` carries a message
-class beside that alphabet — and the send is refused before anything goes out.
+`encoding: 'LATIN1'` is the one combination with nowhere to go — a message class carries GSM 7-bit,
+8-bit data or UCS2, and 8-bit data is not text a handset will display — so the send is refused
+before anything goes out.
 
 Messages too long for one SMS are split automatically and sent as a concatenated message. You get
 one id per segment:
