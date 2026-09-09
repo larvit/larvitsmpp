@@ -60,6 +60,12 @@ export type SendSmsDeps = {
 	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
 };
 
+/** What the checks below settle, before a segment exists to carry it. */
+type CheckedOptions = {
+	encoding: EncodingName;
+	messagingMode: SubmitMessagingMode;
+};
+
 type SegmentOptions = {
 	encoding: EncodingName;
 	messagingMode?: SubmitMessagingMode;
@@ -165,6 +171,23 @@ function checkFlash(encoding: EncodingName, flash: boolean): Error | undefined {
 	return new Error('flash has no Latin-1 spelling: no data_coding carries a message class beside that alphabet, so send it as UCS2 or drop flash');
 }
 
+/** Every option a send can be refused for, so nothing is built for a message that will not go. */
+function checkOptions(sms: SendSmsInput): Result<CheckedOptions> {
+	const mode = checkMessagingMode(sms.messagingMode, sms.dlr === true);
+
+	if (mode.err) return { err: mode.err };
+
+	const chosen = checkEncoding(sms.encoding, sms.message);
+
+	if (chosen.err) return { err: chosen.err };
+
+	const unspellable = checkFlash(chosen.encoding, sms.flash === true);
+
+	if (unspellable) return { err: unspellable };
+
+	return { encoding: chosen.encoding, messagingMode: mode.messagingMode };
+}
+
 /** Nothing goes on the wire until the whole message fits: a half-sent message bills twice. */
 function checkSegments(allowed: number, segments: number): Error | undefined {
 	if (!Number.isInteger(allowed) || allowed < 1 || allowed > maxSegments) {
@@ -211,22 +234,13 @@ function collectSent(
 
 /** Puts a message on the wire as one submit_sm per segment. */
 export async function submitSms(deps: SendSmsDeps, sms: SendSmsInput): Promise<SendSmsResult> {
-	const mode = checkMessagingMode(sms.messagingMode, sms.dlr === true);
+	const options = checkOptions(sms);
 
-	if (mode.err) return unsent(mode.err);
+	if (options.err) return unsent(options.err);
 
-	const chosen = checkEncoding(sms.encoding, sms.message);
-
-	if (chosen.err) return unsent(chosen.err);
-
-	const encoding = chosen.encoding;
-	const unspellable = checkFlash(encoding, sms.flash === true);
-
-	if (unspellable) return unsent(unspellable);
-
-	const allowed = sms.maxSegments ?? maxSegments;
+	const encoding = options.encoding;
 	const segments = splitMessage(sms.message, { encoding, reference: deps.reference });
-	const refused = checkSegments(allowed, segments.length);
+	const refused = checkSegments(sms.maxSegments ?? maxSegments, segments.length);
 
 	if (refused) return unsent(refused);
 
@@ -238,7 +252,7 @@ export async function submitSms(deps: SendSmsDeps, sms: SendSmsInput): Promise<S
 	// segment before answering — this library's own server does — would otherwise deadlock.
 	const sent = await Promise.all(segments.map(segment => deps.send({
 		cmdName: 'submit_sm',
-		params: submitSmParams(sms, segment, { encoding, messagingMode: mode.messagingMode, multipart }),
+		params: submitSmParams(sms, segment, { encoding, messagingMode: options.messagingMode, multipart }),
 	})));
 
 	return collectSent(sent, deps.respIdNotation);

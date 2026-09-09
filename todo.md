@@ -120,6 +120,16 @@ session message is a change to every call site.
       another message's in a correlation table. The cost is that every consumer narrows, including
       the majority whose SMSC always names an id. Raised by the phase 11 product review, 2026-09-08.
       **This one is 1.0.0-or-never** — after release it needs a major version.
+- [ ] **`bitCount()`, `encodeMessage()` and `splitMessage()` throw on an encoding name they have no
+      codec for**, where `sendSms()` now refuses one by name. All three are value-exported, so this
+      is the published surface, one door over from the one [#95](https://github.com/larvit/larvitsmpp/pull/95)
+      closed — and that PR sharpened the edge, since `encodeMessage(msg, 'FLASH')` used to encode
+      quietly and now throws out of the codec table. `decodeMessage()` is unaffected; it resolves
+      through `encodingByDataCoding()`. Tag-relevant because of the fix shape: guarding them means
+      either a `Result` signature on three published functions, which needs a major version after
+      the tag, or a documented deviation saying a typed caller cannot get here. Maintainer's call.
+      Raised by the architecture review of [#95](https://github.com/larvit/larvitsmpp/pull/95),
+      2026-09-09.
 - [ ] **A concatenated Latin-1 segment is 159 octets, and an SMS carries 140.** `segmentUnits` in
       `message.ts` budgets 153 for everything that is not UCS2, which is right for GSM 7-bit alone —
       the SMSC packs 153 septets into 134 octets. Latin-1 is 8-bit and never packed, so a long
