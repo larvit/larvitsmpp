@@ -443,7 +443,11 @@ Grouped by what each one constrains.
   its declared alphabet makes of it — but bit 5 does not move the class bits, so 0x30 is read as
   class 0 rather than special-cased into a wrong answer; 01xx is read for the same reason, 03.38
   coding it exactly as 00xx. Rejected: reading only the two groups the defect named, which needs an
-  extra test to produce a wrong answer for a class the spec puts in plain sight. Send-side: `flash`
+  extra test to produce a wrong answer for a class the spec puts in plain sight. Accepted: the
+  alphabet is read only where a class is, so 0x58 is UCS2 while 0x48 — the same alphabet with the
+  class bit clear — stays ASCII, because below 0x10 SMPP's flat table contradicts 03.38 and wins
+  (0x03 is Latin-1 there, GSM 7-bit here) and a class is the only evidence a peer below 0x80 is
+  spelling 03.38 at all. Send-side: `flash`
   is that class, so it goes out as 0x18 beside UCS2 and 0x10 beside GSM 7-bit, while
   `encoding: 'LATIN1'` beside it is refused before a segment goes out, the way a messaging mode this
   library cannot deliver is — 03.38's class groups hold GSM 7-bit, 8-bit data and UCS2, and Latin-1 is

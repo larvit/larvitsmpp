@@ -146,5 +146,7 @@ describe('encodingByDataCoding()', () => {
 	test('falls back to ASCII for alphabets it has no codec for', () => {
 		assert.equal(encodingByDataCoding(0x05), 'ASCII');
 		assert.equal(encodingByDataCoding(0x0E), 'ASCII');
+		// No class, so nothing says the octet is spelled 03.38 rather than SMPP's own flat table.
+		assert.equal(encodingByDataCoding(0x48), 'ASCII');
 	});
 });

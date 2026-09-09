@@ -123,8 +123,9 @@ leaving you waiting for a report that cannot come — as is any value naming no 
 segment goes out.
 
 `encoding` names the alphabet, and is `ASCII` (GSM 03.38's own 7-bit table), `LATIN1` or `UCS2`;
-anything else is refused by name rather than guessed at. Leave it out and the narrowest one that
-fits the message is chosen.
+anything else is refused by name rather than guessed at. Leave it out and a message that fits GSM
+7-bit goes as `ASCII` and everything else as `UCS2` — `LATIN1` is only ever used when you name it,
+so name it for a Latin-1 message that would otherwise cost twice the segments as UCS2.
 
 `flash` asks for GSM 03.38 message class 0, the class a handset shows on arrival instead of storing.
 It travels in `data_coding` beside the alphabet, so a flash UCS2 message stays UCS2. Pairing it with

@@ -168,7 +168,7 @@ function checkEncoding(encoding: unknown, message: string): Result<{ encoding: E
 function checkFlash(encoding: EncodingName, flash: boolean): Error | undefined {
 	if (!flash || encoding !== 'LATIN1') return undefined;
 
-	return new Error('flash has no Latin-1 spelling: no data_coding carries a message class beside that alphabet, so send it as UCS2 or drop flash');
+	return new Error('flash has no Latin-1 spelling: a message class carries GSM 7-bit, 8-bit data or UCS2, and 8-bit data is not text a handset will display, so send it as UCS2 or drop flash');
 }
 
 /** Every option a send can be refused for, so nothing is built for a message that will not go. */
