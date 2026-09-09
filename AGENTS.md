@@ -583,7 +583,8 @@ Grouped by what each one constrains.
   number rather than the other way round. `Record<EncodingName, number>` is what makes a fourth
   alphabet state its own. Rejected: 134 for GSM 7-bit too, which is the mistake the unpacked-alphabet
   section above exists to stop — it truncates every long GSM message by a fifth. Accepted: a Latin-1
-  message past 134 characters now costs more segments than it did, and `smsIds` is that much longer.
+  message past the 140 characters one SMS holds now costs more segments than it did, and `smsIds` is
+  that much longer.
 
 ### The session's life
 
