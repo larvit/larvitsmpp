@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { detect, encodingByDataCoding, encodings, unencodable } from '../src/defs/encodings.ts';
+import { dataCodingByEncoding, detect, encodingByDataCoding, encodings, isEncodingName, unencodable } from '../src/defs/encodings.ts';
 
 describe('ASCII (GSM 03.38)', () => {
 	const samples: [string, number[]][] = [
@@ -185,6 +185,14 @@ describe('encodingByDataCoding()', () => {
 	test('resolves the 8-bit binary codings to the codec that keeps every octet', () => {
 		for (const dataCoding of [0x02, 0x04, 0x14, 0xF4, 0xF7]) {
 			assert.equal(encodingByDataCoding(dataCoding), 'LATIN1');
+		}
+	});
+
+	test('reads every coding dataCodingByEncoding writes back as the alphabet that wrote it', () => {
+		for (const name of Object.keys(dataCodingByEncoding)) {
+			if (!isEncodingName(name)) return assert.fail(`${name} names no alphabet`);
+
+			assert.equal(encodingByDataCoding(dataCodingByEncoding[name]), name);
 		}
 	});
 

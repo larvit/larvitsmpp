@@ -109,7 +109,7 @@ describe('an alphabet the caller named that cannot carry the message', () => {
 			assert.equal((await session.sendSms({ from, message, to })).err, undefined, message);
 		}
 
-		assert.deepEqual(sentAs(smsc.octets), [[0x01, 'Hello world'], [0x08, 'Åsa naïve'], [0x08, 'あいう']]);
+		assert.deepEqual(sentAs(smsc.octets), [[0x00, 'Hello world'], [0x08, 'Åsa naïve'], [0x08, 'あいう']]);
 	});
 });
 

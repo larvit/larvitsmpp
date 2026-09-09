@@ -188,3 +188,13 @@ export function encodingByDataCoding(dataCoding: number): EncodingName {
 	// 0x02 and 0x04 are 8-bit binary, 0x03 is Latin-1.
 	return dataCoding >= 0x02 && dataCoding <= 0x04 ? 'LATIN1' : 'ASCII';
 }
+
+/**
+ * The `data_coding` an alphabet is written under, the mirror of `encodingByDataCoding()`. GSM 03.38
+ * takes 0x00, the SMSC default alphabet, rather than SMPP 3.4 5.2.19's 0x01, which is IA5.
+ */
+export const dataCodingByEncoding: Readonly<Record<EncodingName, number>> = {
+	ASCII: 0x00,
+	LATIN1: 0x03,
+	UCS2: 0x08,
+};

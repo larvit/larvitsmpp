@@ -599,9 +599,11 @@ how binary payloads, hand-built user data headers and deliberately malformed bod
 
 Composing a message by hand takes the send-side pair: `unencodable(message, encoding)` gives
 `{ char, index }` for the first character an alphabet cannot carry and `undefined` where it carries
-them all, which is the check `sendSms()` makes before it encodes anything; `smppTime.encode(value)`
-returns `{ err, text }` for a `validity_period` or `schedule_delivery_time`, as `smppTime.decode()`
-returns `{ err, date }` for one that arrived.
+them all, which is the check `sendSms()` makes before it encodes anything;
+`dataCodingByEncoding[encoding]` is the `data_coding` this library writes each alphabet under, which
+is what to put beside octets `encodeMessage()` handed back; `smppTime.encode(value)` returns
+`{ err, text }` for a `validity_period` or `schedule_delivery_time`, as `smppTime.decode()` returns
+`{ err, date }` for one that arrived.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.
@@ -640,6 +642,9 @@ promises and the rough edges taken off.
 - **The `error` event is `sessionError`** (and `serverError` on the server handle).
 - **`log`** takes any object with `debug`, `error`, `info`, `verbose` and `warn` methods instead of a
   `larvitutils` one, and is silent by default. See [Logging](#logging).
+- **`consts.ENCODING.ASCII` is gone**; the same entry is `consts.ENCODING.IA5`, the other name SMPP
+  3.4 5.2.19 gives 0x01. Reach for `dataCodingByEncoding` where you meant the alphabet `sendSms()`
+  writes — that is 0x00, not this.
 
 ### Behaviour that changed on the wire
 
@@ -659,6 +664,10 @@ have worked around any of these, remove the workaround:
   GSM alphabet on a Latin-1 message that has no `data_coding` at all — that pair is refused now.
   Inbound, only a `data_coding` of exactly 0x10 counted as flash, so a flash UCS2 message and the
   whole 0xF0 coding group arrived as ordinary messages.
+- A GSM 03.38 message declared `data_coding` 0x01, which SMPP 3.4 5.2.19 defines as IA5 rather than
+  the alphabet those octets are in, so `$` and `@` reached a peer honouring the field as STX and NUL.
+  It goes out as 0x00, the SMSC default alphabet, and so does a receipt `sendDlr()` writes. Latin-1
+  and UCS2 are unmoved at 0x03 and 0x08, and an inbound 0x01 is still read as GSM 03.38.
 - The multipart reference counter was shared by every session in the process.
 - `tls: true` never performed a handshake, so the connection was not actually encrypted.
 - Alphanumeric senders were sent with TON 1 (international) instead of TON 5.

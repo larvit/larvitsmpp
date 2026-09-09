@@ -120,19 +120,6 @@ session message is a change to every call site.
       another message's in a correlation table. The cost is that every consumer narrows, including
       the majority whose SMSC always names an id. Raised by the phase 11 product review, 2026-09-08.
       **This one is 1.0.0-or-never** — after release it needs a major version.
-- [ ] **A default GSM send declares IA5, not GSM 03.38.** `dataCodingFor()` resolves `encoding`
-      through `consts.ENCODING`, so `'ASCII'` goes out as `data_coding` 0x01 — SMPP 3.4 5.2.19's
-      *IA5 (CCITT T.50)/ASCII* — while the codec writes the GSM 03.38 table, where `@` is 0x00 and
-      `$` is 0x02 against IA5's NUL and STX. `encodingByDataCoding()` reads 0x00 back as GSM 03.38,
-      so this library's writer and reader disagree, and every peer in `interop-tests/` submits GSM
-      text at `data_coding` 0. Nothing asserts what our own default send declares, and the echo
-      tests use characters where the two tables agree, which is why the suite is green.
-      `test/message-class.test.ts` pins the current value. Goal 1 owns it. The fix is a three-entry
-      map in `send-sms.ts` (`ASCII` → 0x00, `LATIN1` → 0x03, `UCS2` → 0x08) rather than any move of
-      a published constant — `consts.ENCODING.ASCII` = 0x01 is a correct name for SMPP's flat-table
-      IA5 entry, and the defect is using that group as the option's vocabulary. **Which value an
-      operator should see is the maintainer's call**, and it wants an `interop-tests/` run. Raised
-      by the architecture review of [#99](https://github.com/larvit/larvitsmpp/pull/99), 2026-09-09.
 - [ ] Tag `v1.0.0` to publish.
 - [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.

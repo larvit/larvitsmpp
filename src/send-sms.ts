@@ -7,7 +7,7 @@ import type { SmppLog } from './log.ts';
 import type { SmsIdNotation } from './sms-id.ts';
 import { UnansweredError } from './unanswered-error.ts';
 import { consts, defaultMessagingMode, isMessagingMode, isSubmitMessagingMode, submitMessagingModes } from './defs/constants.ts';
-import { detect, encodingNames, isEncodingName, unencodable, unencodableText } from './defs/encodings.ts';
+import { dataCodingByEncoding, detect, encodingNames, isEncodingName, unencodable, unencodableText } from './defs/encodings.ts';
 import { namedValue } from './error-from.ts';
 import { normaliseSmsId } from './sms-id.ts';
 import { paramText } from './defs/types.ts';
@@ -89,7 +89,7 @@ function addressTon(address: string): number {
 }
 
 function dataCodingFor(encoding: EncodingName, flash: boolean): number {
-	if (!flash) return consts.ENCODING[encoding];
+	if (!flash) return dataCodingByEncoding[encoding];
 
 	// Message class present (0x10) plus the alphabet bits, so flash survives UCS2.
 	return encoding === 'UCS2' ? 0x18 : 0x10;
