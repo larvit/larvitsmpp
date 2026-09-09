@@ -585,11 +585,12 @@ code point and where it is. A `Buffer` goes out exactly as given under any `data
 how binary payloads, hand-built user data headers and deliberately malformed bodies are sent.
 `session.send()` and `session.sendReturn()` build through the same codec and refuse the same bodies.
 
-Composing a message by hand takes the send-side pair: `unencodable(message, encoding)` gives
+Composing a message by hand takes the send-side helpers: `unencodable(message, encoding)` gives
 `{ char, index }` for the first character an alphabet cannot carry and `undefined` where it carries
-them all, which is the check `sendSms()` makes before it encodes anything; `smppTime.encode(value)`
-returns `{ err, text }` for a `validity_period` or `schedule_delivery_time`, as `smppTime.decode()`
-returns `{ err, date }` for one that arrived.
+them all, which is the check `sendSms()` makes before it encodes anything, and `unencodableText(at)`
+turns that into the wording every refusal here uses; `smppTime.encode(value)` returns `{ err, text }`
+for a `validity_period` or `schedule_delivery_time`, as `smppTime.decode()` returns `{ err, date }`
+for one that arrived.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.
