@@ -52,7 +52,9 @@ These are not preferences. Breaking one is a defect.
 1. **Nothing throws.** Every fallible function returns (or resolves to) a DTO carrying an optional
    `err`. No `throw`, no rejected promises, no exceptions as control flow. Node APIs that throw are
    wrapped at the boundary and converted into a result. Programmer errors (bad arguments) are
-   results too.
+   results too, wherever the types admit one: a function total over its declared argument types is
+   guarded by the compiler and stays total, which is why `smppDate()` and the encoding helpers
+   return plainly, and the check belongs at whichever boundary the argument arrives untyped at.
 2. **Log messages are static strings.** Every dynamic value goes into the log metadata. Never
    interpolate, never concatenate.
    - GOOD: `log.debug('sendSms() - splitting message', { parts: msgs.length, to });`
@@ -308,14 +310,13 @@ Grouped by what each one constrains.
   forbids. That PR left no such name to pass — `encodings` is a `Record<EncodingName, Encoding>`, so
   every member of the union has a codec and one added without a codec, or without a segment budget,
   fails to compile in four places. What was missing is the door for a caller holding a name at
-  runtime, so `isEncodingName()` is exported beside `isCommandName()` and `isErrorName()`, which
-  serve their own tables that way. Hard rule 1 is about fallible operations, and a function total
-  over its declared domain has nothing to report: `smppDate()` and `smppTime.encode()` are published
-  on those terms already. Rejected: a `Result` signature on all three, which costs every typed
-  consumer a narrow forever — goal 6, and the tag is the last cheap chance to spend it — to guard a
-  state the compiler refuses, and would leave hard rule 1 meaning two things in one file. Where the
-  domain really is open the check is already there: `sendSms()` takes its options as `unknown` and
-  refuses `encoding` by name, which is what a caller without types gets.
+  runtime: `Object.hasOwn(encodings, x)` is the only test the published surface offered and it
+  narrows nothing, so `isEncodingName()` is exported beside `isCommandName()` and `isErrorName()`,
+  which serve their own tables that way. Rejected: a `Result` signature on all three, which costs
+  every typed consumer a narrow forever — goal 6, and the tag is the last cheap chance to spend it —
+  to guard a state the compiler refuses. Where the domain really is open the check is already there:
+  `sendSms()` takes its options as `unknown` and refuses `encoding` by name, which is what a caller
+  without types gets.
 
 ### The wire
 
@@ -573,18 +574,17 @@ Grouped by what each one constrains.
   the base instead would break that pair. The option is on `client()` only, since a `server()` session
   writes both ids itself.
 
-- **A concatenated segment is budgeted at what 134 octets hold, which is 153 septets for GSM 7-bit
-  and 134 characters for every alphabet the SMSC does not pack.** Maintainer's call, 2026-09-09,
-  from the architecture review of [#95](https://github.com/larvit/larvitsmpp/pull/95): `segmentUnits`
-  handed 153 to everything but UCS2, so a long `encoding: 'LATIN1'` message went out as segments of
-  153 octets plus a 6-octet UDH — 159 on the air where GSM 03.40 carries 140, which no SMSC can
-  deliver. Goal 1 owns it. There is one budget, 140 less the UDH, and the alphabet decides only what
-  it is counted in, so Latin-1 and UCS2 both take 134 and it is GSM 7-bit's 153 that is the odd
-  number rather than the other way round. `Record<EncodingName, number>` is what makes a fourth
-  alphabet state its own. Rejected: 134 for GSM 7-bit too, which is the mistake the unpacked-alphabet
-  section above exists to stop — it truncates every long GSM message by a fifth. Accepted: a Latin-1
-  message past the 140 characters one SMS holds now costs more segments than it did, and `smsIds` is
-  that much longer.
+- **A concatenated segment is budgeted at 134 octets, which is 153 septets where the SMSC packs them
+  and 134 octets of anything it does not.** Maintainer's call, 2026-09-09, from the architecture
+  review of [#95](https://github.com/larvit/larvitsmpp/pull/95): `segmentUnits` handed 153 to
+  everything but UCS2, so a long `encoding: 'LATIN1'` message went out as segments of 153 octets plus
+  a 6-octet UDH — 159 on the air where GSM 03.40 carries 140, which no SMSC can deliver. Goal 1 owns
+  it. There is one budget, 140 less the UDH, and the alphabet decides only what it is counted in, so
+  Latin-1 and UCS2 both take those 134 octets — 134 characters and 67 — and it is GSM 7-bit's 153
+  that is the odd number rather than the other way round. `Record<EncodingName, number>` is what makes
+  a fourth alphabet state its own. Rejected: 134 for GSM 7-bit too, which is the mistake the
+  unpacked-alphabet section above exists to stop. Accepted: a Latin-1 message past the 140 characters
+  one SMS holds now costs more segments than it did, and `smsIds` is that much longer.
 
 ### The session's life
 

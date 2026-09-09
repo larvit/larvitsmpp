@@ -141,6 +141,16 @@ session message is a change to every call site.
 
 ## Worth doing, not blocking
 
+- [ ] **A named alphabet that cannot hold the message corrupts it instead of refusing it.**
+      `encodeMessage('あいう', 'LATIN1')` returns `42 44 46` — `"BDF"` — and `sendSms()` puts that on
+      the wire: `checkOptions()` refuses an unknown name, `FLASH` and flash-beside-Latin-1, but never
+      asks whether the alphabet the caller named can carry the text. GSM 7-bit does the same, mapping
+      anything outside 03.38 to a space. `Encoding.match()` cannot be the guard — `latin1.match()` is
+      hardcoded `false` because it doubles as the auto-selection policy `detect()` reads, so "can hold
+      this" and "should be picked for this" would have to be separated first. Send-side, so the tag
+      is not blocked on it. Raised by the architecture review of
+      [#96](https://github.com/larvit/larvitsmpp/pull/96), 2026-09-09.
+
 - [ ] **A gate that refuses a floating version anywhere in the repo.** Maintainer's ask on
       [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the `release.yaml`
       pinning thread, which stays open until this lands. Pinning every action and runner by hand is
