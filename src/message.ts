@@ -132,6 +132,9 @@ export function smppDate(date: Date): string {
 		+ pad(date.getUTCMinutes(), 2);
 }
 
+/** The relative format spells days in two digits, so 99d 23:59:59 is every period it reaches. */
+const maxRelativeSeconds = 99 * 86400 + 86399;
+
 const absoluteTime = /^(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d)(\d\d)([+-])$/;
 const relativeTime = /^(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)000R$/;
 
@@ -139,9 +142,8 @@ const relativeTime = /^(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)000R$/;
 export const smppTime = {
 	/**
 	 * A Date becomes an absolute UTC time; a number is a relative period in seconds, expressed in
-	 * days and below, so anything past the 99d 23:59:59 the format holds is clamped to it; a string
-	 * is a stamp the caller formatted itself and is passed through. A value naming no instant or
-	 * period is refused.
+	 * days and below; a string is a stamp the caller formatted itself and is passed through. A value
+	 * naming no instant, and a period the relative format cannot hold, are refused.
 	 */
 	encode(value: Date | number | string): Result<{ text: string }> {
 		if (typeof value === 'string') return { text: value };
@@ -149,14 +151,18 @@ export const smppTime = {
 		if (typeof value === 'number') {
 			if (!Number.isFinite(value)) return { err: new Error(`Not an SMPP time: ${String(value)}`) };
 
-			const capped = Math.min(Math.max(0, Math.floor(value)), 99 * 86400 + 86399);
+			const seconds = Math.floor(value);
+
+			if (seconds < 0 || seconds > maxRelativeSeconds) {
+				return { err: new Error(`A relative period runs 0 to ${String(maxRelativeSeconds)} seconds (99d 23:59:59), got ${String(value)}; pass a Date for an instant past that`) };
+			}
 
 			return {
 				text: '0000'
-					+ pad(Math.floor(capped / 86400), 2)
-					+ pad(Math.floor(capped / 3600) % 24, 2)
-					+ pad(Math.floor(capped / 60) % 60, 2)
-					+ pad(capped % 60, 2)
+					+ pad(Math.floor(seconds / 86400), 2)
+					+ pad(Math.floor(seconds / 3600) % 24, 2)
+					+ pad(Math.floor(seconds / 60) % 60, 2)
+					+ pad(seconds % 60, 2)
 					+ '000R',
 			};
 		}

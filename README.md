@@ -134,7 +134,8 @@ as `buffer.toString('latin1')` goes out unchanged.
 
 `scheduleDeliveryTime` and `validityPeriod` take a `Date`, a number of seconds, or a stamp you
 formatted yourself. One that names no time — an invalid `Date`, `NaN`, `Infinity` — is refused
-before anything goes out.
+before anything goes out, and so is a number of seconds outside the 0 to 99 days 23:59:59 SMPP's
+relative format holds: name an instant further out as a `Date`, which goes out absolute.
 
 `flash` asks for GSM 03.38 message class 0, the class a handset shows on arrival instead of storing.
 It travels in `data_coding` beside the alphabet, so a flash UCS2 message stays UCS2. Pairing it with

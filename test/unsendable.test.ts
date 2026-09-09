@@ -382,6 +382,17 @@ describe('a time no peer can read', () => {
 		assert.equal(attempts.length, 0);
 	});
 
+	test('refuses a year-long relative period rather than sending 99 days and reporting a year', async () => {
+		const attempts: PduObjectInput[] = [];
+		const sent = await submitSms(recordingDeps(attempts), { from, message: 'Hello world', to, validityPeriod: 86400 * 365 });
+
+		assert.ok(sent.err instanceof Error);
+		assert.match(sent.err.message, /validityPeriod/);
+		assert.match(sent.err.message, /Date/);
+		assert.deepEqual(sent.smsIds, []);
+		assert.equal(attempts.length, 0, 'a period the relative format cannot hold puts nothing on the wire');
+	});
+
 	test('refuses a time that is no kind of time rather than throwing out of the send', async () => {
 		const attempts: PduObjectInput[] = [];
 		const deps = recordingDeps(attempts);

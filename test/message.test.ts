@@ -237,10 +237,22 @@ describe('smppTime', () => {
 		assert.equal(smppTime.encode(new Date(Date.UTC(2026, 7, 25, 14, 30, 0))).text, '260825143000000+');
 	});
 
-	test('encodes a relative time given in seconds, clamped to what the format holds', () => {
+	test('encodes a relative time given in seconds', () => {
 		assert.equal(smppTime.encode(3600).text, '000000010000000R');
 		assert.equal(smppTime.encode(99 * 86400).text, '000099000000000R');
-		assert.equal(smppTime.encode(100 * 86400).text, '000099235959000R');
+		assert.equal(smppTime.encode(99 * 86400 + 86399).text, '000099235959000R');
+	});
+
+	test('refuses a period outside the relative format rather than clamping it, naming the Date spelling', () => {
+		for (const seconds of [-1, 99 * 86400 + 86400, 86400 * 365]) {
+			const encoded = smppTime.encode(seconds);
+
+			assert.ok(encoded.err instanceof Error, String(seconds));
+			assert.equal(encoded.text, undefined);
+			assert.match(encoded.err.message, /Date/);
+		}
+
+		assert.equal(smppTime.encode(0).text, '000000000000000R');
 	});
 
 	test('passes an already-formatted string through', () => {
