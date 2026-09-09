@@ -618,7 +618,7 @@ describe('smppsim - C17 encodings round trip over loopback', () => {
 		assert.equal(received.pduObjs[0]?.params.data_coding, 0x10);
 	});
 
-	test('a raw submit_sm with data_coding 0xF0 is not read as flash', async t => {
+	test('a raw submit_sm with data_coding 0xF0 is read as flash', async t => {
 		const { err, session } = await bind(PEER_HOST);
 
 		assert.equal(err, undefined);
@@ -643,7 +643,7 @@ describe('smppsim - C17 encodings round trip over loopback', () => {
 		const received = await waitFor(() => sms.find(s => s.message === body));
 
 		assert.ok(received, 'expected the 0xF0-coded loopback message to arrive');
-		assert.equal(received.flash, false);
+		assert.equal(received.flash, true);
 	});
 
 	test('a raw submit_sm with 8-bit binary and a UDH (esm_class 0x40)', async t => {
