@@ -57,12 +57,12 @@ tests passing, `malformed: 0`, `expert errors: 0` in both.
 | C12 (`smppsim-queuefull`) | pass | `smppsim-queuefull - C12 …`; `ESME_RMSGQFUL` returned, session stays bound, later send succeeds once the one-slot queue drains |
 | C13 (`maxOutstanding: 1`, 10 parallel) | pass | `smppsim - C13 …`; 10 distinct, strictly-increasing ids, none lost |
 | C15 (bind version) | pass (peer never declares, see below) | `smppsim - C15 …`, both 0x34 and 0x50 |
-| C17 (encodings over loopback) | pass | `smppsim - C17 …`, 5 sub-tests: Latin-1, UCS-2, flash (0x10), raw 0xF0 (not flash), raw UDH+8-bit-binary |
+| C17 (encodings over loopback) | pass | `smppsim - C17 …`, 5 sub-tests: Latin-1, UCS-2, flash (0x10), raw 0xF0 (flash), raw UDH+8-bit-binary |
 | C18 (`smppsim-outbind`) | pass (record, not judge) | `smppsim-outbind - C18 …`; see below for the wire facts |
 
-C17's `raw 0xF0 (not flash)` recorded a `@larvit/smpp` defect, fixed in
-[#95](https://github.com/larvit/larvitsmpp/pull/95): 0xF0 is GSM 03.38 message class 0, so it reads
-as flash now.
+C17's 0xF0 sub-test originally read `not flash`, recording a `@larvit/smpp` defect: 0xF0 is GSM
+03.38 message class 0, immediate display. Fixed in
+[#95](https://github.com/larvit/larvitsmpp/pull/95), and the assertion inverted in `ff6ba9f`.
 
 ## Defects in @larvit/smpp
 

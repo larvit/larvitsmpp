@@ -177,6 +177,14 @@ describe('smppsim - C3+C7 long MT, receipts and loopback reassembly', () => {
 			label: '2-segment UCS2 with 一 and an emoji',
 			message: `一😀${'x'.repeat(70)}`,
 		},
+		// Names its encoding because detect() never chooses LATIN1 - latin1.match() is false so that
+		// auto-selection skips it - and unnamed, this text would go out as UCS2.
+		{
+			encoding: 'LATIN1',
+			expectedSegments: 2,
+			label: '2-segment Latin-1',
+			message: 'é'.repeat(200),
+		},
 	];
 
 	for (const testCase of cases) {
