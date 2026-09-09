@@ -10,8 +10,8 @@ const singleMessageBits = 1120;
 /** The concatenation UDH numbers the segments of a message in a single octet. */
 export const maxSegments = 255;
 
-/** Budget per concatenated segment: septets for GSM, octets for UCS2. */
-const segmentUnits = { ASCII: 153, UCS2: 67 * 2 } as const;
+/** Budget per segment: the 134 octets left of 140 after the UDH, or the 153 septets GSM packs into them. */
+const segmentUnits: Record<EncodingName, number> = { ASCII: 153, LATIN1: 134, UCS2: 134 };
 
 export type SplitOptions = {
 	encoding?: EncodingName;
@@ -69,7 +69,7 @@ export function splitMessage(message: string, options: SplitOptions): Buffer[] {
 		return [encodings[encoding].encode(message)];
 	}
 
-	const budget = encoding === 'UCS2' ? segmentUnits.UCS2 : segmentUnits.ASCII;
+	const budget = segmentUnits[encoding];
 	const parts: string[] = [];
 	let current = '';
 	let used = 0;

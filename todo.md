@@ -120,23 +120,6 @@ session message is a change to every call site.
       another message's in a correlation table. The cost is that every consumer narrows, including
       the majority whose SMSC always names an id. Raised by the phase 11 product review, 2026-09-08.
       **This one is 1.0.0-or-never** — after release it needs a major version.
-- [ ] **`bitCount()`, `encodeMessage()` and `splitMessage()` throw on an encoding name they have no
-      codec for**, where `sendSms()` now refuses one by name. All three are value-exported, so this
-      is the published surface, one door over from the one [#95](https://github.com/larvit/larvitsmpp/pull/95)
-      closed — and that PR sharpened the edge, since `encodeMessage(msg, 'FLASH')` used to encode
-      quietly and now throws out of the codec table. `decodeMessage()` is unaffected; it resolves
-      through `encodingByDataCoding()`. Tag-relevant because of the fix shape: guarding them means
-      either a `Result` signature on three published functions, which needs a major version after
-      the tag, or a documented deviation saying a typed caller cannot get here. Maintainer's call.
-      Raised by the architecture review of [#95](https://github.com/larvit/larvitsmpp/pull/95),
-      2026-09-09.
-- [ ] **A concatenated Latin-1 segment is 159 octets, and an SMS carries 140.** `segmentUnits` in
-      `message.ts` budgets 153 for everything that is not UCS2, which is right for GSM 7-bit alone —
-      the SMSC packs 153 septets into 134 octets. Latin-1 is 8-bit and never packed, so a long
-      `encoding: 'LATIN1'` message goes out with segments no SMSC can carry. Same family as the
-      0.4.0 "Short segments" row, in the other direction; goal 1 owns it, so it wants fixing before
-      the tag. One line — 134 octets for both unpacked alphabets — plus a regression test. Raised by
-      the architecture review of [#95](https://github.com/larvit/larvitsmpp/pull/95), 2026-09-09.
 - [ ] **The interop suite still asserts the defect [#95](https://github.com/larvit/larvitsmpp/pull/95)
       fixed.** `interop-tests/smppsim.test.ts:621`, `a raw submit_sm with data_coding 0xF0 is not
       read as flash`, fails on the next `./interop-tests/run.py smppsim`; nothing in CI runs that
@@ -157,6 +140,25 @@ session message is a change to every call site.
             resolved; it exists only to give that PR a reviewable diff.
 
 ## Worth doing, not blocking
+
+- [ ] **A named alphabet that cannot hold the message corrupts it instead of refusing it.**
+      `encodeMessage('あいう', 'LATIN1')` returns `42 44 46` — `"BDF"` — and `sendSms()` puts that on
+      the wire: `checkOptions()` refuses an unknown name, `FLASH` and flash-beside-Latin-1, but never
+      asks whether the alphabet the caller named can carry the text. GSM 7-bit does the same, mapping
+      anything outside 03.38 to a space. `Encoding.match()` cannot be the guard — `latin1.match()` is
+      hardcoded `false` because it doubles as the auto-selection policy `detect()` reads, so "can hold
+      this" and "should be picked for this" would have to be separated first. Send-side, so the tag
+      is not blocked on it. Raised by the architecture review of
+      [#96](https://github.com/larvit/larvitsmpp/pull/96), 2026-09-09.
+
+- [ ] **A time nobody can read goes out as `NaN` rather than being refused.**
+      `smppTime.encode(new Date('nope'))` returns `NaNNaNNaNNaNNaNNaNNaN00+` and
+      `smppTime.encode(NaN)` returns `0000NaNNaNNaNNaN000R`; `sendSms({ validityPeriod })` and
+      `scheduleDeliveryTime` write either straight into the PDU with no check at
+      `submitSmParams()`. Goal 2, since the peer reads a field that means nothing. `Date` is not the
+      closed domain hard rule 1's totality clause covers, so this one wants a guard at the send
+      boundary rather than a `Result` on `smppTime`. Raised by the stability review of
+      [#96](https://github.com/larvit/larvitsmpp/pull/96), 2026-09-09.
 
 - [ ] **A gate that refuses a floating version anywhere in the repo.** Maintainer's ask on
       [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the `release.yaml`

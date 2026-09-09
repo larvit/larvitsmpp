@@ -428,6 +428,17 @@ describe('sendSms()', () => {
 
 		assert.equal(sent.err, undefined);
 		assert.equal(attempts.length, 4);
+
+		const latin1 = 'å'.repeat(153 * 3);
+		const overLatin1 = await submitSms(deps, { encoding: 'LATIN1', from: '46701113311', maxSegments: 3, message: latin1, to: '46709771337' });
+
+		assert.ok(overLatin1.err instanceof Error);
+		assert.equal(attempts.length, 4);
+
+		const sentLatin1 = await submitSms(deps, { encoding: 'LATIN1', from: '46701113311', maxSegments: 4, message: latin1, to: '46709771337' });
+
+		assert.equal(sentLatin1.err, undefined);
+		assert.equal(attempts.length, 8);
 	});
 });
 

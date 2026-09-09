@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import type { EncodingName } from '../src/defs/encodings.ts';
 import {
 	bitCount,
 	decodeMessage,
@@ -9,7 +10,9 @@ import {
 	splitMessage,
 } from '../src/message.ts';
 // Through the public surface: an application handed a PduObject needs this same answer.
-import { messageOctets, objToPdu, pduToObj } from '../src/index.ts';
+import { encodings, isEncodingName, messageOctets, objToPdu, pduToObj } from '../src/index.ts';
+
+const singleSmsOctets = 140;
 
 describe('bitCount()', () => {
 	test('counts GSM characters as seven bits each', () => {
@@ -68,6 +71,33 @@ describe('splitMessage()', () => {
 		}
 	});
 
+	test('fits a concatenated Latin-1 segment into the 140 octets an SMS carries', () => {
+		const message = 'å'.repeat(300);
+		const segments = splitMessage(message, { encoding: 'LATIN1', reference: 0x4B });
+
+		assert.equal(segments.length, 3);
+
+		for (const segment of segments) {
+			assert.ok(segment.length <= singleSmsOctets, `segment of ${String(segment.length)} octets`);
+		}
+
+		assert.equal(segments[0]?.length, 6 + 134);
+		assert.equal(segments.map(segment => segment.subarray(6).toString('latin1')).join(''), message);
+	});
+
+	test('fits a concatenated 8-bit binary segment into the same 140 octets', () => {
+		const payload = Buffer.from(Array.from({ length: 400 }, (_, at) => (at * 7 + 3) % 256));
+		const segments = splitMessage(payload.toString('latin1'), { encoding: 'LATIN1', reference: 0x4C });
+
+		assert.equal(segments.length, 3);
+
+		for (const segment of segments) {
+			assert.ok(segment.length <= singleSmsOctets, `segment of ${String(segment.length)} octets`);
+		}
+
+		assert.deepEqual(Buffer.concat(segments.map(segment => segment.subarray(6))), payload);
+	});
+
 	test('prefixes each segment with a concatenation UDH', () => {
 		const segments = splitMessage('a'.repeat(306), { reference: 0x2A });
 
@@ -78,6 +108,8 @@ describe('splitMessage()', () => {
 	test('produces no segments at all for a message no UDH can number', () => {
 		assert.equal(splitMessage('a'.repeat(153 * 255), { reference: 1 }).length, 255);
 		assert.equal(splitMessage('a'.repeat(153 * 255 + 1), { reference: 1 }).length, 0);
+		assert.equal(splitMessage('å'.repeat(134 * 255), { encoding: 'LATIN1', reference: 1 }).length, 255);
+		assert.equal(splitMessage('å'.repeat(134 * 255 + 1), { encoding: 'LATIN1', reference: 1 }).length, 0);
 	});
 
 	test('splits on characters, never inside an escape sequence', () => {
@@ -129,6 +161,30 @@ describe('encodeMessage() and decodeMessage()', () => {
 		]);
 
 		assert.equal(decodeMessage(withUdh, 0x00, 0x40).message, 'part one');
+	});
+});
+
+describe('the alphabet the encoding helpers are asked for', () => {
+	const everyName: EncodingName[] = ['ASCII', 'LATIN1', 'UCS2'];
+
+	test('is one of three, each with a codec, so none of the three helpers can reach an absent one', () => {
+		assert.deepEqual(Object.keys(encodings).sort(), [...everyName].sort());
+
+		for (const encoding of everyName) {
+			assert.equal(encodeMessage('Hello', encoding).encoding, encoding);
+			assert.ok(bitCount('Hello', encoding) > 0);
+			assert.equal(splitMessage('Hello', { encoding, reference: 1 }).length, 1);
+		}
+	});
+
+	test('is narrowed by isEncodingName(), the door a caller holding a name at runtime takes', () => {
+		for (const encoding of everyName) {
+			assert.equal(isEncodingName(encoding), true, encoding);
+		}
+
+		for (const value of ['FLASH', 'BINARY', 'utf8', 'ascii', 'toString', '', 8, {}, null, undefined]) {
+			assert.equal(isEncodingName(value), false, JSON.stringify(value));
+		}
 	});
 });
 
