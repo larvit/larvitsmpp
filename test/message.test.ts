@@ -234,23 +234,41 @@ describe('smppDate()', () => {
 
 describe('smppTime', () => {
 	test('encodes an absolute time', () => {
-		assert.equal(smppTime.encode(new Date(Date.UTC(2026, 7, 25, 14, 30, 0))), '260825143000000+');
+		assert.equal(smppTime.encode(new Date(Date.UTC(2026, 7, 25, 14, 30, 0))).text, '260825143000000+');
 	});
 
 	test('encodes a relative time given in seconds', () => {
-		assert.equal(smppTime.encode(3600), '000000010000000R');
+		assert.equal(smppTime.encode(3600).text, '000000010000000R');
 	});
 
 	test('passes an already-formatted string through', () => {
-		assert.equal(smppTime.encode('260825143000000+'), '260825143000000+');
+		assert.equal(smppTime.encode('260825143000000+').text, '260825143000000+');
 	});
 
 	test('decodes an absolute time back to the same instant', () => {
 		const when = new Date(Date.UTC(2026, 7, 25, 14, 30, 0));
-		const { err, date } = smppTime.decode(smppTime.encode(when));
+		const encoded = smppTime.encode(when);
+
+		assert.ok(encoded.text);
+
+		const { err, date } = smppTime.decode(encoded.text);
 
 		assert.equal(err, undefined);
 		assert.equal(date.toISOString(), when.toISOString());
+	});
+
+	test('reports a time it cannot express rather than encoding it as a string of NaNs', () => {
+		for (const value of [new Date('nope'), NaN, Infinity, -Infinity]) {
+			const encoded = smppTime.encode(value);
+
+			assert.ok(encoded.err instanceof Error, String(value));
+			assert.equal(encoded.text, undefined);
+		}
+
+		const invalidDate = smppTime.encode(new Date('nope'));
+
+		assert.ok(invalidDate.err);
+		assert.match(invalidDate.err.message, /invalid Date/);
 	});
 
 	test('reports malformed input rather than returning an invalid date', () => {

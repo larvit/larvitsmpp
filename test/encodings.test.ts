@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { detect, encodingByDataCoding, encodings } from '../src/defs/encodings.ts';
+import { detect, encodingByDataCoding, encodings, unencodable } from '../src/defs/encodings.ts';
 
 describe('ASCII (GSM 03.38)', () => {
 	const samples: [string, number[]][] = [
@@ -104,6 +104,41 @@ describe('detect()', () => {
 		assert.equal(detect('ʹʺʻʼʽ`'), 'UCS2');
 		assert.equal(detect('تست'), 'UCS2');
 		assert.equal(detect('۱۲۳۴۵۶۷۸۹۰'), 'UCS2');
+	});
+
+	// The guard on a named alphabet must never fire on the one detect() picked by itself.
+	test('never picks an alphabet that loses a character', () => {
+		for (const message of ['', 'Hello world', 'Åsa naïve', '€{}[]', 'あいう', '😀', '`ÁáçÚ']) {
+			assert.equal(unencodable(message, detect(message)), undefined, message);
+		}
+	});
+});
+
+describe('unencodable()', () => {
+	test('names the first character an alphabet cannot carry, and nothing where it carries them all', () => {
+		assert.deepEqual(unencodable('あいう', 'LATIN1'), { char: 'あ', index: 0 });
+		assert.deepEqual(unencodable('Åsa naïve', 'ASCII'), { char: 'ï', index: 6 });
+		assert.equal(unencodable('€{}[]\\~^|\f', 'ASCII'), undefined);
+		assert.equal(unencodable('Åsa', 'ASCII'), undefined);
+		assert.equal(unencodable('`ÁáçÚ', 'LATIN1'), undefined);
+		assert.equal(unencodable('あいう😀', 'UCS2'), undefined);
+	});
+
+	test('counts the index in the units the message is written in, so a surrogate pair reads back whole', () => {
+		assert.deepEqual(unencodable('ab😀', 'LATIN1'), { char: '😀', index: 2 });
+		assert.deepEqual(unencodable('a😀b', 'ASCII'), { char: '😀', index: 1 });
+	});
+
+	test('carries every octet through Latin-1, which is what an 8-bit binary body is sent as', () => {
+		const every = Buffer.from(Array.from({ length: 256 }, (_, byte) => byte));
+
+		assert.equal(unencodable(every.toString('latin1'), 'LATIN1'), undefined);
+		assert.deepEqual(unencodable('Ā', 'LATIN1'), { char: 'Ā', index: 0 });
+	});
+
+	test('is not match(), which says what detect() may pick rather than what the alphabet holds', () => {
+		assert.equal(encodings.LATIN1.match('Hello world'), false);
+		assert.equal(unencodable('Hello world', 'LATIN1'), undefined);
 	});
 });
 
