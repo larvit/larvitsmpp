@@ -1,7 +1,7 @@
 # interop-tests
 
-How the experiments in [PLAN.md](PLAN.md) are run and recorded. Read PLAN.md first, and the root
-[AGENTS.md](../AGENTS.md) for the conventions all code here follows.
+How the experiments in [README.md](README.md) are run and recorded. Read README.md first, and the
+root [AGENTS.md](../AGENTS.md) for the conventions all code here follows.
 
 ## Layout
 
@@ -71,7 +71,7 @@ Date, images and tags, the commit of this repo, host Docker version.
 Commands that worked, and what did not, so the next run starts where this one ended.
 
 ## Scenarios
-| Id (from PLAN.md) | Result (pass / fail / blocked / not run) | Evidence (test name, log line, tshark frame) |
+| Id (from README.md) | Result (pass / fail / blocked / not run) | Evidence (test name, log line, tshark frame) |
 
 ## Defects in @larvit/smpp
 One subsection each: what happened, what the spec or the peer's docs say, reproducer (PDU hex or
@@ -83,7 +83,7 @@ Behaviour of the peer worth knowing that is not our defect.
 ## Open questions
 ```
 
-Then set the phase's row in PLAN.md's Status table to `done` or `blocked`, linking the file.
+Then add the file to README.md's findings table.
 
 ## Fixing what a phase found
 
