@@ -3,26 +3,20 @@ import type { ErrorName } from './defs/errors.ts';
 import type { ParamValue } from './defs/types.ts';
 import type { PduHeader } from './pdu-refusal.ts';
 import type { Result, VoidResult } from './result.ts';
-import type { Tlv } from './defs/tlvs.ts';
+import type { Tlv, TlvInput } from './defs/tlvs.ts';
 import { PduRefusedError, framingRefusal } from './pdu-refusal.ts';
 import { cmds, commandNameById, respNameFor } from './defs/commands.ts';
 import { hasUdh } from './defs/constants.ts';
 import { decodeMessage, encodeBody } from './message.ts';
 import { errorNameById, errors, isErrorName } from './defs/errors.ts';
 import { paramNumber } from './defs/types.ts';
-import { tlvDefault, tlvs, tlvsById } from './defs/tlvs.ts';
+import { tagIdOf, tlvDefault, tlvs, tlvsById, writeTlvs } from './defs/tlvs.ts';
 
 /** The highest sequence number this library hands out; SMPP 3.4 4.7.1 reserves 0x7fffffff. */
 export const maxSeqNr = 2147483646;
 
 /** What the field holds. Read and echoed in full, because peers do write above the spec's range. */
 const maxWireSeqNr = 0xFFFFFFFF;
-
-export type TlvInput = {
-	/** Resolved from the record key; pass it for a tag the TLV table does not define. */
-	tagId?: number | undefined;
-	tagValue: ParamValue;
-};
 
 export type PduObjectInput<C extends CommandName = CommandName> = {
 	cmdName: C;
@@ -52,6 +46,8 @@ export type PduObject = {
 	tlvs: Record<string, Tlv>;
 };
 
+export type { TlvInput };
+
 const respBit = 0x80000000;
 
 export function isResp(pduObj: Pick<PduObject, 'cmdId'>): boolean {
@@ -70,20 +66,6 @@ export function isCommand<C extends CommandName>(
 	return pduObj.cmdName === cmdName;
 }
 
-function tagIdOf(name: string, input: TlvInput): Result<{ tagId: number }> {
-	const tagId = input.tagId ?? tlvs[name]?.id;
-
-	if (tagId === undefined) {
-		return { err: new Error(`TLV "${name}": unknown tag name, give it a tagId`) };
-	}
-
-	if (!Number.isInteger(tagId) || tagId < 0 || tagId > 0xFFFF) {
-		return { err: new Error(`TLV "${name}": tagId ${String(tagId)} out of range 0-65535`) };
-	}
-
-	return { tagId };
-}
-
 type ResolvedBody = {
 	params: Record<string, ParamValue | undefined>;
 	tlvs: Record<string, TlvInput> | undefined;
@@ -95,17 +77,19 @@ function codingOf(params: Record<string, ParamValue | undefined>): number | unde
 
 type CarriedBody = { name: string; text: string; tlv: TlvInput };
 
-/** The body TLV where it carries text, under whatever name its tagId is keyed to. */
-function carriedBody(input: Record<string, TlvInput> | undefined): CarriedBody | undefined {
+/** Every entry carrying body text, under whatever names their tagIds are keyed to. */
+function carriedBodies(input: Record<string, TlvInput> | undefined): CarriedBody[] {
+	const carried: CarriedBody[] = [];
+
 	for (const [name, tlv] of Object.entries(input ?? {})) {
 		const tag = tagIdOf(name, tlv);
 
 		if (!tag.err && tag.tagId === tlvs.message_payload.id && typeof tlv.tagValue === 'string') {
-			return { name, text: tlv.tagValue, tlv };
+			carried.push({ name, text: tlv.tagValue, tlv });
 		}
 	}
 
-	return undefined;
+	return carried;
 }
 
 /** messageOctets() reads short_message wherever it holds an octet, and the TLV only where it does not. */
@@ -113,19 +97,32 @@ function carriesOctets(value: ParamValue | undefined): boolean {
 	return Buffer.isBuffer(value) && value.length > 0;
 }
 
-/**
- * data_coding names the alphabet of the body wherever the caller put it, so a string in either
- * place is encoded with it, and short_message settles it where it carries anything at all — the
- * order messageOctets() reads them in. A Buffer is octets the caller already chose and is written
- * as given. Encoding a string settles data_coding and sm_length; a buffer settles sm_length.
- */
+/** Encoded in place, settling data_coding where the mandatory field carries nothing to read. */
+function resolveCarried(
+	resolved: ResolvedBody,
+	tlvs: Record<string, TlvInput> | undefined,
+	dataCoding: number | undefined,
+): VoidResult {
+	for (const carried of carriedBodies(tlvs)) {
+		const encoded = encodeBody(carried.text, dataCoding);
+
+		if (encoded.err) return { err: new Error(`TLV "${carried.name}": ${encoded.err.message}`) };
+
+		if (!carriesOctets(resolved.params.short_message)) resolved.params.data_coding = encoded.dataCoding;
+
+		resolved.tlvs = { ...resolved.tlvs, [carried.name]: { ...carried.tlv, tagValue: encoded.buffer } };
+	}
+
+	return {};
+}
+
+/** data_coding names the alphabet of the body, and short_message settles it where it carries octets. */
 function resolveBody(
 	params: Record<string, ParamValue | undefined>,
 	tlvs: Record<string, TlvInput> | undefined,
-	cmdName: CommandName,
+	definition: CommandDefinition,
 ): Result<ResolvedBody> {
-	const message = params.short_message;
-	const carried = carriedBody(tlvs);
+	const message = definition.params?.short_message === undefined ? undefined : params.short_message;
 	const resolved: ResolvedBody = { params: { ...params }, tlvs };
 
 	if (Buffer.isBuffer(message) && params.sm_length === undefined) {
@@ -136,7 +133,7 @@ function resolveBody(
 		const encoded = encodeBody(message, codingOf(params));
 
 		if (encoded.err) {
-			return { err: new Error(`Parameter "short_message" of "${cmdName}": ${encoded.err.message}`) };
+			return { err: new Error(`Parameter "short_message" of "${definition.command}": ${encoded.err.message}`) };
 		}
 
 		resolved.params.data_coding = encoded.dataCoding;
@@ -144,17 +141,13 @@ function resolveBody(
 		resolved.params.sm_length = encoded.buffer.length;
 	}
 
-	if (carried) {
-		const encoded = encodeBody(carried.text, codingOf(resolved.params));
+	const carried = resolveCarried(
+		resolved,
+		tlvs,
+		carriesOctets(resolved.params.short_message) ? codingOf(resolved.params) : codingOf(params),
+	);
 
-		if (encoded.err) return { err: new Error(`TLV "${carried.name}": ${encoded.err.message}`) };
-
-		if (!carriesOctets(resolved.params.short_message)) resolved.params.data_coding = encoded.dataCoding;
-
-		resolved.tlvs = { ...tlvs, [carried.name]: { ...carried.tlv, tagValue: encoded.buffer } };
-	}
-
-	return resolved;
+	return carried.err ? { err: carried.err } : resolved;
 }
 
 function writeParams(
@@ -185,42 +178,6 @@ function writeParams(
 	return { chunks };
 }
 
-function writeTlvs(tlvs: Record<string, TlvInput> | undefined): Result<{ chunks: Buffer[] }> {
-	const chunks: Buffer[] = [];
-
-	for (const [name, tlv] of Object.entries(tlvs ?? {})) {
-		const tag = tagIdOf(name, tlv);
-
-		if (tag.err) return { err: tag.err };
-
-		const type = tlvsById[tag.tagId]?.type ?? tlvDefault;
-		const sized = type.size(tlv.tagValue);
-
-		if (sized.err) {
-			return { err: new Error(`TLV "${name}": ${sized.err.message}`) };
-		}
-
-		if (sized.size > 0xffff) {
-			return { err: new Error(`TLV "${name}": ${String(sized.size)} octets overflow the two octet length`) };
-		}
-
-		const chunk = Buffer.alloc(sized.size + 4);
-
-		chunk.writeUInt16BE(tag.tagId, 0);
-		chunk.writeUInt16BE(sized.size, 2);
-
-		const written = type.write(tlv.tagValue, chunk, 4);
-
-		if (written.err) {
-			return { err: new Error(`TLV "${name}": ${written.err.message}`) };
-		}
-
-		chunks.push(chunk);
-	}
-
-	return { chunks };
-}
-
 /**
  * SMPP 3.4: a response reporting a failure carries no body, so its fields are not "unused but
  * present" — they are absent, and a peer that reads them anyway reads past the end of the PDU.
@@ -234,7 +191,7 @@ function buildBody(
 ): Result<{ body: Buffer }> {
 	if (errors[cmdStatus] !== 0 && definition.id >= respBit) return { body: Buffer.alloc(0) };
 
-	const body = resolveBody(params, tlvs, cmdName);
+	const body = resolveBody(params, tlvs, definition);
 
 	if (body.err) return { err: body.err };
 

@@ -27,10 +27,7 @@ export function encodeMessage(
 	return { buffer: encodings[resolved].encode(message), encoding: resolved };
 }
 
-/**
- * A message body as octets, under the alphabet `dataCoding` names or one detected where it names
- * none. An alphabet the caller named has to carry the text; the one detection picks always does.
- */
+/** A message body as octets, under the alphabet `dataCoding` resolves to, or one detected for it. */
 export function encodeBody(
 	text: string,
 	dataCoding: number | undefined,
@@ -45,7 +42,7 @@ export function encodeBody(
 	const lost = unencodable(text, encoding);
 
 	return lost
-		? { err: new Error(`data_coding ${String(dataCoding)} names ${encoding}, which cannot carry ${unencodableText(lost)}; pass a Buffer of octets, or a data_coding whose alphabet carries them`) }
+		? { err: new Error(`data_coding ${String(dataCoding)} resolves to ${encoding}, which cannot carry ${unencodableText(lost)}; pass a Buffer of octets, or a data_coding whose alphabet carries them`) }
 		: { buffer: encodings[encoding].encode(text), dataCoding };
 }
 

@@ -109,7 +109,7 @@ src/
 		constants.ts     consts + constsById, and the SMPP version constants
 		encodings.ts     GSM 03.38, LATIN1, UCS2, detection, data_coding resolution
 		errors.ts        errors + errorsById (ESME_*)
-		tlvs.ts          TLV definitions, tlvsById
+		tlvs.ts          TLV definitions, tlvsById, the input shape, and writing a TLV stream
 		types.ts         Wire types: int8/int16/int32/string/cstring/buffer/arrays
 ```
 
@@ -646,9 +646,12 @@ Grouped by what each one constrains.
   — so refusing what Latin-1 cannot hold while still writing UCS-2 text as Latin-1 octets would
   close half of it. `short_message` settles the `data_coding` wherever it carries octets at all, the
   order `messageOctets()` reads the two in, so the alphabet a PDU declares is the one its body will
-  be read under. The TLV is found by tag id rather than by its record key, since `tagIdOf()` lets a
-  caller name it anything, and a spelling that escaped the guard would be a second spelling that
-  disagrees about correctness. Rejected: refusing a string `message_payload` outright and demanding
+  be read under — and a `short_message` on a command whose table declares none is ignored here as
+  `writeParams()` ignores it, so an empty one, an absent one and one the wire cannot carry are the
+  same input rather than three. Every entry carrying the payload tag is resolved, by tag id rather
+  than by record key, since `tagIdOf()` lets a caller name it anything and a spelling that escaped
+  the guard would be a second spelling that disagrees about correctness. Rejected: refusing a string
+  `message_payload` outright and demanding
   octets, which contradicts `short_message` on the same PDU. Rejected: guarding every string-valued
   field, which `data_coding` says nothing about — an address is a C-Octet String and ASCII by 3.4's
   own definition.
