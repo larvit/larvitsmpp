@@ -120,8 +120,9 @@ const relativeTime = /^(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)000R$/;
 export const smppTime = {
 	/**
 	 * A Date becomes an absolute UTC time; a number is a relative period in seconds, expressed in
-	 * days and below, so anything past 99 days is clamped to that; a string is a stamp the caller
-	 * formatted itself and is passed through. A value naming no instant or period is refused.
+	 * days and below, so anything past the 99d 23:59:59 the format holds is clamped to it; a string
+	 * is a stamp the caller formatted itself and is passed through. A value naming no instant or
+	 * period is refused.
 	 */
 	encode(value: Date | number | string): Result<{ text: string }> {
 		if (typeof value === 'string') return { text: value };
@@ -129,9 +130,7 @@ export const smppTime = {
 		if (typeof value === 'number') {
 			if (!Number.isFinite(value)) return { err: new Error(`Not an SMPP time: ${String(value)}`) };
 
-			const total = Math.max(0, Math.floor(value));
-			const days = Math.min(99, Math.floor(total / 86400));
-			const capped = days === 99 ? 99 * 86400 + 86399 : total;
+			const capped = Math.min(Math.max(0, Math.floor(value)), 99 * 86400 + 86399);
 
 			return {
 				text: '0000'

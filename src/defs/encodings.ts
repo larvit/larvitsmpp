@@ -125,8 +125,6 @@ export type Unencodable = { char: string; index: number };
 
 /** The first character `encoding` cannot carry, or undefined where it carries every one of them. */
 export function unencodable(message: string, encoding: EncodingName): Unencodable | undefined {
-	// Asked of the codec, never of match(): that is detect()'s policy, where LATIN1 answers false to
-	// everything while carrying every octet here.
 	const codec = encodings[encoding];
 	let index = 0;
 

@@ -597,11 +597,9 @@ Grouped by what each one constrains.
   carry a message, as `messageClassOf()` is to whether a `data_coding` carries a class, and it asks
   the codec — `decode(encode(c)) === c` per code point — rather than restating the tables beside it,
   so the guard cannot drift from what the encoder writes for any one character, and a fourth
-  alphabet answers by having a codec at all. GSM's 0x1B is an extension prefix rather than a
-  character, so a bare ESC beside one of the ten extension bases is the one input a per-character
-  reading passes and the encoder then writes as the extended character; nothing else composes. It is
-  exported for the reason `concatOf()` is: a caller composing a `submit_sm` through `send()` and
-  `encodeMessage()` would otherwise rewrite the read this fixed. `match()` cannot be that answer —
+  alphabet answers by having a codec at all. It is exported for the reason `concatOf()` is: a caller
+  composing a `submit_sm` through `send()` and `encodeMessage()` would otherwise rewrite the read
+  this fixed. `match()` cannot be that answer —
   it doubles as the auto-selection policy `detect()` reads, where LATIN1 is hardcoded false so
   nothing picks it, and using it would refuse the 8-bit binary body Latin-1 is kept for. The guard is
   on the named branch alone, so an unspecified send is untouched: every alphabet `detect()` returns
@@ -617,8 +615,12 @@ Grouped by what each one constrains.
   library's own published helper composing the garbage the guard exists to stop. Rejected: a
   `holds()` member beside `match()` on `Encoding`, a second per-alphabet table to keep in step with
   the codec. Rejected: validating the `string` spelling of a time, which is a stamp the caller
-  formatted for a peer whose format is theirs to name. Accepted: `Infinity` seconds is refused rather
-  than clamped to 99 days, where a real period past 99 days is still clamped.
+  formatted for a peer whose format is theirs to name, its width included, where SMPP 3.4 gives the
+  field 1 or 17 octets. Accepted: `Infinity` seconds is refused rather than clamped, where a real
+  period past the 99d 23:59:59 the format holds is still clamped to it. Accepted: GSM's 0x1B is an
+  extension prefix rather than a character, so a bare ESC beside one of the ten extension bases is
+  the one input a per-character reading passes and the encoder then writes as the extended character
+  — the only composition in any of the three codecs, and no alphabet a message would be written in.
 
 ### The session's life
 

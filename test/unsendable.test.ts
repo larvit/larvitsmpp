@@ -149,25 +149,40 @@ describe('a time no peer can read', () => {
 		assert.equal(attempts.length, 0);
 	});
 
-	test('writes the times it can express into the segment it built them for', async t => {
+	test('refuses a time that is no kind of time rather than throwing out of the send', async () => {
+		const attempts: PduObjectInput[] = [];
+		const deps = recordingDeps(attempts);
+
+		for (const validityPeriod of [null, {}, true, []]) {
+			const sent = await submitSms(deps, { from, message: 'Hello world', to, validityPeriod });
+
+			assert.ok(sent.err instanceof Error, JSON.stringify(validityPeriod));
+			assert.match(sent.err.message, /validityPeriod must be a Date/);
+		}
+
+		assert.equal(attempts.length, 0);
+	});
+
+	test('writes the times it can express into every segment it built them for', async t => {
 		const smsc = await dummySmsc(t);
 		const session = await bindToSmsc(t, smsc.port, { reconnect: false });
 		const sent = await session.sendSms({
 			from,
-			message: 'Hello world',
+			message: 'A message long enough to need a header numbering its segments. '.repeat(4),
 			scheduleDeliveryTime: new Date(Date.UTC(2026, 8, 9, 14, 30, 0)),
 			to,
 			validityPeriod: 3600,
 		});
-		const first = smsc.octets[0];
 
 		assert.equal(sent.err, undefined);
-		assert.ok(first);
+		assert.equal(smsc.octets.length, 2, 'the fixture must need more than one segment');
 
-		const { pduObj } = pduToObj(first);
+		for (const octets of smsc.octets) {
+			const { pduObj } = pduToObj(octets);
 
-		assert.ok(pduObj);
-		assert.equal(paramText(pduObj.params.schedule_delivery_time), '260909143000000+');
-		assert.equal(paramText(pduObj.params.validity_period), '000000010000000R');
+			assert.ok(pduObj);
+			assert.equal(paramText(pduObj.params.schedule_delivery_time), '260909143000000+');
+			assert.equal(paramText(pduObj.params.validity_period), '000000010000000R');
+		}
 	});
 });

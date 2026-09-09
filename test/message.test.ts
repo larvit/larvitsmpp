@@ -239,6 +239,8 @@ describe('smppTime', () => {
 
 	test('encodes a relative time given in seconds', () => {
 		assert.equal(smppTime.encode(3600).text, '000000010000000R');
+		assert.equal(smppTime.encode(99 * 86400).text, '000099000000000R');
+		assert.equal(smppTime.encode(100 * 86400).text, '000099235959000R');
 	});
 
 	test('passes an already-formatted string through', () => {

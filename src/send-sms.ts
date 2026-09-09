@@ -33,10 +33,13 @@ export type SendSmsOptions = {
 };
 
 /** The options as they arrive: a caller without types can put anything in the checked fields. */
-export type SendSmsInput = Omit<SendSmsOptions, 'encoding' | 'messagingMode'> & {
-	encoding?: unknown;
-	messagingMode?: unknown;
-};
+export type SendSmsInput =
+	Omit<SendSmsOptions, 'encoding' | 'messagingMode' | 'scheduleDeliveryTime' | 'validityPeriod'> & {
+		encoding?: unknown;
+		messagingMode?: unknown;
+		scheduleDeliveryTime?: unknown;
+		validityPeriod?: unknown;
+	};
 
 /** Both arrays hold what the peer accepted, so a partial failure names what is already delivered. */
 export type SendSmsResult = {
@@ -187,6 +190,10 @@ function checkTimes(sms: SendSmsInput): Result<{ times: SendTimes }> {
 		const value = sms[option];
 
 		if (value === undefined) continue;
+
+		if (typeof value !== 'number' && typeof value !== 'string' && !(value instanceof Date)) {
+			return { err: new Error(`${option} must be a Date, a number of seconds or an SMPP stamp, got ${namedValue(value)}`) };
+		}
 
 		const encoded = smppTime.encode(value);
 

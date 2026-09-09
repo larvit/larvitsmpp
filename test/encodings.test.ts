@@ -106,15 +106,15 @@ describe('detect()', () => {
 		assert.equal(detect('۱۲۳۴۵۶۷۸۹۰'), 'UCS2');
 	});
 
-	// The guard on a named alphabet never fires on the one detect() picked, which is what lets
-	// sendSms() leave the automatic path unchecked. Exhaustive because that is the whole premise.
+	// Exhaustive: sendSms() leaves the automatic path unchecked on this and nothing else.
 	test('never picks an alphabet that loses a character, for any code point there is', () => {
 		for (let code = 0; code <= 0x10FFFF; code++) {
 			if (code >= 0xD800 && code <= 0xDFFF) continue;
 
 			const char = String.fromCodePoint(code);
+			const lost = unencodable(char, detect(char));
 
-			assert.equal(unencodable(char, detect(char)), undefined, `U+${code.toString(16)}`);
+			if (lost) assert.fail(`detect() picked ${detect(char)} for U+${code.toString(16)}, which loses it`);
 		}
 	});
 });
@@ -146,9 +146,6 @@ describe('unencodable()', () => {
 		assert.equal(unencodable('Hello world', 'LATIN1'), undefined);
 	});
 
-	// 0x1B is GSM 03.38's extension prefix rather than a character, so the pair encodes to the one
-	// octet pair the extended character has. Reading a character at a time cannot see that, and a
-	// bare ESC beside one of the ten extension bases is the only input where it matters.
 	test('reads a character at a time, so a bare GSM escape beside its base reads as carried', () => {
 		assert.equal(unencodable('\x1Be', 'ASCII'), undefined);
 		assert.deepEqual(encodings.ASCII.encode('\x1Be'), encodings.ASCII.encode('€'));
