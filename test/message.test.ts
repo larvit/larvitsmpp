@@ -237,10 +237,47 @@ describe('smppTime', () => {
 		assert.equal(smppTime.encode(new Date(Date.UTC(2026, 7, 25, 14, 30, 0))).text, '260825143000000+');
 	});
 
-	test('encodes a relative time given in seconds, clamped to what the format holds', () => {
+	test('encodes a relative time given in seconds', () => {
+		assert.equal(smppTime.encode(0).text, '000000000000000R');
 		assert.equal(smppTime.encode(3600).text, '000000010000000R');
 		assert.equal(smppTime.encode(99 * 86400).text, '000099000000000R');
-		assert.equal(smppTime.encode(100 * 86400).text, '000099235959000R');
+		assert.equal(smppTime.encode(99 * 86400 + 86399).text, '000099235959000R');
+	});
+
+	test('refuses a second count past the day field rather than clamping it, naming the Date spelling', () => {
+		for (const seconds of [99 * 86400 + 86400, 86400 * 365]) {
+			const encoded = smppTime.encode(seconds);
+
+			assert.ok(encoded.err instanceof Error, String(seconds));
+			assert.equal(encoded.text, undefined);
+			assert.match(encoded.err.message, /pass a Date/);
+		}
+	});
+
+	test('refuses a negative period without sending the caller to the Date that cannot help', () => {
+		const encoded = smppTime.encode(-1);
+
+		assert.ok(encoded.err instanceof Error);
+		assert.equal(encoded.text, undefined);
+		assert.match(encoded.err.message, /cannot be negative/);
+		assert.doesNotMatch(encoded.err.message, /Date/);
+	});
+
+	test('decodes the years and months the relative format holds but a second count cannot name', () => {
+		const before = Date.now();
+		const year = smppTime.decode('010000000000000R');
+		const months = smppTime.decode('001000000000000R');
+		const day = 86400_000;
+
+		assert.equal(year.err, undefined);
+		assert.ok(year.date, 'a year is a period the format holds');
+		assert.ok(year.date.getTime() >= before + 365 * day, year.date.toISOString());
+		assert.ok(year.date.getTime() <= Date.now() + 366 * day, year.date.toISOString());
+
+		assert.equal(months.err, undefined);
+		assert.ok(months.date, 'ten months is a period the format holds');
+		assert.ok(months.date.getTime() >= before + 290 * day, months.date.toISOString());
+		assert.ok(months.date.getTime() <= Date.now() + 320 * day, months.date.toISOString());
 	});
 
 	test('passes an already-formatted string through', () => {

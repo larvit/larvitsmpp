@@ -616,8 +616,15 @@ Grouped by what each one constrains.
   `holds()` member beside `match()` on `Encoding`, a second per-alphabet table to keep in step with
   the codec. Rejected: validating the `string` spelling of a time, which is a stamp the caller
   formatted for a peer whose format is theirs to name, its width included, where SMPP 3.4 gives the
-  field 1 or 17 octets. Accepted: `Infinity` seconds is refused rather than clamped, where a real
-  period past the 99d 23:59:59 the format holds is still clamped to it. Accepted: GSM's 0x1B is an
+  field 1 or 17 octets. Accepted: a second count past 99d 23:59:59 is refused rather than clamped to
+  it, a negative one and `Infinity` with it — clamping `86400 * 365` reported success for a year and
+  put 99 days on the wire, the wrong answer about what happened that the rest of this bullet exists
+  to remove. The ceiling is this encoder's rather than the format's: 3.4's `YYMMDDhhmmss000R`
+  carries years and months, which `decode()` reads back, and no fixed number of seconds is either
+  one, so spelling a second count in days and below is where the guess would go — which is why the
+  too-long refusal names the `Date` that reaches every instant the absolute form holds, and the
+  negative one names nothing, there being no period to reach. Rejected: documenting the clamp, which
+  leaves the caller told a true thing and still sent the wrong period. Accepted: GSM's 0x1B is an
   extension prefix rather than a character, so a bare ESC beside one of the ten extension bases is
   the one input a per-character reading passes and the encoder then writes as the extended character
   — the only composition in any of the three codecs, and not a character a message is written in.
@@ -634,7 +641,12 @@ Grouped by what each one constrains.
   and deliberately malformed bodies `interop-tests/` builds are all still buildable — and a string
   with no `data_coding` is untouched, detection carrying every character it was picked for. The
   guard is `unencodable()` again rather than a second reading, and `unencodableText()` is the
-  character, its code point and its index said once for both refusals. It is reached through
+  character, its code point and its index said once for both refusals — unexported where
+  `unencodable()` is published, since wording `{ char, index }` into a sentence rewrites no read a
+  caller would get wrong, where asking the codec is, and publishing it would freeze this library's
+  error prose as API for an application whose own refusal should read like itself. Goal 6, from the
+  architecture review of [#99](https://github.com/larvit/larvitsmpp/pull/99), 2026-09-09. It is
+  reached through
   `encodeBody()` in `message.ts`, which is where the `data_coding`-to-text pair already lives:
   `encodeBody(text, dataCoding)` is `decodeMessage(buffer, dataCoding)`'s mirror and resolves the
   alphabet through the same `encodingByDataCoding()`. `send()` and `sendReturn()` inherit it,
