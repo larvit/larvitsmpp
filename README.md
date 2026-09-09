@@ -602,8 +602,8 @@ Composing a message by hand takes the send-side pair: `unencodable(message, enco
 them all, which is the check `sendSms()` makes before it encodes anything;
 `dataCodingByEncoding[encoding]` is the `data_coding` this library writes each alphabet under, which
 is what to put beside octets `encodeMessage()` handed back; `smppTime.encode(value)` returns
-`{ err, text }` for a `validity_period` or
-`schedule_delivery_time`, as `smppTime.decode()` returns `{ err, date }` for one that arrived.
+`{ err, text }` for a `validity_period` or `schedule_delivery_time`, as `smppTime.decode()` returns
+`{ err, date }` for one that arrived.
 
 The spec tables are exported both individually (`cmds`, `consts`, `encodings`, `errors`, `tlvs`,
 `types`, and the matching `*ById` maps) and grouped as `defs`.

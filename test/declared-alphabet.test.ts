@@ -26,6 +26,20 @@ const byTheSpecsTable: Record<number, (octets: Buffer) => string> = {
 	[consts.ENCODING.IA5]: octets => octets.toString('latin1'),
 };
 
+/** An event that never fires would otherwise block until the CI job limit, asserting nothing. */
+function once<T>(register: (resolve: (value: T) => void) => void): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			reject(new Error('waited 5000 ms for an event that never fired'));
+		}, 5000);
+
+		register(value => {
+			clearTimeout(timer);
+			resolve(value);
+		});
+	});
+}
+
 function submitted(octets: Buffer[]): PduObject[] {
 	return octets.map(pdu => {
 		const { pduObj } = pduToObj(pdu);
@@ -64,7 +78,6 @@ function delivered(body: Buffer | string, dataCoding: number, esmClass: number):
 }
 
 describe('the alphabet a message declares is the one its octets are written in', () => {
-	// data_coding 0x01 is SMPP 3.4 5.2.19's IA5, and the codec writes GSM 03.38.
 	test('sends GSM 03.38 under data_coding 0x00, the SMSC default alphabet', async t => {
 		const smsc = await dummySmsc(t, { messageIds: ['01a08779-de97-7caa-9d26-e6d50f5c4888'] });
 		const session = await bindToSmsc(t, smsc.port, { reconnect: false });
@@ -126,7 +139,7 @@ describe('the alphabet a message declares is the one its octets are written in',
 		closeAfter(t, connected.session);
 
 		const session = connected.session;
-		const reported = new Promise<PduObject>(resolve => {
+		const reported = once<PduObject>(resolve => {
 			session.on('dlr', (_report, pduObj) => { resolve(pduObj); });
 		});
 
@@ -152,8 +165,6 @@ describe('the alphabet a message declares is the one its octets are written in',
 });
 
 describe('what a peer declares is read as generously as it was before', () => {
-	// LINK Mobility, Route Mobile and Telesign all document 0x01 as GSM 03.38; the two that mention
-	// IA5 at all call the value known to cause problems, so no researched peer means it literally.
 	test('reads data_coding 0x01 as GSM 03.38, as 0x00 is read', () => {
 		assert.equal(encodingByDataCoding(0x01), 'ASCII');
 

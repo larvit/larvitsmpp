@@ -9,7 +9,6 @@ import type { Sms } from '../src/sms.ts';
 import { client } from '../src/client.ts';
 import { closeAfter } from '../test/teardown.ts';
 import { consts } from '../src/defs/constants.ts';
-import { dataCodingByEncoding } from '../src/defs/encodings.ts';
 import { paramText } from '../src/defs/types.ts';
 import { server } from '../src/server.ts';
 
@@ -277,7 +276,7 @@ describe('smppsim-transition - C4 intermediate then final', () => {
 		const sent = await session.send({
 			cmdName: 'submit_sm',
 			params: {
-				data_coding: dataCodingByEncoding.ASCII,
+				data_coding: 0,
 				destination_addr: TO,
 				registered_delivery: 0x11,
 				short_message: Buffer.from('transition test', 'latin1'),

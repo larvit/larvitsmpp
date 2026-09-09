@@ -188,7 +188,7 @@ describe('encodingByDataCoding()', () => {
 		}
 	});
 
-	test('is the mirror of dataCodingByEncoding, so the two cannot drift', () => {
+	test('reads every coding dataCodingByEncoding writes back as the alphabet that wrote it', () => {
 		for (const name of Object.keys(dataCodingByEncoding)) {
 			if (!isEncodingName(name)) return assert.fail(`${name} names no alphabet`);
 
