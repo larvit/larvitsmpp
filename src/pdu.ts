@@ -93,18 +93,39 @@ function codingOf(params: Record<string, ParamValue | undefined>): number | unde
 	return typeof params.data_coding === 'number' ? params.data_coding : undefined;
 }
 
+type CarriedBody = { name: string; text: string; tlv: TlvInput };
+
+/** The body TLV where it carries text, under whatever name its tagId is keyed to. */
+function carriedBody(input: Record<string, TlvInput> | undefined): CarriedBody | undefined {
+	for (const [name, tlv] of Object.entries(input ?? {})) {
+		const tag = tagIdOf(name, tlv);
+
+		if (!tag.err && tag.tagId === tlvs.message_payload.id && typeof tlv.tagValue === 'string') {
+			return { name, text: tlv.tagValue, tlv };
+		}
+	}
+
+	return undefined;
+}
+
+/** messageOctets() reads short_message wherever it holds an octet, and the TLV only where it does not. */
+function carriesOctets(value: ParamValue | undefined): boolean {
+	return Buffer.isBuffer(value) && value.length > 0;
+}
+
 /**
  * data_coding names the alphabet of the body wherever the caller put it, so a string in either
- * place is encoded with it, and short_message settles it for both where a caller filled both — the
+ * place is encoded with it, and short_message settles it where it carries anything at all — the
  * order messageOctets() reads them in. A Buffer is octets the caller already chose and is written
  * as given. Encoding a string settles data_coding and sm_length; a buffer settles sm_length.
  */
 function resolveBody(
 	params: Record<string, ParamValue | undefined>,
 	tlvs: Record<string, TlvInput> | undefined,
+	cmdName: CommandName,
 ): Result<ResolvedBody> {
 	const message = params.short_message;
-	const payload = tlvs?.message_payload;
+	const carried = carriedBody(tlvs);
 	const resolved: ResolvedBody = { params: { ...params }, tlvs };
 
 	if (Buffer.isBuffer(message) && params.sm_length === undefined) {
@@ -114,20 +135,23 @@ function resolveBody(
 	if (typeof message === 'string') {
 		const encoded = encodeBody(message, codingOf(params));
 
-		if (encoded.err) return { err: new Error(`Parameter "short_message": ${encoded.err.message}`) };
+		if (encoded.err) {
+			return { err: new Error(`Parameter "short_message" of "${cmdName}": ${encoded.err.message}`) };
+		}
 
 		resolved.params.data_coding = encoded.dataCoding;
 		resolved.params.short_message = encoded.buffer;
 		resolved.params.sm_length = encoded.buffer.length;
 	}
 
-	if (payload !== undefined && typeof payload.tagValue === 'string') {
-		const encoded = encodeBody(payload.tagValue, codingOf(resolved.params));
+	if (carried) {
+		const encoded = encodeBody(carried.text, codingOf(resolved.params));
 
-		if (encoded.err) return { err: new Error(`TLV "message_payload": ${encoded.err.message}`) };
+		if (encoded.err) return { err: new Error(`TLV "${carried.name}": ${encoded.err.message}`) };
 
-		resolved.params.data_coding = encoded.dataCoding;
-		resolved.tlvs = { ...tlvs, message_payload: { ...payload, tagValue: encoded.buffer } };
+		if (!carriesOctets(resolved.params.short_message)) resolved.params.data_coding = encoded.dataCoding;
+
+		resolved.tlvs = { ...tlvs, [carried.name]: { ...carried.tlv, tagValue: encoded.buffer } };
 	}
 
 	return resolved;
@@ -210,7 +234,7 @@ function buildBody(
 ): Result<{ body: Buffer }> {
 	if (errors[cmdStatus] !== 0 && definition.id >= respBit) return { body: Buffer.alloc(0) };
 
-	const body = resolveBody(params, tlvs);
+	const body = resolveBody(params, tlvs, cmdName);
 
 	if (body.err) return { err: body.err };
 

@@ -633,20 +633,25 @@ Grouped by what each one constrains.
   under any `data_coding`, which is what keeps goal 6's escape hatch open — the raw UDH, 8-bit binary
   and deliberately malformed bodies `interop-tests/` builds are all still buildable — and a string
   with no `data_coding` is untouched, detection carrying every character it was picked for. The
-  guard is `unencodable()` again rather than a second reading, reached through `encodeBody()` in
-  `message.ts` so `defs/` learns nothing above itself, and `unencodableText()` is the character, its
-  code point and its index said once for both refusals. `send()` and `sendReturn()` inherit it,
+  guard is `unencodable()` again rather than a second reading, and `unencodableText()` is the
+  character, its code point and its index said once for both refusals. It is reached through
+  `encodeBody()` in `message.ts`, which is where the `data_coding`-to-text pair already lives:
+  `encodeBody(text, dataCoding)` is `decodeMessage(buffer, dataCoding)`'s mirror and resolves the
+  alphabet through the same `encodingByDataCoding()`. `send()` and `sendReturn()` inherit it,
   since both build through `buildPdu()`; `sendSms()` does not, and keeps its own guard, because
   `splitMessage()` hands the codec a Buffer with nothing left to refuse and the index a segment
   could name is not the one in the message. The TLV is encoded rather than merely checked because
   `data_coding` names the alphabet of the body wherever it is carried — that is how
   `messageOctets()` and `decodeMessage()` read one back, and a `data_sm` has nowhere else to put one
   — so refusing what Latin-1 cannot hold while still writing UCS-2 text as Latin-1 octets would
-  close half of it. `short_message` settles the alphabet where a caller filled both, the order
-  `messageOctets()` reads them in, so one PDU carries one `data_coding`. Rejected: refusing a string
-  `message_payload` outright and demanding octets, which contradicts `short_message` on the same
-  PDU. Rejected: guarding every string-valued field, which `data_coding` says nothing about — an
-  address is a C-Octet String and ASCII by 3.4's own definition.
+  close half of it. `short_message` settles the `data_coding` wherever it carries octets at all, the
+  order `messageOctets()` reads the two in, so the alphabet a PDU declares is the one its body will
+  be read under. The TLV is found by tag id rather than by its record key, since `tagIdOf()` lets a
+  caller name it anything, and a spelling that escaped the guard would be a second spelling that
+  disagrees about correctness. Rejected: refusing a string `message_payload` outright and demanding
+  octets, which contradicts `short_message` on the same PDU. Rejected: guarding every string-valued
+  field, which `data_coding` says nothing about — an address is a C-Octet String and ASCII by 3.4's
+  own definition.
 
 ### The session's life
 

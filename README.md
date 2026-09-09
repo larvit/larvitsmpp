@@ -582,8 +582,7 @@ the alphabet the PDU's own `data_coding` names, detected from the text where you
 `data_coding` whose alphabet cannot carry one of its characters is refused, naming the character, its
 code point and where it is. A `Buffer` goes out exactly as given under any `data_coding`, which is
 how binary payloads, hand-built user data headers and deliberately malformed bodies are sent.
-`session.send()` and `session.sendReturn()` build through the same codec and refuse the same bodies;
-`sendSms()` refuses earlier still, before it splits anything.
+`session.send()` and `session.sendReturn()` build through the same codec and refuse the same bodies.
 
 Composing a message by hand takes the send-side pair: `unencodable(message, encoding)` gives
 `{ char, index }` for the first character an alphabet cannot carry and `undefined` where it carries
