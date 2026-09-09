@@ -132,8 +132,9 @@ It travels in `data_coding` beside the alphabet, so a flash UCS2 message stays U
 8-bit data or UCS2, and 8-bit data is not text a handset will display — so the send is refused
 before anything goes out.
 
-Messages too long for one SMS are split automatically and sent as a concatenated message. You get
-one id per segment:
+Messages too long for one SMS are split automatically and sent as a concatenated message. The
+concatenation header takes six of the 140 octets an SMS carries, which leaves each segment 153
+characters as `ASCII`, 134 as `LATIN1` and 67 as `UCS2`. You get one id per segment:
 
 ```javascript
 const { err, pduObjs, smsIds, unanswered } = await session.sendSms({ from, message, to });

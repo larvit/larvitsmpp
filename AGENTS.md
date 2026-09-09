@@ -182,12 +182,12 @@ so a peer that dispatches one request at a time is never left waiting on us.
 
 Over SMPP the ESME puts one GSM character per octet in `short_message` and the SMSC packs it into
 septets. The 140-octet limit applies to that packed result, not to what goes on the wire here, which
-is why a concatenated segment is 153 characters plus a 6-octet UDH — 159 octets in `short_message`,
-and entirely correct. Do not "fix" this to 134; that number is the packed payload size and would
-truncate every long message by a fifth.
+is why a concatenated GSM segment is 153 characters plus a 6-octet UDH — 159 octets in
+`short_message`, and entirely correct. Do not "fix" that to 134; that number is the packed payload
+size and would truncate every long GSM message by a fifth.
 
-UCS2 is not packed, so there the two coincide: 67 characters = 134 octets, plus the 6-octet UDH is
-exactly 140.
+GSM 7-bit is the only alphabet it applies to. What each of the three is budgeted, and why, is a
+decision under [The wire](#the-wire).
 
 ## Conventions
 
@@ -300,6 +300,22 @@ Grouped by what each one constrains.
   Rejected: an error code on a plain `Error`, which reads back off an `unknown` property only through
   a cast and types nothing it carries. Accepted: a second copy of the package installed alongside
   this one defeats `instanceof`, where `err.name` still reads `PduRefusedError`.
+
+- **`bitCount()`, `encodeMessage()` and `splitMessage()` keep their total signatures, because
+  `EncodingName` is what keeps an alphabet with no codec away from them.** Maintainer's call,
+  2026-09-09, from the architecture review of [#95](https://github.com/larvit/larvitsmpp/pull/95):
+  all three index `encodings` by name and would throw on one it has no codec for, which hard rule 1
+  forbids. That PR left no such name to pass — `encodings` is a `Record<EncodingName, Encoding>`, so
+  every member of the union has a codec and one added without a codec, or without a segment budget,
+  fails to compile in four places. What was missing is the door for a caller holding a name at
+  runtime, so `isEncodingName()` is exported beside `isCommandName()` and `isErrorName()`, which
+  serve their own tables that way. Hard rule 1 is about fallible operations, and a function total
+  over its declared domain has nothing to report: `smppDate()` and `smppTime.encode()` are published
+  on those terms already. Rejected: a `Result` signature on all three, which costs every typed
+  consumer a narrow forever — goal 6, and the tag is the last cheap chance to spend it — to guard a
+  state the compiler refuses, and would leave hard rule 1 meaning two things in one file. Where the
+  domain really is open the check is already there: `sendSms()` takes its options as `unknown` and
+  refuses `encoding` by name, which is what a caller without types gets.
 
 ### The wire
 
@@ -556,6 +572,18 @@ Grouped by what each one constrains.
   reaches `expect()` and `collect()` unchanged, which is what keeps `DlrMerger` working; normalising
   the base instead would break that pair. The option is on `client()` only, since a `server()` session
   writes both ids itself.
+
+- **A concatenated segment is budgeted at what 134 octets hold, which is 153 septets for GSM 7-bit
+  and 134 characters for every alphabet the SMSC does not pack.** Maintainer's call, 2026-09-09,
+  from the architecture review of [#95](https://github.com/larvit/larvitsmpp/pull/95): `segmentUnits`
+  handed 153 to everything but UCS2, so a long `encoding: 'LATIN1'` message went out as segments of
+  153 octets plus a 6-octet UDH — 159 on the air where GSM 03.40 carries 140, which no SMSC can
+  deliver. Goal 1 owns it. There is one budget, 140 less the UDH, and the alphabet decides only what
+  it is counted in, so Latin-1 and UCS2 both take 134 and it is GSM 7-bit's 153 that is the odd
+  number rather than the other way round. `Record<EncodingName, number>` is what makes a fourth
+  alphabet state its own. Rejected: 134 for GSM 7-bit too, which is the mistake the unpacked-alphabet
+  section above exists to stop — it truncates every long GSM message by a fifth. Accepted: a Latin-1
+  message past 134 characters now costs more segments than it did, and `smsIds` is that much longer.
 
 ### The session's life
 
