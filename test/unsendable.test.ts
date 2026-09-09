@@ -173,6 +173,38 @@ describe('a body the PDU\'s own data_coding cannot carry', () => {
 		assert.match(built.err.message, /U\+3042/);
 	});
 
+	test('refuses the body TLV under whatever name the caller keyed its tagId to', () => {
+		const built = objToPdu({
+			cmdName: 'data_sm',
+			params: { data_coding: 0x03, destination_addr: to, source_addr: from },
+			tlvs: { body: { tagId: 0x0424, tagValue: 'あいう' } },
+		});
+
+		assert.ok(built.err instanceof Error);
+		assert.equal(built.buffer, undefined);
+		assert.match(built.err.message, /"body"/);
+		assert.match(built.err.message, /LATIN1/);
+		assert.match(built.err.message, /U\+3042/);
+	});
+
+	test('leaves data_coding to short_message wherever it carries octets, as messageOctets() reads it', () => {
+		const short = Buffer.from([0xDE, 0xAD]);
+		const built = objToPdu({
+			cmdName: 'deliver_sm',
+			params: { destination_addr: to, short_message: short, source_addr: from },
+			tlvs: { message_payload: { tagValue: 'あいう' } },
+		});
+
+		assert.equal(built.err, undefined);
+		assert.ok(built.buffer);
+
+		const { pduObj } = pduToObj(built.buffer);
+
+		assert.ok(pduObj);
+		assert.equal(pduObj.params.data_coding, 0, 'the TLV must not name an alphabet for octets nothing reads it as');
+		assert.deepEqual(messageOctets(pduObj), short);
+	});
+
 	test('never refuses a Buffer body, whatever the coding, because that is how binary is sent', () => {
 		const payload = Buffer.from([0x30, 0x42, 0xC3, 0x28, 0xFF, 0x00]);
 
