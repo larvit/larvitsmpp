@@ -52,9 +52,9 @@ These are not preferences. Breaking one is a defect.
 1. **Nothing throws.** Every fallible function returns (or resolves to) a DTO carrying an optional
    `err`. No `throw`, no rejected promises, no exceptions as control flow. Node APIs that throw are
    wrapped at the boundary and converted into a result. Programmer errors (bad arguments) are
-   results too, wherever the types admit one: a function total over its declared argument types is
-   guarded by the compiler and stays total, which is why `smppDate()` and the encoding helpers
-   return plainly, and the check belongs at whichever boundary the argument arrives untyped at.
+   results too, wherever the types admit one: a function whose argument types are a closed set is
+   guarded by the compiler and stays total, which is why the encoding helpers return plainly, and
+   the check belongs at whichever boundary the argument arrives untyped at.
 2. **Log messages are static strings.** Every dynamic value goes into the log metadata. Never
    interpolate, never concatenate.
    - GOOD: `log.debug('sendSms() - splitting message', { parts: msgs.length, to });`
