@@ -45,7 +45,8 @@ export type SendSmsInput =
 export type SendSmsResult = {
 	err?: Error;
 	pduObjs: PduObject[];
-	smsIds: string[];
+	/** Positional with `pduObjs`, and undefined where the SMSC took the segment and named no id. */
+	smsIds: (string | undefined)[];
 	/** Segments that went out unanswered. The peer may have taken them, so sending again may duplicate. */
 	unanswered: number;
 };
@@ -248,12 +249,19 @@ function checkSegments(allowed: number, segments: number): Error | undefined {
 	return undefined;
 }
 
+/** An absent message_id and one a peer wrote empty are the same octets, and neither names an id. */
+function acceptedId(pduObj: PduObject, notation: SmsIdNotation | undefined): string | undefined {
+	const smsId = normaliseSmsId(paramText(pduObj.params.message_id), notation);
+
+	return smsId === '' ? undefined : smsId;
+}
+
 function collectSent(
 	sent: Result<{ pduObj: PduObject }>[],
 	notation: SmsIdNotation | undefined,
 ): SendSmsResult {
 	const pduObjs: PduObject[] = [];
-	const smsIds: string[] = [];
+	const smsIds: (string | undefined)[] = [];
 	let failure: Error | undefined;
 	let unanswered = 0;
 
@@ -264,7 +272,7 @@ function collectSent(
 			failure ??= one.err;
 		} else if (one.pduObj.cmdStatus === 'ESME_ROK') {
 			pduObjs.push(one.pduObj);
-			smsIds.push(normaliseSmsId(paramText(one.pduObj.params.message_id), notation));
+			smsIds.push(acceptedId(one.pduObj, notation));
 		} else {
 			const refusal = one.pduObj.cmdStatus ?? String(one.pduObj.cmdStatusId);
 

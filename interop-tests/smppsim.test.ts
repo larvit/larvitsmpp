@@ -119,12 +119,16 @@ async function sendUntilAllDlrsArrive(
 
 		assert.equal(sent.err, undefined);
 
+		const ids = sent.smsIds.filter(id => id !== undefined);
+
+		assert.equal(ids.length, sent.smsIds.length, 'expected SMPPSim to name a message id for every segment');
+
 		const complete = await waitFor(
-			() => (sent.smsIds.every(id => dlrLooksIntact(dlrs.find(r => r.dlr.smsId === id))) ? true : undefined),
+			() => (ids.every(id => dlrLooksIntact(dlrs.find(r => r.dlr.smsId === id))) ? true : undefined),
 			DLR_RETRY_BUDGET_MS,
 		);
 
-		if (complete) return sent.smsIds;
+		if (complete) return ids;
 	}
 
 	throw new Error(`no attempt got an intact DLR for every segment within ${String(DLR_MAX_ATTEMPTS)} tries`);
@@ -149,14 +153,18 @@ async function sendUntilComplete(
 
 		assert.equal(sent.err, undefined);
 
+		const ids = sent.smsIds.filter(id => id !== undefined);
+
+		assert.equal(ids.length, sent.smsIds.length, 'expected SMPPSim to name a message id for every segment');
+
 		const complete = await waitFor(() => {
-			const allIntact = sent.smsIds.every(id => dlrLooksIntact(dlrs.find(r => r.dlr.smsId === id)));
+			const allIntact = ids.every(id => dlrLooksIntact(dlrs.find(r => r.dlr.smsId === id)));
 			const reassembled = sms.find(s => s.message === message);
 
 			return allIntact && reassembled ? { reassembled } : undefined;
 		}, DLR_RETRY_BUDGET_MS);
 
-		if (complete) return { reassembled: complete.reassembled, smsIds: sent.smsIds };
+		if (complete) return { reassembled: complete.reassembled, smsIds: ids };
 	}
 
 	throw new Error(`no attempt got both an intact DLR per segment and a loopback reassembly within ${String(DLR_MAX_ATTEMPTS)} tries`);

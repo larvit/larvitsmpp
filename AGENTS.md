@@ -944,6 +944,27 @@ Grouped by what each one constrains.
   only because nothing stops the reconnect loop without `emitClose()` following it: `drain()` and
   `end()` are the only callers of `stop()`. A third caller has to shut the gate itself.
 
+- **A segment the SMSC took and named no id for is `undefined` in `smsIds`, not an empty string.**
+  Maintainer's call, 2026-09-12: `paramText()` resolves an absent `message_id` and one a peer wrote
+  empty to the same `''`, which `string[]` then presented as an id — taking `smsIds[0]`, or keying a
+  correlation table by the array, compiled and then misbehaved, and one message's empty entry
+  collides with another's. Telesign names an id for the first segment of a concatenated submit only,
+  so it is a documented operator's shape rather than a hypothesis. Nothing else moves:
+  `parseSegmentId('')` matched nothing, so `DlrMerger` already abandoned such a send and `undefined`
+  reaches that same refusal, and `dlrFromPdu()` reads an id through `nonEmptyText()`, so no receipt
+  could ever have matched an empty entry. What settles it is the resolved text rather than the
+  parameter, because `writeParams()` substitutes the field's own default: a peer that omits
+  `message_id` and one that writes it empty build the same octets, leaving a raw-parameter test
+  nothing to tell apart. Rejected: keeping `''` and documenting it, which leaves the published type
+  promising what the value does not keep — goal 2, a wrong answer about what the peer named.
+  Rejected: dropping the unnamed entries, which breaks the positional correspondence with `pduObjs`
+  that README promises and loses which segment a PDU belongs to. Rejected:
+  `{ id?: string; pduObj: PduObject }[]`, which fixes the type and the positionality together and is
+  where a future major starts — it replaces two documented fields with one and rewrites every
+  consumer, too large days before the tag. Accepted: every consumer iterating `smsIds` narrows,
+  including the majority whose SMSC names every id; indexing one is unmoved, `noUncheckedIndexedAccess`
+  having typed `smsIds[0]` as `string | undefined` all along.
+
 ### Internals and tests
 
 - **A listener that rejects is routed by Node's `captureRejections`, not by hand-dispatching.** Both

@@ -2872,6 +2872,7 @@ describe('message id notation', () => {
 		assert.deepEqual(sent.smsIds, [1, 2].map(part => `${sms.smsId}-${String(part)}`));
 
 		for (const smsId of sent.smsIds) {
+			assert.ok(smsId);
 			await sendReceipt(peerOf(smpp), smsId);
 		}
 

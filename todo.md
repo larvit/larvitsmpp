@@ -113,13 +113,6 @@ session message is a change to every call site.
 
 - [ ] Create the `@larvit/smpp` package on npm and add `NPM_TOKEN` to the repository secrets, which
       `.github/workflows/release.yaml` needs.
-- [ ] Decide whether `smsIds` should be `(string | undefined)[]`. An SMSC that names an id for the
-      first segment of a concatenated message only — Telesign documents exactly that — leaves the
-      rest empty, so `string[]` promises what the value does not keep: taking the first id, or
-      building a map from the array, compiles and then misbehaves, and an empty string collides with
-      another message's in a correlation table. The cost is that every consumer narrows, including
-      the majority whose SMSC always names an id. Raised by the phase 11 product review, 2026-09-08.
-      **This one is 1.0.0-or-never** — after release it needs a major version.
 - [ ] Tag `v1.0.0` to publish.
 - [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.

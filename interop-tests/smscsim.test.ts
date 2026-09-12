@@ -38,13 +38,17 @@ async function sendAndAwaitDlrs(session: Session, dlrs: Dlr[], message: string):
 
 	assert.equal(sent.err, undefined);
 
+	const ids = sent.smsIds.filter(id => id !== undefined);
+
+	assert.equal(ids.length, sent.smsIds.length, 'expected smscsim to name a message id for every segment');
+
 	const complete = await waitFor(() => (
-		sent.smsIds.every(id => dlrs.some(dlr => dlr.smsId === id)) ? true : undefined
+		ids.every(id => dlrs.some(dlr => dlr.smsId === id)) ? true : undefined
 	));
 
 	assert.ok(complete, 'every segment of the first send should get a DLR');
 
-	return sent.smsIds;
+	return ids;
 }
 
 describe('smscsim - C1 bind, keepalive, unbind', () => {

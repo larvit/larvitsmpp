@@ -37,12 +37,12 @@ const severity: Record<MessageState, number> = {
 };
 
 /** The base and the part numbers one send's ids carry, or nothing when they do not spell out one message. */
-function idNumbering(smsIds: string[]): { base: string; parts: Set<number> } | undefined {
+function idNumbering(smsIds: (string | undefined)[]): { base: string; parts: Set<number> } | undefined {
 	const bases = new Set<string>();
 	const parts = new Set<number>();
 
 	for (const smsId of smsIds) {
-		const numbering = parseSegmentId(smsId);
+		const numbering = smsId === undefined ? undefined : parseSegmentId(smsId);
 
 		if (!numbering) return undefined;
 
@@ -93,7 +93,7 @@ export class DlrMerger {
 	}
 
 	/** Registers the ids one multipart send got back, so their receipts can be merged. */
-	expect(smsIds: string[]): void {
+	expect(smsIds: (string | undefined)[]): void {
 		if (smsIds.length < 2) return;
 
 		const numbering = idNumbering(smsIds);
