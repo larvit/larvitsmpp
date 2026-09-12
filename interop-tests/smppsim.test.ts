@@ -97,6 +97,15 @@ function dlrLooksIntact(received: Received | undefined): received is Received {
 		&& received.pduObj.tlvs.message_state?.tagValue !== undefined;
 }
 
+/** SMPPSim names an id for every segment, so an unnamed one is the finding, not the norm. */
+function namedIds(smsIds: (string | undefined)[]): string[] {
+	const ids = smsIds.filter(id => id !== undefined);
+
+	assert.equal(ids.length, smsIds.length, 'expected SMPPSim to name a message id for every segment');
+
+	return ids;
+}
+
 /**
  * Resends a fresh message until one attempt's segments are every one matched by an intact `dlr`.
  * Retrying works around the peer+library interaction above without hiding it: a scenario only
@@ -119,12 +128,14 @@ async function sendUntilAllDlrsArrive(
 
 		assert.equal(sent.err, undefined);
 
+		const ids = namedIds(sent.smsIds);
+
 		const complete = await waitFor(
-			() => (sent.smsIds.every(id => dlrLooksIntact(dlrs.find(r => r.dlr.smsId === id))) ? true : undefined),
+			() => (ids.every(id => dlrLooksIntact(dlrs.find(r => r.dlr.smsId === id))) ? true : undefined),
 			DLR_RETRY_BUDGET_MS,
 		);
 
-		if (complete) return sent.smsIds;
+		if (complete) return ids;
 	}
 
 	throw new Error(`no attempt got an intact DLR for every segment within ${String(DLR_MAX_ATTEMPTS)} tries`);
@@ -149,14 +160,16 @@ async function sendUntilComplete(
 
 		assert.equal(sent.err, undefined);
 
+		const ids = namedIds(sent.smsIds);
+
 		const complete = await waitFor(() => {
-			const allIntact = sent.smsIds.every(id => dlrLooksIntact(dlrs.find(r => r.dlr.smsId === id)));
+			const allIntact = ids.every(id => dlrLooksIntact(dlrs.find(r => r.dlr.smsId === id)));
 			const reassembled = sms.find(s => s.message === message);
 
 			return allIntact && reassembled ? { reassembled } : undefined;
 		}, DLR_RETRY_BUDGET_MS);
 
-		if (complete) return { reassembled: complete.reassembled, smsIds: sent.smsIds };
+		if (complete) return { reassembled: complete.reassembled, smsIds: ids };
 	}
 
 	throw new Error(`no attempt got both an intact DLR per segment and a loopback reassembly within ${String(DLR_MAX_ATTEMPTS)} tries`);

@@ -944,6 +944,31 @@ Grouped by what each one constrains.
   only because nothing stops the reconnect loop without `emitClose()` following it: `drain()` and
   `end()` are the only callers of `stop()`. A third caller has to shut the gate itself.
 
+- **A segment the SMSC took and named no id for is `undefined` in `smsIds`, not an empty string.**
+  Maintainer's call, 2026-09-12: `paramText()` resolves an absent `message_id` and one a peer wrote
+  empty to the same `''`, which `string[]` then presented as an id — taking `smsIds[0]`, or keying a
+  correlation table by the array, compiled and then misbehaved, and one message's empty entry
+  collides with another's. Telesign names an id for the first segment of a concatenated submit only,
+  so it is a documented operator's shape rather than a hypothesis. Nothing else moves:
+  `parseSegmentId('')` matched nothing, so `DlrMerger` already abandoned such a send and `undefined`
+  reaches that same refusal. `expect()` takes the wider type rather than a filtered `string[]`
+  because the arity is what `idNumbering()` refuses on: filtering `['a-1', undefined, 'a-3']` leaves
+  a numbering that spells out a whole message, and merges one that was never whole. `dlrFromPdu()`
+  reads an id through `nonEmptyText()`, so no receipt could ever have matched an empty entry — and
+  that reading stays separate from this one rather than sharing a helper, since it must leave a
+  Buffer-valued `receipted_message_id` unresolved for `messageType()` to read the PDU as unmarked.
+  What settles it here is the resolved text rather than the parameter, because `writeParams()`
+  substitutes the field's own default: a peer that omits `message_id` and one that writes it empty
+  build the same octets, leaving a raw-parameter test nothing to tell apart. Rejected: keeping `''`
+  and documenting it, which leaves the published type promising what the value does not keep —
+  goal 2, a wrong answer about what the peer named. Rejected: dropping the unnamed entries, which
+  breaks the positional correspondence with `pduObjs` that README promises and loses which segment a
+  PDU belongs to. Rejected: `{ id?: string; pduObj: PduObject }[]`, which makes that positional
+  promise structural where today the compiler cannot check it; deferred to the next major, the first
+  place two documented fields may become one. Accepted: every consumer reading `smsIds` narrows,
+  including the majority whose SMSC names every id; indexing narrows too, except for the consumer
+  who sets `noUncheckedIndexedAccess`, which typed `smsIds[0]` as `string | undefined` already.
+
 ### Internals and tests
 
 - **A listener that rejects is routed by Node's `captureRejections`, not by hand-dispatching.** Both

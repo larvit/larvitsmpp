@@ -163,19 +163,19 @@ in `UCS2`. You get one id per segment:
 const { err, pduObjs, smsIds, unanswered } = await session.sendSms({ from, message, to });
 ```
 
-`smsIds` is positional with `pduObjs`, and an entry is empty where the SMSC accepted the segment
-without naming an id for it — some name one for the first segment only. No receipt ever matches an
-empty entry.
+`smsIds` is positional with `pduObjs`, and an entry is `undefined` where the SMSC accepted the
+segment without naming an id for it — some name one for the first segment only. No receipt ever
+carries an empty id, so an unnamed entry matches nothing.
 
 `err` is set when the SMSC refuses a segment, and it names the status it refused with. Because every
 segment goes on the wire together, `pduObjs` and `smsIds` then hold what the SMSC did accept — enough
 to reconcile against a later receipt, not enough to resend the rest, so treat a partial failure as a
 failed message. `unanswered` counts the segments that went out and were never answered: the SMSC may
 have taken each of them and lost only the response, so a message with `unanswered` above zero cannot
-be sent again without risking a duplicate, however empty `smsIds` is. A message needing more than 255
-segments is refused before anything is sent, since the concatenation header numbers segments in a
-single octet. `maxSegments` lowers that ceiling:
-most handsets and SMSCs stop well short of 255, and refusing beats a message only half delivered.
+be sent again without risking a duplicate, however few ids `smsIds` carries. A message needing more
+than 255 segments is refused before anything is sent, since the concatenation header numbers
+segments in a single octet. `maxSegments` lowers that ceiling: most handsets and SMSCs stop well
+short of 255, and refusing beats a message only half delivered.
 
 ### Receiving
 
@@ -624,6 +624,10 @@ promises and the rough edges taken off.
   it reports the id the segments were answered with, the id `sendResp()` was given, or the UUID v7
   generated instead. Delete any `sms.smsId = …` line — assigning to it
   throws a `TypeError`, since modules are always strict mode — and pass the id to `sendResp()`.
+- **`smsIds` from `sendSms()` is `(string | undefined)[]`**, one entry per segment and positional
+  with `pduObjs`, `undefined` where the SMSC took the segment without naming an id for it. Reading
+  an id narrows, indexing included: `smsIds[0]` is `string | undefined`, as it already was under
+  `noUncheckedIndexedAccess`.
 - **`checkuserpass` is now `authenticate`**, takes `{ password, session, systemId, systemType }` and
   returns `false` or `{ userData }`.
 - **Renamed options:** `enqLinkTiming` → `enquireLinkInterval`, server `timeout` → `idleTimeout`.

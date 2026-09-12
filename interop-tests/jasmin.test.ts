@@ -476,6 +476,7 @@ describe('C3+C7 - long MT through the fake upstream, receipts and id consistency
 			assert.equal(sent.smsIds.length, testCase.expectedSegments);
 
 			for (const id of sent.smsIds) {
+				assert.ok(id, 'expected Jasmin to name a message id for every segment');
 				assert.match(id, uuidPattern, 'expected a UUID-shaped message id from Jasmin\'s submit_sm_resp');
 
 				// The full round trip - submit_sm to Jasmin's smpps, mtrouter, AMQP, the connector bind,

@@ -177,9 +177,9 @@ the fixtures pin that a reader would not otherwise expect:
   application wanting one report per message compares each `dlr.smsId` against the `smsIds` array
   `sendSms()` returned and merges them itself.
 - **Telesign answers only the first segment of a concatenated submit with a `message_id`.**
-  `sendSms()` returns `['<id>', '', '']` — one entry per segment, positional with `pduObjs`, empty
-  where the SMSC named nothing. `dlr.smsId` is never empty, so an empty entry matches no receipt,
-  and no merge is armed.
+  `sendSms()` returns `['<id>', undefined, undefined]` — one entry per segment, positional with
+  `pduObjs`, `undefined` where the SMSC named nothing; it returned `''` there until #101.
+  `dlr.smsId` is never empty, so an unnamed entry matches no receipt, and no merge is armed.
 
 ## Open questions
 
@@ -203,6 +203,5 @@ the fixtures pin that a reader would not otherwise expect:
   `FAILED` and CM.com's `DELIVERD`. The documented-codes table in `operator-receipts.test.ts` is
   the place a new one goes, and it fails loudly for anything nothing names.
 - Whether `smsIds` carrying an empty entry for a segment the SMSC took but named no id for is the
-  right shape for a caller, or whether that case wants saying differently. It is documented in
-  `README.md` and pinned by the Telesign scenario; the question is a product one, not a correctness
-  one, and belongs to the phase 11 product-owner pass.
+  right shape for a caller. Settled in #101: the entry is `undefined`, and the decision with its
+  rejected alternatives is recorded in `AGENTS.md`.
