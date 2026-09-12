@@ -2498,11 +2498,18 @@ describe('merged delivery report bounds', () => {
 	test('arms nothing for a send whose ids do not number one message', () => {
 		const dlrMerger = merger();
 
-		dlrMerger.expect(['5cb0ea53b5d61093529174ca44e23871', '', '']);
+		dlrMerger.expect(['5cb0ea53b5d61093529174ca44e23871', undefined, undefined]);
 		assert.equal(dlrMerger.size, 0, 'an id the peer never named numbers nothing');
 
 		dlrMerger.expect(['bf53ad8b-1', '40ccdce2-2']);
 		assert.equal(dlrMerger.size, 0, 'nor do ids numbered off a base each');
+
+		const holed = '01a09739-0a9a-767d-ad1d-1c27667e1ca4';
+
+		// Dropping the unnamed entry rather than passing it through leaves 1 and 3 spelling out a
+		// whole 2-part message, and a send of 3 reports as delivered on two receipts.
+		dlrMerger.expect([`${holed}-1`, undefined, `${holed}-3`]);
+		assert.equal(dlrMerger.size, 0, 'nor does a hole between two parts of one base');
 	});
 
 	// A receipt for whole-3 would otherwise fill the slot whole-2 was registered for, truncating the report.

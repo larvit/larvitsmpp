@@ -965,9 +965,9 @@ Grouped by what each one constrains.
   breaks the positional correspondence with `pduObjs` that README promises and loses which segment a
   PDU belongs to. Rejected: `{ id?: string; pduObj: PduObject }[]`, which makes that positional
   promise structural where today the compiler cannot check it; deferred to the next major, the first
-  place two documented fields may become one. Accepted: every consumer iterating `smsIds` narrows,
-  including the majority whose SMSC names every id; indexing one is unmoved,
-  `noUncheckedIndexedAccess` having typed `smsIds[0]` as `string | undefined` all along.
+  place two documented fields may become one. Accepted: every consumer reading `smsIds` narrows,
+  including the majority whose SMSC names every id; indexing narrows too, except for the consumer
+  who sets `noUncheckedIndexedAccess`, which typed `smsIds[0]` as `string | undefined` already.
 
 ### Internals and tests
 

@@ -625,8 +625,9 @@ promises and the rough edges taken off.
   generated instead. Delete any `sms.smsId = …` line — assigning to it
   throws a `TypeError`, since modules are always strict mode — and pass the id to `sendResp()`.
 - **`smsIds` from `sendSms()` is `(string | undefined)[]`**, one entry per segment and positional
-  with `pduObjs`, `undefined` where the SMSC took the segment without naming an id for it. Code that
-  reads the ids narrows; under `noUncheckedIndexedAccess` indexing one already did.
+  with `pduObjs`, `undefined` where the SMSC took the segment without naming an id for it. Reading
+  an id narrows, indexing included: `smsIds[0]` is `string | undefined`, as it already was under
+  `noUncheckedIndexedAccess`.
 - **`checkuserpass` is now `authenticate`**, takes `{ password, session, systemId, systemType }` and
   returns `false` or `{ userData }`.
 - **Renamed options:** `enqLinkTiming` → `enquireLinkInterval`, server `timeout` → `idleTimeout`.
