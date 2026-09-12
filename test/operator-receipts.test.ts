@@ -493,8 +493,7 @@ describe('an SMSC that reports each segment under an id of its own', () => {
 		assert.equal(sent.smsIds.length, sent.pduObjs.length, 'an entry per accepted segment, positional with pduObjs');
 	});
 
-	// A peer that writes message_id empty and one that leaves the field out build the same octets,
-	// so what settles it is the text the id resolves to rather than the parameter being there.
+	// A peer that writes message_id empty and one that omits it build the same octets.
 	test('reads an empty message_id as no id, on a single-segment send as much as a split one', async t => {
 		const smsc = await dummySmsc(t, { messageIds: [] });
 		const session = await bindToSmsc(t, smsc.port);

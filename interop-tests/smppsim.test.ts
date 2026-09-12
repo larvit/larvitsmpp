@@ -97,6 +97,15 @@ function dlrLooksIntact(received: Received | undefined): received is Received {
 		&& received.pduObj.tlvs.message_state?.tagValue !== undefined;
 }
 
+/** SMPPSim names an id for every segment, so an unnamed one is the finding, not the norm. */
+function namedIds(smsIds: (string | undefined)[]): string[] {
+	const ids = smsIds.filter(id => id !== undefined);
+
+	assert.equal(ids.length, smsIds.length, 'expected SMPPSim to name a message id for every segment');
+
+	return ids;
+}
+
 /**
  * Resends a fresh message until one attempt's segments are every one matched by an intact `dlr`.
  * Retrying works around the peer+library interaction above without hiding it: a scenario only
@@ -119,9 +128,7 @@ async function sendUntilAllDlrsArrive(
 
 		assert.equal(sent.err, undefined);
 
-		const ids = sent.smsIds.filter(id => id !== undefined);
-
-		assert.equal(ids.length, sent.smsIds.length, 'expected SMPPSim to name a message id for every segment');
+		const ids = namedIds(sent.smsIds);
 
 		const complete = await waitFor(
 			() => (ids.every(id => dlrLooksIntact(dlrs.find(r => r.dlr.smsId === id))) ? true : undefined),
@@ -153,9 +160,7 @@ async function sendUntilComplete(
 
 		assert.equal(sent.err, undefined);
 
-		const ids = sent.smsIds.filter(id => id !== undefined);
-
-		assert.equal(ids.length, sent.smsIds.length, 'expected SMPPSim to name a message id for every segment');
+		const ids = namedIds(sent.smsIds);
 
 		const complete = await waitFor(() => {
 			const allIntact = ids.every(id => dlrLooksIntact(dlrs.find(r => r.dlr.smsId === id)));

@@ -172,10 +172,10 @@ segment goes on the wire together, `pduObjs` and `smsIds` then hold what the SMS
 to reconcile against a later receipt, not enough to resend the rest, so treat a partial failure as a
 failed message. `unanswered` counts the segments that went out and were never answered: the SMSC may
 have taken each of them and lost only the response, so a message with `unanswered` above zero cannot
-be sent again without risking a duplicate, however few ids `smsIds` carries. A message needing more than 255
-segments is refused before anything is sent, since the concatenation header numbers segments in a
-single octet. `maxSegments` lowers that ceiling:
-most handsets and SMSCs stop well short of 255, and refusing beats a message only half delivered.
+be sent again without risking a duplicate, however few ids `smsIds` carries. A message needing more
+than 255 segments is refused before anything is sent, since the concatenation header numbers
+segments in a single octet. `maxSegments` lowers that ceiling: most handsets and SMSCs stop well
+short of 255, and refusing beats a message only half delivered.
 
 ### Receiving
 
