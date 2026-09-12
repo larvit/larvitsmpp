@@ -1,0 +1,50 @@
+x-log-limits: &log-limits
+  logging:
+    driver: json-file
+    options:
+      max-file: "3"
+      max-size: 20m
+
+volumes:
+  # The build-time self-signed cert cloudhopper's image trusts (S10) - copied out at container
+  # start so node's test file can load the same key/cert into server({ tls }). Never committed.
+  cloudhopper-tls:
+
+services:
+  cloudhopper:
+    build: ./interop-tests/peers/cloudhopper
+    image: interop-cloudhopper:5.0.10-ae6485a
+    command: ["node", "2775"]
+    <<: *log-limits
+    volumes:
+      - cloudhopper-tls:/shared-certs
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      interval: 1s
+      retries: 30
+      timeout: 2s
+
+  # cloudhopper only ever dials node on this container's own network namespace, so this sees exactly
+  # its side of every scenario below (same pattern as compose.kannel.yaml). Both the plain (2775) and
+  # TLS (2776) listeners node opens are on this one veth.
+  capture:
+    image: nicolaka/netshoot:v0.16
+    network_mode: "service:cloudhopper"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      cloudhopper:
+        condition: service_started
+    command: ["dumpcap", "-i", "any", "-f", "tcp port 2775 or tcp port 2776", "-w", "/captures/cloudhopper.pcapng"]
+    volumes:
+      - ./interop-tests/captures:/captures
+
+  node:
+    volumes:
+      - cloudhopper-tls:/shared-certs
+    depends_on:
+      capture:
+        condition: service_started
+      cloudhopper:
+        condition: service_healthy

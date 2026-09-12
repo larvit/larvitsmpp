@@ -1,0 +1,205 @@
+import assert from 'node:assert/strict';
+import test, { describe } from 'node:test';
+import { dataCodingByEncoding, detect, encodingByDataCoding, encodings, isEncodingName, unencodable } from '../src/defs/encodings.ts';
+
+describe('ASCII (GSM 03.38)', () => {
+	const samples: [string, number[]][] = [
+		['@£$¥', [0, 1, 2, 3]],
+		[' 1a=', [0x20, 0x31, 0x61, 0x3D]],
+		['~^€', [0x1B, 0x3D, 0x1B, 0x14, 0x1B, 0x65]],
+	];
+
+	test('matches strings encodable in the GSM 03.38 charset', () => {
+		assert.ok(encodings.ASCII.match(''));
+		assert.ok(encodings.ASCII.match('@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1BÆæßÉ !"#¤%&\''));
+		assert.ok(encodings.ASCII.match('()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZ'));
+		assert.ok(encodings.ASCII.match('ÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà'));
+		assert.ok(encodings.ASCII.match('\f^{}\\[~]|€'));
+	});
+
+	test('rejects strings outside the GSM 03.38 charset', () => {
+		assert.ok(!encodings.ASCII.match('`'));
+		assert.ok(!encodings.ASCII.match('ÁáçÚUÓO'));
+		assert.ok(!encodings.ASCII.match('تست'));
+	});
+
+	test('round-trips the sample strings', () => {
+		for (const [str, bytes] of samples) {
+			assert.deepEqual(encodings.ASCII.encode(str), Buffer.from(bytes));
+			assert.equal(encodings.ASCII.decode(Buffer.from(bytes)), str);
+		}
+	});
+});
+
+describe('LATIN1', () => {
+	const samples: [string, number[]][] = [
+		['@$`Á', [0x40, 0x24, 0x60, 0xC1]],
+		['áçÚ', [0xE1, 0xE7, 0xDA]],
+		['UÓO', [0x55, 0xD3, 0x4F]],
+	];
+
+	test('never matches, so it is never auto-selected for new messages', () => {
+		assert.ok(!encodings.LATIN1.match('`ÁáçÚUÓO'));
+		assert.ok(!encodings.LATIN1.match('تست'));
+		assert.ok(!encodings.LATIN1.match('۱۲۳۴۵۶۷۸۹۰'));
+	});
+
+	test('round-trips the sample strings', () => {
+		for (const [str, bytes] of samples) {
+			assert.deepEqual(encodings.LATIN1.encode(str), Buffer.from(bytes));
+			assert.equal(encodings.LATIN1.decode(Buffer.from(bytes)), str);
+		}
+	});
+
+	test('carries every octet through unchanged, which is what makes it the binary codec', () => {
+		const every = Buffer.from(Array.from({ length: 256 }, (_, byte) => byte));
+
+		assert.deepEqual(encodings.LATIN1.encode(encodings.LATIN1.decode(every)), every);
+	});
+});
+
+describe('UCS2', () => {
+	const samples: [string, number[]][] = [
+		[' 1a', [0x00, 0x20, 0x00, 0x31, 0x00, 0x61]],
+		['۱۲۳', [0x06, 0xF1, 0x06, 0xF2, 0x06, 0xF3]],
+	];
+
+	test('always matches', () => {
+		assert.ok(encodings.UCS2.match(''));
+		assert.ok(encodings.UCS2.match('`ÁáçÚUÓO'));
+		assert.ok(encodings.UCS2.match('تست'));
+	});
+
+	test('round-trips the sample strings', () => {
+		for (const [str, bytes] of samples) {
+			assert.deepEqual(encodings.UCS2.encode(str), Buffer.from(bytes));
+			assert.equal(encodings.UCS2.decode(Buffer.from(bytes)), str);
+		}
+	});
+
+	test('decoding does not mutate the caller\'s buffer', () => {
+		const buffer = Buffer.from([0x00, 0x20]);
+
+		encodings.UCS2.decode(buffer);
+
+		assert.deepEqual(buffer, Buffer.from([0x00, 0x20]));
+	});
+
+	// swap16() throws ERR_INVALID_BUFFER_SIZE on an odd octet count, and sm_length is peer-controlled.
+	test('drops an incomplete trailing octet instead of throwing', () => {
+		const odd = Buffer.from([0x00, 0x41, 0x00, 0x42, 0x00]);
+
+		assert.equal(encodings.UCS2.decode(odd), 'AB');
+		assert.equal(encodings.UCS2.decode(Buffer.from([0x41])), '');
+		assert.deepEqual(odd, Buffer.from([0x00, 0x41, 0x00, 0x42, 0x00]));
+	});
+});
+
+describe('detect()', () => {
+	test('picks the narrowest encoding that fits the string', () => {
+		assert.equal(detect(''), 'ASCII');
+		assert.equal(detect('ÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà(){}[]'), 'ASCII');
+		assert.equal(detect('`ÁáçÚUÓO'), 'UCS2');
+		assert.equal(detect('«©®µ¶±»'), 'UCS2');
+		assert.equal(detect('ʹʺʻʼʽ`'), 'UCS2');
+		assert.equal(detect('تست'), 'UCS2');
+		assert.equal(detect('۱۲۳۴۵۶۷۸۹۰'), 'UCS2');
+	});
+
+	// Exhaustive: sendSms() leaves the automatic path unchecked on this and nothing else.
+	test('never picks an alphabet that loses a character, for any code point there is', () => {
+		for (let code = 0; code <= 0x10FFFF; code++) {
+			if (code >= 0xD800 && code <= 0xDFFF) continue;
+
+			const char = String.fromCodePoint(code);
+			const lost = unencodable(char, detect(char));
+
+			if (lost) assert.fail(`detect() picked ${detect(char)} for U+${code.toString(16)}, which loses it`);
+		}
+	});
+});
+
+describe('unencodable()', () => {
+	test('names the first character an alphabet cannot carry, and nothing where it carries them all', () => {
+		assert.deepEqual(unencodable('あいう', 'LATIN1'), { char: 'あ', index: 0 });
+		assert.deepEqual(unencodable('Åsa naïve', 'ASCII'), { char: 'ï', index: 6 });
+		assert.equal(unencodable('€{}[]\\~^|\f', 'ASCII'), undefined);
+		assert.equal(unencodable('Åsa', 'ASCII'), undefined);
+		assert.equal(unencodable('`ÁáçÚ', 'LATIN1'), undefined);
+		assert.equal(unencodable('あいう😀', 'UCS2'), undefined);
+	});
+
+	test('counts the index in the units the message is written in, so a surrogate pair reads back whole', () => {
+		assert.deepEqual(unencodable('ab😀', 'LATIN1'), { char: '😀', index: 2 });
+		assert.deepEqual(unencodable('a😀b', 'ASCII'), { char: '😀', index: 1 });
+	});
+
+	test('carries every octet through Latin-1, which is what an 8-bit binary body is sent as', () => {
+		const every = Buffer.from(Array.from({ length: 256 }, (_, byte) => byte));
+
+		assert.equal(unencodable(every.toString('latin1'), 'LATIN1'), undefined);
+		assert.deepEqual(unencodable('Ā', 'LATIN1'), { char: 'Ā', index: 0 });
+	});
+
+	test('is not match(), which says what detect() may pick rather than what the alphabet holds', () => {
+		assert.equal(encodings.LATIN1.match('Hello world'), false);
+		assert.equal(unencodable('Hello world', 'LATIN1'), undefined);
+	});
+
+	test('reads a character at a time, so a bare GSM escape beside its base reads as carried', () => {
+		assert.equal(unencodable('\x1Be', 'ASCII'), undefined);
+		assert.deepEqual(encodings.ASCII.encode('\x1Be'), encodings.ASCII.encode('€'));
+	});
+});
+
+describe('encodingByDataCoding()', () => {
+	test('resolves the flat SMPP data_coding table', () => {
+		assert.equal(encodingByDataCoding(0x00), 'ASCII');
+		assert.equal(encodingByDataCoding(0x01), 'ASCII');
+		assert.equal(encodingByDataCoding(0x08), 'UCS2');
+	});
+
+	// 0.4.0 resolved 0x03 to the alias ISO_8859_1, which has no decoder, and silently fell back to
+	// ASCII — every Latin-1 message came out corrupted.
+	test('resolves 0x03 to LATIN1 rather than falling back to ASCII', () => {
+		assert.equal(encodingByDataCoding(0x03), 'LATIN1');
+	});
+
+	test('reads the alphabet bits when a message class is present', () => {
+		assert.equal(encodingByDataCoding(0x10), 'ASCII');
+		assert.equal(encodingByDataCoding(0x11), 'ASCII');
+		assert.equal(encodingByDataCoding(0x18), 'UCS2');
+		assert.equal(encodingByDataCoding(0x1A), 'UCS2');
+		assert.equal(encodingByDataCoding(0xF0), 'ASCII');
+		assert.equal(encodingByDataCoding(0xF1), 'ASCII');
+	});
+
+	// The compressed and automatic-deletion groups put the alphabet where the plain one does.
+	test('reads them in the compressed and automatic-deletion groups too', () => {
+		assert.equal(encodingByDataCoding(0x30), 'ASCII');
+		assert.equal(encodingByDataCoding(0x38), 'UCS2');
+		assert.equal(encodingByDataCoding(0x54), 'LATIN1');
+		assert.equal(encodingByDataCoding(0x58), 'UCS2');
+	});
+
+	test('resolves the 8-bit binary codings to the codec that keeps every octet', () => {
+		for (const dataCoding of [0x02, 0x04, 0x14, 0xF4, 0xF7]) {
+			assert.equal(encodingByDataCoding(dataCoding), 'LATIN1');
+		}
+	});
+
+	test('reads every coding dataCodingByEncoding writes back as the alphabet that wrote it', () => {
+		for (const name of Object.keys(dataCodingByEncoding)) {
+			if (!isEncodingName(name)) return assert.fail(`${name} names no alphabet`);
+
+			assert.equal(encodingByDataCoding(dataCodingByEncoding[name]), name);
+		}
+	});
+
+	test('falls back to ASCII for alphabets it has no codec for', () => {
+		assert.equal(encodingByDataCoding(0x05), 'ASCII');
+		assert.equal(encodingByDataCoding(0x0E), 'ASCII');
+		// No class, so nothing says the octet is spelled 03.38 rather than SMPP's own flat table.
+		assert.equal(encodingByDataCoding(0x48), 'ASCII');
+	});
+});

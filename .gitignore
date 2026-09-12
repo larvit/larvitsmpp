@@ -1,3 +1,5 @@
 .claude
 dist
+dist-test
+interop-tests/captures
 node_modules

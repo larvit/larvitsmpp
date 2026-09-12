@@ -1,0 +1,37 @@
+log:
+  level: info
+  rate: yes
+  netbuf: false
+
+profiler:
+  enabled: no
+
+smpp:
+  remote: NODE_HOST:2775
+  bind:
+    systemID: dumb-idle
+    systemType: ""
+    password: dumbpw
+    mode: TRX
+
+generator:
+  enabled: yes
+  message:
+    from:
+      ton: 1
+      npi: 1
+      addr: "15550005678"
+    to:
+      ton: 1
+      npi: 1
+      addr: "15550001234"
+      template: no
+    registeredDelivery: 0
+    dataCoding: 1
+    body: "load phase 7 - S6 idle probe"
+  count: 1
+  rate: 1
+  window: 10
+  # Sends its one message, gets the response, then goes silent - run through the no-ping binary
+  # (see the Dockerfile), so nothing at all crosses the wire after that: no enquire_link, no traffic.
+  stayConnected: yes

@@ -1,3 +1,9 @@
+/** The version declared on the wire. The tables below cover 5.0, which is a superset of it. */
+export const defaultInterfaceVersion = 0x34;
+
+/** Spec rule, not a preference: a peer declaring less than 3.4 is sent no optional parameters. */
+export const optionalParamsMinVersion = 0x34;
+
 export const consts = {
 	BROADCAST_AREA_FORMAT: {
 		ALIAS: 0x00,
@@ -16,7 +22,6 @@ export const consts = {
 		YEARS: 0x0E,
 	},
 	ENCODING: {
-		ASCII: 0x01,
 		BINARY: 0x04,
 		CYRILLIC: 0x06,
 		EXTENDED_KANJI_JIS: 0x0D,
@@ -37,13 +42,10 @@ export const consts = {
 	},
 	ESM_CLASS: {
 		CONVERSATION_ABORT: 0x18,
-		DATAGRAM: 0x01,
 		DELIVERY_ACKNOWLEDGEMENT: 0x08,
-		FORWARD: 0x02,
 		INTERMEDIATE_DELIVERY: 0x20,
 		MC_DELIVERY_RECEIPT: 0x04,
 		SET_REPLY_PATH: 0x80,
-		STORE_FORWARD: 0x03,
 		UDH_INDICATOR: 0x40,
 		USER_ACKNOWLEDGEMENT: 0x10,
 	},
@@ -58,6 +60,13 @@ export const consts = {
 		SKIPPED: 9,
 		UNDELIVERABLE: 5,
 		UNKNOWN: 7,
+	},
+	/** SMPP 3.4 5.2.12 bits 1-0 of esm_class, the field the rest of that octet is OR-ed into. */
+	MESSAGING_MODE: {
+		DATAGRAM: 0x01,
+		FORWARD: 0x02,
+		SMSC_DEFAULT: 0x00,
+		STORE_FORWARD: 0x03,
 	},
 	NETWORK: {
 		CDMA: 0x03,
@@ -97,8 +106,36 @@ export const consts = {
 	},
 } as const;
 
+export function hasUdh(esmClass: number): boolean {
+	return (esmClass & consts.ESM_CLASS.UDH_INDICATOR) === consts.ESM_CLASS.UDH_INDICATOR;
+}
+
+/** Bits 5-2 of esm_class; the rest carry the messaging mode and the GSM features. */
+export function messageTypeOf(esmClass: number): number {
+	return esmClass & 0x3c;
+}
+
 export type ConstGroup = keyof typeof consts;
 export type MessageState = keyof typeof consts.MESSAGE_STATE;
+export type MessagingMode = keyof typeof consts.MESSAGING_MODE;
+
+/** SMPP 3.4 2.10.3 carries transaction mode on `data_sm` alone, so a `submit_sm` never asks for it. */
+const transactionMode = 'FORWARD' satisfies MessagingMode;
+
+export const defaultMessagingMode = 'SMSC_DEFAULT' satisfies MessagingMode;
+
+export type SubmitMessagingMode = Exclude<MessagingMode, typeof transactionMode>;
+
+export const submitMessagingModes: readonly string[] = Object.keys(consts.MESSAGING_MODE)
+	.filter(mode => mode !== transactionMode);
+
+export function isMessagingMode(value: unknown): value is MessagingMode {
+	return typeof value === 'string' && Object.hasOwn(consts.MESSAGING_MODE, value);
+}
+
+export function isSubmitMessagingMode(value: unknown): value is SubmitMessagingMode {
+	return isMessagingMode(value) && value !== transactionMode;
+}
 
 // Aliased values (NPI.IP === NPI.INTERNET === 0x0E) resolve to whichever name sorts last.
 export const constsById: Record<string, Record<number, string>> = {};

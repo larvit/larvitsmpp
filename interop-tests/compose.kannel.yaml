@@ -1,0 +1,102 @@
+x-kannel-image: &kannel-image
+  build: ./interop-tests/peers/kannel
+  image: interop-kannel:1.4.5-12
+
+x-bearerbox-healthcheck: &bearerbox-healthcheck
+  test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/13000'"]
+  interval: 1s
+  retries: 30
+  timeout: 2s
+
+x-smsbox-healthcheck: &smsbox-healthcheck
+  test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/13013'"]
+  interval: 1s
+  retries: 30
+  timeout: 2s
+
+services:
+  # Main variant: interface-version 34, transceiver, max-pending-submits 10, wait-ack 5 - the S1/S6/S11
+  # scenarios and the only variant the capture sidecar watches.
+  kannel-bearerbox:
+    <<: *kannel-image
+    command: ["bearerbox", "/etc/kannel/main.conf"]
+    healthcheck: *bearerbox-healthcheck
+
+  kannel-smsbox:
+    <<: *kannel-image
+    command: ["smsbox", "/etc/kannel/main.conf"]
+    depends_on:
+      kannel-bearerbox:
+        condition: service_healthy
+    healthcheck: *smsbox-healthcheck
+
+  # interface-version "33": receipts to this bind must carry no TLVs and still correlate (target 8).
+  kannel-iv33-bearerbox:
+    <<: *kannel-image
+    command: ["bearerbox", "/etc/kannel/iv33.conf"]
+    healthcheck: *bearerbox-healthcheck
+
+  kannel-iv33-smsbox:
+    <<: *kannel-image
+    command: ["smsbox", "/etc/kannel/iv33.conf"]
+    depends_on:
+      kannel-iv33-bearerbox:
+        condition: service_healthy
+    healthcheck: *smsbox-healthcheck
+
+  # max-pending-submits 1: a burst of sendsms calls must still all arrive, in order, all answered.
+  kannel-maxp1-bearerbox:
+    <<: *kannel-image
+    command: ["bearerbox", "/etc/kannel/maxpending1.conf"]
+    healthcheck: *bearerbox-healthcheck
+
+  kannel-maxp1-smsbox:
+    <<: *kannel-image
+    command: ["smsbox", "/etc/kannel/maxpending1.conf"]
+    depends_on:
+      kannel-maxp1-bearerbox:
+        condition: service_healthy
+    healthcheck: *smsbox-healthcheck
+
+  # transceiver-mode false: separate TX and RX binds; receipts/MO must go out the RX bind only.
+  kannel-notrx-bearerbox:
+    <<: *kannel-image
+    command: ["bearerbox", "/etc/kannel/notransceiver.conf"]
+    healthcheck: *bearerbox-healthcheck
+
+  kannel-notrx-smsbox:
+    <<: *kannel-image
+    command: ["smsbox", "/etc/kannel/notransceiver.conf"]
+    depends_on:
+      kannel-notrx-bearerbox:
+        condition: service_healthy
+    healthcheck: *smsbox-healthcheck
+
+  # Only the main variant's bearerbox is captured: every Kannel variant dials out to the same
+  # node:2775, but a container's own network namespace only sees the traffic that crosses its own
+  # veth, so this sees exactly the main variant's PDUs.
+  capture:
+    image: nicolaka/netshoot:v0.16
+    network_mode: "service:kannel-bearerbox"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      kannel-bearerbox:
+        condition: service_healthy
+    command: ["dumpcap", "-i", "any", "-f", "tcp port 2775", "-w", "/captures/kannel.pcapng"]
+    volumes:
+      - ./interop-tests/captures:/captures
+
+  node:
+    depends_on:
+      capture:
+        condition: service_started
+      kannel-smsbox:
+        condition: service_healthy
+      kannel-iv33-smsbox:
+        condition: service_healthy
+      kannel-maxp1-smsbox:
+        condition: service_healthy
+      kannel-notrx-smsbox:
+        condition: service_healthy

@@ -1,0 +1,40 @@
+x-log-limits: &log-limits
+  logging:
+    driver: json-file
+    options:
+      max-file: "3"
+      max-size: 20m
+
+services:
+  python:
+    build: ./interop-tests/peers/python
+    image: interop-python:2.2.4-3.12.14
+    command: ["node", "2775"]
+    <<: *log-limits
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      interval: 1s
+      retries: 30
+      timeout: 2s
+
+  # python only ever dials node:2775 on this container's own network namespace, so this sees exactly
+  # its side of every scenario below (same pattern as compose.jsmpp.yaml).
+  capture:
+    image: nicolaka/netshoot:v0.16
+    network_mode: "service:python"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      python:
+        condition: service_started
+    command: ["dumpcap", "-i", "any", "-f", "tcp port 2775", "-w", "/captures/python.pcapng"]
+    volumes:
+      - ./interop-tests/captures:/captures
+
+  node:
+    depends_on:
+      capture:
+        condition: service_started
+      python:
+        condition: service_healthy

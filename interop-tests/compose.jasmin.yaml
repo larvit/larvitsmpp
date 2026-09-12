@@ -1,0 +1,139 @@
+x-log-limits: &log-limits
+  logging:
+    driver: json-file
+    options:
+      max-file: "3"
+      max-size: 20m
+
+# Bare TCP connect, no bytes written - Kannel's own healthcheck pattern (interop-tests/compose.kannel.yaml).
+# Jasmin's SMPP codec, like SMPPSim's, stack-traces on a probe that writes anything to 2775, so this
+# probes the HTTP API port instead, which answers (or ignores) a bare connect harmlessly.
+x-jasmin-healthcheck: &jasmin-healthcheck
+  test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/1401'"]
+  interval: 1s
+  retries: 60
+  timeout: 2s
+
+x-rabbit-healthcheck: &rabbit-healthcheck
+  test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+  interval: 2s
+  retries: 60
+  timeout: 5s
+
+x-jasmin-bootstrap-image: &jasmin-bootstrap-image
+  image: python:3.13.7-slim-bookworm
+  <<: *log-limits
+  volumes:
+    - ./interop-tests/peers/jasmin:/bootstrap:ro
+  command: ["python3", "-u", "/bootstrap/bootstrap.py"]
+
+services:
+  jasmin-redis:
+    image: redis:8.8.2-alpine
+    <<: *log-limits
+
+  jasmin-rabbit:
+    # 0.11.0's txamqp client declares transient/non-exclusive queues, a feature RabbitMQ 4.x
+    # refuses by default ("transient_nonexcl_queues... not permitted anymore"), so jasmind's
+    # RouterPB/DLRThrower services fail to start against rabbitmq:4.3.5. Falling back to the 3.13
+    # series (confirmed against 3.13.7) starts clean - see findings/03-jasmin.md.
+    image: rabbitmq:3.13.7-management-alpine
+    <<: *log-limits
+    environment:
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: guest
+    healthcheck: *rabbit-healthcheck
+
+  jasmin:
+    image: jookies/jasmin:0.11.0
+    <<: *log-limits
+    environment:
+      AMQP_BROKER_HOST: jasmin-rabbit
+      REDIS_CLIENT_HOST: jasmin-redis
+    depends_on:
+      jasmin-redis:
+        condition: service_started
+      jasmin-rabbit:
+        condition: service_healthy
+    healthcheck: *jasmin-healthcheck
+
+  # group, users, the smppc connector to our own server() and the MT/MO routes - see
+  # interop-tests/peers/jasmin/bootstrap.py. Runs once and exits; node waits for it.
+  jasmin-bootstrap:
+    <<: *jasmin-bootstrap-image
+    environment:
+      JCLI_HOST: jasmin
+    depends_on:
+      jasmin:
+        condition: service_healthy
+
+  # dlr-thrower's dlr_pdu is a [dlr-thrower] config-file setting, not a jcli/connector key (target
+  # 4 / C9) - a second instance with its own config is the only way to flip it without touching the
+  # main instance's receipts. Its own redis/rabbit rather than sharing the main pair: two unrelated
+  # Jasmin instances sharing a broker is exactly the entanglement CLAUDE.md's compose rule bans.
+  jasmin-datasm-redis:
+    image: redis:8.8.2-alpine
+    <<: *log-limits
+
+  jasmin-datasm-rabbit:
+    image: rabbitmq:3.13.7-management-alpine
+    <<: *log-limits
+    environment:
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: guest
+    healthcheck: *rabbit-healthcheck
+
+  jasmin-datasm:
+    image: jookies/jasmin:0.11.0
+    <<: *log-limits
+    environment:
+      AMQP_BROKER_HOST: jasmin-datasm-rabbit
+      REDIS_CLIENT_HOST: jasmin-datasm-redis
+    volumes:
+      # Not bind-mounted straight over /etc/jasmin/jasmin.cfg: the entrypoint's `sed -i` renames a
+      # temp file over its target, which the kernel refuses for a bind-mounted path ("Device or
+      # resource busy"). Copying it into place first, over a normal writable file, sidesteps that.
+      - ./interop-tests/peers/jasmin/jasmin-datasm.cfg:/custom-cfg/jasmin.cfg:ro
+    entrypoint: ["bash", "-c"]
+    command:
+      - >-
+        cp /custom-cfg/jasmin.cfg /etc/jasmin/jasmin.cfg &&
+        exec /docker-entrypoint.sh jasmind.py --enable-interceptor-client --enable-dlr-thrower --enable-dlr-lookup -u jcliadmin -p jclipwd
+    depends_on:
+      jasmin-datasm-redis:
+        condition: service_started
+      jasmin-datasm-rabbit:
+        condition: service_healthy
+    healthcheck: *jasmin-healthcheck
+
+  jasmin-datasm-bootstrap:
+    <<: *jasmin-bootstrap-image
+    environment:
+      CONNECTOR_CID: upstreamds
+      CONNECTOR_USERNAME: upstreamdsesme
+      JCLI_HOST: jasmin-datasm
+    depends_on:
+      jasmin-datasm:
+        condition: service_healthy
+
+  capture:
+    image: nicolaka/netshoot:v0.16
+    network_mode: "service:jasmin"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      jasmin:
+        condition: service_started
+    command: ["dumpcap", "-i", "any", "-f", "tcp port 2775", "-w", "/captures/jasmin.pcapng"]
+    volumes:
+      - ./interop-tests/captures:/captures
+
+  node:
+    depends_on:
+      capture:
+        condition: service_started
+      jasmin-bootstrap:
+        condition: service_completed_successfully
+      jasmin-datasm-bootstrap:
+        condition: service_completed_successfully

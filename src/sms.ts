@@ -1,0 +1,243 @@
+import type { ErrorName } from './defs/errors.ts';
+import type { MessageState } from './defs/constants.ts';
+import type { PduObject, PduObjectInput, TlvInput } from './pdu.ts';
+import type { Result, VoidResult } from './result.ts';
+import type { Session } from './session.ts';
+import { UnansweredError } from './unanswered-error.ts';
+import { consts } from './defs/constants.ts';
+import { messageClassOf } from './defs/encodings.ts';
+import { receiptCodes, transientStates } from './dlr.ts';
+import { smppDate } from './message.ts';
+import { respIdParams, segmentId } from './sms-id.ts';
+import { uuidv7 } from './uuid.ts';
+
+/** `pduObjs` holds what the peer took, so a partial failure names what is already receipted. */
+export type SendDlrResult = {
+	err?: Error;
+	pduObjs: PduObject[];
+	/** Segments that went out unanswered. The peer may have taken them, so sending again may duplicate. */
+	unanswered: number;
+};
+
+export type SendRespOptions = {
+	/** The id the peer correlates a later delivery receipt by. Defaults to a generated UUID v7. */
+	smsId?: string;
+	status?: ErrorName;
+};
+
+/**
+ * A received SMS, and the handle for answering it. Multipart messages arrive as one Sms carrying
+ * every segment's PDU.
+ */
+export type Sms = {
+	/**
+	 * Whether the peer was answered as the message's segments arrived, which is what a concatenated
+	 * message needs and a segment count cannot tell you. `sendResp()` then writes nothing.
+	 */
+	answeredOnArrival: boolean;
+	dlr: boolean;
+	/** GSM 03.38 message class 0: shown on arrival and not stored. */
+	flash: boolean;
+	from: string;
+	message: string;
+	pduObjs: PduObject[];
+	/** Sends a delivery report back to the sender. Defaults to DELIVERED. */
+	sendDlr: (status?: MessageState) => Promise<SendDlrResult>;
+	/**
+	 * Answers the message, and says the application is done with it. A concatenated message was
+	 * answered segment by segment as it arrived, so there it only releases a shutdown's wait and
+	 * refuses an `smsId` or a refusing `status`. Part of the protocol, not optional.
+	 */
+	sendResp: (options?: SendRespOptions) => Promise<VoidResult>;
+	session: Session;
+	/** The id the segments were answered with, the id `sendResp()` was given, or a generated UUID v7. */
+	readonly smsId: string;
+	submitTime: Date;
+	to: string;
+};
+
+export type SmsInput = {
+	/** The id base the segments were already answered with; absent leaves the answer to `sendResp()`. */
+	answeredAs?: string | undefined;
+	from: string;
+	message: string;
+	pduObjs: PduObject[];
+	session: Session;
+	to: string;
+};
+
+/** What the session's incoming side gives a message so it can be answered and accounted for. */
+export type SmsHandlers = {
+	lostLink: () => boolean;
+	onAnswered: () => void;
+	send: (input: PduObjectInput) => Promise<Result<{ pduObj: PduObject }>>;
+};
+
+/** GSM 03.38 section 4 gives class 0 immediate display; every other class is stored somewhere. */
+const immediateDisplayClass = 0;
+
+export function createSms(input: SmsInput, handlers: SmsHandlers): Sms {
+	const first = input.pduObjs[0];
+	const registered = first?.params.registered_delivery;
+	const dataCoding = first?.params.data_coding;
+	const answered = { smsId: input.answeredAs ?? uuidv7() };
+
+	const sms: Sms = {
+		answeredOnArrival: input.answeredAs !== undefined,
+		dlr: typeof registered === 'number' && registered !== 0,
+		flash: typeof dataCoding === 'number' && messageClassOf(dataCoding) === immediateDisplayClass,
+		from: input.from,
+		message: input.message,
+		pduObjs: input.pduObjs,
+		sendDlr: status => sendDlr(sms, handlers.send, status),
+		sendResp: options => (input.answeredAs === undefined
+			? sendResp(sms, answered, options ?? {}, handlers)
+			: answeredOnArrival(options ?? {}, handlers)),
+		session: input.session,
+		get smsId(): string {
+			return answered.smsId;
+		},
+		submitTime: new Date(),
+		to: input.to,
+	};
+
+	return sms;
+}
+
+/** Every segment went out answered, so the call is what the shutdown waits for and nothing else. */
+function answeredOnArrival(
+	options: SendRespOptions,
+	handlers: Pick<SmsHandlers, 'onAnswered'>,
+): Promise<VoidResult> {
+	if (options.smsId !== undefined) {
+		return Promise.resolve({
+			err: new Error('This message\'s id was fixed when its first segment arrived; read sms.smsId'),
+		});
+	}
+
+	if (options.status !== undefined && options.status !== 'ESME_ROK') {
+		return Promise.resolve({
+			err: new Error('Its segments were answered as they arrived, so there is nothing left to refuse; refuse a segment from the onRequest option instead'),
+		});
+	}
+
+	handlers.onAnswered();
+
+	return Promise.resolve({});
+}
+
+async function sendResp(
+	sms: Sms,
+	answered: { smsId: string },
+	options: SendRespOptions,
+	handlers: Pick<SmsHandlers, 'lostLink' | 'onAnswered'>,
+): Promise<VoidResult> {
+	const total = sms.pduObjs.length;
+
+	if (total === 0) {
+		return { err: new Error('No PDUs to answer') };
+	}
+
+	if (options.smsId === '') {
+		return { err: new Error('smsId must not be empty') };
+	}
+
+	if (options.smsId !== undefined) answered.smsId = options.smsId;
+
+	// A response carries the sequence number it was asked on, which the next link knows nothing about.
+	if (handlers.lostLink()) {
+		return { err: new Error('The link this message arrived on is gone, so nothing would correlate the response') };
+	}
+
+	const results = await Promise.all(sms.pduObjs.map((pduObj, index) => sms.session.sendReturn(
+		pduObj,
+		options.status ?? 'ESME_ROK',
+		respIdParams(pduObj.cmdName, segmentId(answered.smsId, index, total)),
+	)));
+
+	const failure = results.find(result => result.err);
+
+	if (!failure) handlers.onAnswered();
+
+	return failure ?? {};
+}
+
+/** The receipt as text, which is all of it a peer below SMPP 3.4 is allowed to be sent. */
+function receiptText(sms: Sms, smsId: string, status: MessageState): string {
+	const delivered = status === 'DELIVERED';
+	const failed = !delivered && !transientStates.includes(status);
+
+	return [
+		`id:${smsId}`,
+		'sub:001',
+		`dlvrd:${delivered ? '001' : '000'}`,
+		`submit date:${smppDate(sms.submitTime)}`,
+		`done date:${smppDate(new Date())}`,
+		`stat:${receiptCodes[status]}`,
+		`err:${failed ? '001' : '000'}`,
+		'text:',
+	].join(' ');
+}
+
+function receiptTlvs(smsId: string, status: MessageState): Record<string, TlvInput> {
+	return {
+		message_state: { tagValue: consts.MESSAGE_STATE[status] },
+		receipted_message_id: { tagValue: smsId },
+	};
+}
+
+function collectReceipt(sent: Result<{ pduObj: PduObject }>[]): SendDlrResult {
+	const pduObjs: PduObject[] = [];
+	let failure: Error | undefined;
+	let unanswered = 0;
+
+	for (const one of sent) {
+		if (one.err) {
+			if (one.err instanceof UnansweredError) unanswered++;
+
+			failure ??= one.err;
+		} else if (one.pduObj.cmdStatus === 'ESME_ROK') {
+			pduObjs.push(one.pduObj);
+		} else {
+			const refusal = one.pduObj.cmdStatus ?? String(one.pduObj.cmdStatusId);
+
+			failure ??= new Error(`deliver_sm refused by the peer: ${refusal}`);
+		}
+	}
+
+	return failure ? { err: failure, pduObjs, unanswered } : { pduObjs, unanswered };
+}
+
+async function sendDlr(
+	sms: Sms,
+	send: SmsHandlers['send'],
+	status: MessageState = 'DELIVERED',
+): Promise<SendDlrResult> {
+	if (!sms.session.bindAllows('deliver_sm')) {
+		return {
+			err: new Error('A transmitter-bound session does not carry deliver_sm'),
+			pduObjs: [],
+			unanswered: 0,
+		};
+	}
+
+	const total = sms.pduObjs.length;
+	// Together, not one after a response: a drain waiting for this message must see the whole receipt.
+	const sent = await Promise.all(sms.pduObjs.map((_segment, index) => {
+		const smsId = segmentId(sms.smsId, index, total);
+
+		return send({
+			cmdName: 'deliver_sm',
+			params: {
+				destination_addr: sms.from,
+				esm_class: transientStates.includes(status)
+					? consts.ESM_CLASS.INTERMEDIATE_DELIVERY
+					: consts.ESM_CLASS.MC_DELIVERY_RECEIPT,
+				short_message: receiptText(sms, smsId, status),
+				source_addr: sms.to,
+			},
+			...(sms.session.acceptsOptionalParams() ? { tlvs: receiptTlvs(smsId, status) } : {}),
+		});
+	}));
+	return collectReceipt(sent);
+}
