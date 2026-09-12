@@ -489,6 +489,38 @@ describe('an SMSC that reports each segment under an id of its own', () => {
 
 		assert.equal(sent.err, undefined);
 		assert.equal(smsc.octets.length, 3, 'every segment goes out whatever the peer answers');
-		assert.deepEqual(sent.smsIds, [id, '', '']);
+		assert.deepEqual(sent.smsIds, [id, undefined, undefined]);
+		assert.equal(sent.smsIds.length, sent.pduObjs.length, 'an entry per accepted segment, positional with pduObjs');
+	});
+
+	// A peer that writes message_id empty and one that leaves the field out build the same octets,
+	// so what settles it is the text the id resolves to rather than the parameter being there.
+	test('reads an empty message_id as no id, on a single-segment send as much as a split one', async t => {
+		const smsc = await dummySmsc(t, { messageIds: [] });
+		const session = await bindToSmsc(t, smsc.port);
+		const sent = await session.sendSms({ dlr: true, message: 'one segment', ...message });
+
+		assert.equal(sent.err, undefined);
+		assert.deepEqual(sent.smsIds, [undefined]);
+	});
+
+	test('reports the segment that was named and merges nothing where the others were not', async t => {
+		const base = '01a09739-0a98-7ac0-8a9a-fcd3a7648e62';
+		const smsc = await dummySmsc(t, { messageIds: [`${base}-1`] });
+		const session = await bindToSmsc(t, smsc.port);
+		const merged: MessageDlr[] = [];
+		const reported = collect<Dlr>(1, push => { session.on('dlr', push); });
+
+		session.on('messageDlr', report => merged.push(report));
+
+		const sent = await session.sendSms({ dlr: true, message: 'x'.repeat(400), ...message });
+
+		assert.deepEqual(sent.smsIds, [`${base}-1`, undefined, undefined]);
+		smsc.deliver(receiptBody(`${base}-1`));
+
+		const [dlr] = await reported;
+
+		assert.equal(dlr?.smsId, `${base}-1`);
+		assert.deepEqual(merged, [], 'a send with an unnamed segment spells out no message to merge');
 	});
 });
