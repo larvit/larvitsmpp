@@ -135,16 +135,16 @@ docker compose run --rm node npm run build
 - `erasableSyntaxOnly` is on, so no enums, no namespaces, no parameter properties. Use `as const`
   objects plus union types.
 - The published floor is Node 18, but the dev container runs Node 24 (type stripping needs it). CI
-  compiles the tests and runs them on 18/20/22/24, so the floor is verified rather than asserted.
+  compiles the tests and runs them on 18, every LTS above it, and current, so the floor is
+  verified rather than asserted.
 - `typescript` is pinned to the 6.x line because `typescript-eslint` peer-requires `<6.1.0`. Move to
   TypeScript 7 once that constraint lifts.
 
 ## Defects found in 0.4.0
 
 Every row names what 0.4.0's own code did, so it is not rebuilt here.
-[README.md](README.md#behaviour-that-changed-on-the-wire) names what changed for a consumer, and is
-the only place that does. Confirmed by reading the 0.4.0 source; each row has a regression test
-naming the behaviour.
+[MIGRATION.md](MIGRATION.md) names what changed for a consumer, and is the only place that does.
+Confirmed by reading the 0.4.0 source; each row has a regression test naming the behaviour.
 
 | Defect | 0.4.0 behaviour |
 | --- | --- |
@@ -235,6 +235,8 @@ Each file answers one question, and a fact belongs to the file whose question it
 
 - **README.md — what you can rely on.** Observable behaviour, for someone using the package. It
   carries a reason only where the reason changes how you would call the thing.
+- **MIGRATION.md — what a 0.4.0 consumer has to change.** Renamed and removed surface, and the
+  behaviour that changed on the wire.
 - **AGENTS.md — what may not change, and why.** Goals, hard rules, architecture, conventions, and the
   decisions the goals do not already settle. It does not restate behaviour README states.
 - **todo.md** is a temporary working file that sets its own rules; nothing here governs it.
