@@ -67,32 +67,55 @@ Rules the API follows:
 | A transient state sent under the marker the spec gives it, off the same list the reader uses | `test/session-extras.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
 | Cross-checked against node-smpp both ways and over a live session | `test/interop.test.ts` |
-| CI on Node 18 to 26, Renovate, tag-triggered publish | `.github/workflows/` |
+| CI on Node 18 to 26, Renovate, tag-triggered publish | `.gitea/workflows/` |
 
 Every defect listed in the AGENTS.md table has a regression test naming the behaviour.
 
+## Move the repository to Gitea
+
+`gitea.larvit.se/larvit/smpp-js` is the repository and `github.com/larvit/smpp-js` becomes a push
+mirror of it. Maintainer's call, 2026-09-13, to move before 1.0.0.
+
+- [x] `larvit/smpp-js` holds `main`, from `typescript`, and `v0.4.0`, from `master`. `rewrite-base`
+      and the `renovate/*` branches stayed behind.
+- [x] Fast-forward is the only merge style. `main` takes no pushes, requires `Test / lint
+      (pull_request)` and `Test / test (*) (pull_request)`, blocks an outdated branch, and gives
+      admins no override.
+- [x] The workflows are in `.gitea/workflows/`. Tests run on pull requests only, the event the gate
+      reads; Renovate runs as a scheduled workflow, as on adf-codec.
+- [x] The release publishes without provenance, which npm generates only on GitHub Actions and
+      GitLab CI/CD.
+- [x] `package.json` names Gitea. The README links absolutely: npmjs.com resolves a relative link
+      against itself when the `repository` is not on GitHub. Its test badge is gone, since Gitea
+      reports a workflow's status per branch and no workflow runs on `main`.
+- [ ] Add `RENOVATE_GITHUB_TOKEN` as an organization secret. The Renovate workflow reads it for
+      GitHub-hosted lookups, the actions included, and adf-codec has it as a repository secret only.
+- [ ] **Where issues are filed.** Gitea issues are off, so `package.json` names no `bugs` URL until
+      this is decided.
+- [ ] **Review bot.** CodeRabbit does not support Gitea.
+
 ## Before publishing 1.0.0
 
-- [x] `NPM_TOKEN`, which `.github/workflows/release.yaml` needs, is set as an organization secret.
-- [ ] Tag `v1.0.0` to publish. The first publish creates `@larvit/smpp` on npm, provided the token
-      can publish under `@larvit`.
+- [x] `NPM_TOKEN`, which `.gitea/workflows/release.yaml` needs, is a Gitea organization secret.
+- [ ] Tag `v1.0.0` on Gitea to publish. The first publish creates `@larvit/smpp` on npm, provided the
+      token can publish under `@larvit`.
 - [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.
-- [ ] **Rename the branches, once everything above is done.** Maintainer's call, 2026-09-04:
-      `master` becomes `v0.4.0`, `typescript` becomes `main`, and `main` is the repository's default
-      branch. Renaming rather than merging is what the orphan commit leaves available — the two
-      histories share no ancestor, so a merge refuses them outright.
-      - [ ] Rename `master` to `v0.4.0`.
-      - [ ] Rename `typescript` to `main`, and make it the default branch.
-      - [ ] Retarget what still points at an old name: [#71](https://github.com/larvit/larvitsmpp/pull/71),
-            and the open PRs based on `master`, which a rename carries over rather than closes.
-      - [ ] Delete `rewrite-base` once [#71](https://github.com/larvit/larvitsmpp/pull/71) is
-            resolved; it exists only to give that PR a reviewable diff.
 
-## Close the GitHub backlog, once this branch is `main`
+## Retire the GitHub repository
 
-Nothing below is closed while the default branch is still 0.4.0 — declining a security bump on a
-live default branch is worse than leaving it open. Work through this immediately after the rename.
+In this order. The push mirror replaces GitHub's branches with Gitea's, which closes every pull
+request based on `master` without a reply, and GitHub refuses to delete the default branch it syncs
+over.
+
+- [ ] Close the backlog below.
+- [ ] Close [#71](https://github.com/larvit/larvitsmpp/pull/71), pointing at Gitea.
+- [ ] Rename `larvit/larvitsmpp` to `larvit/smpp-js`; GitHub redirects the old URLs.
+- [ ] Push `main` and make it GitHub's default branch.
+- [ ] Remove Renovate and CodeRabbit from the GitHub repository.
+- [ ] Add it to Gitea as a push mirror, with a GitHub credential that can write to it.
+
+## Close the GitHub backlog
 
 **Answer and close as fixed by 1.0.0**, the reply naming what fixed it:
 
@@ -136,47 +159,12 @@ live default branch is worse than leaving it open. Work through this immediately
       [#70](https://github.com/larvit/larvitsmpp/pull/70) is the open `uuid` advisory GitHub reports
       on the default branch; it disappears with the runtime dependencies rather than being fixed.
 
-[#60](https://github.com/larvit/larvitsmpp/issues/60) is Renovate's dashboard — leave it, it
-re-baselines itself against the new `package.json`.
+[#60](https://github.com/larvit/larvitsmpp/issues/60) is Renovate's dashboard — close it with
+Renovate's removal from GitHub.
 
 **Leave open:** [#8](https://github.com/larvit/larvitsmpp/issues/8), the socket's remote host and
 port on log messages. Only `server - incoming connection` carries them today; putting them on every
 session message is a change to every call site.
-
-## Move the repository to Gitea
-
-`gitea.larvit.se/larvit/smpp-js` becomes the repository and `github.com/larvit/smpp-js` a push mirror
-of it. Maintainer's call, 2026-09-13. `@larvit/adf-codec` already runs from Gitea, without a mirror.
-
-Decide first:
-
-- [ ] **Before or after 1.0.0.** Before: 1.0.0's `repository`, `homepage` and `bugs` name the final
-      home. After: 1.0.0 ships now from the pipeline that is already green, and the renamed GitHub
-      repository redirects the links it carries.
-- [ ] **Provenance.** npm generates it only on GitHub Actions and GitLab CI/CD. Publishing from Gitea
-      drops it, as adf-codec's publishing does; publishing from the mirror keeps it, but makes every
-      release depend on the mirror being in sync.
-- [ ] **Where issues and pull requests are filed**, Gitea or the GitHub mirror. adf-codec has Gitea
-      issues switched off.
-- [ ] **Review bot.** CodeRabbit does not support Gitea.
-
-Then:
-
-- [ ] Migrate `larvit/larvitsmpp` into `larvit/smpp-js` with Gitea's GitHub migration, as a regular
-      repository rather than a pull mirror.
-- [ ] Fast-forward as the only merge style, as on adf-codec, plus what adf-codec lacks: a protection
-      rule on `main` requiring a pull request and a green CI status. That is what makes the commit on
-      `main` the commit CI tested; GitHub's merge buttons always write a new commit.
-- [ ] Rename the GitHub repository to `larvit/smpp-js` and add it to Gitea as a push mirror.
-- [ ] Move `.github/workflows/` to `.gitea/workflows/` on the `docker-host` runner, with Renovate as a
-      scheduled workflow like adf-codec's. Gitea reads `.gitea/workflows/` and falls back to
-      `.github/workflows/`; left where they are, the mirror runs every workflow a second time on
-      GitHub, the release included.
-- [ ] Point `package.json`, the README badges and links, AGENTS.md and MIGRATION.md at Gitea, and change
-      `interop-tests/AGENTS.md` step 3 from squash-merge to fast-forward.
-- [ ] Check how npmjs.com renders the README's relative links (`MIGRATION.md`,
-      `interop-tests/README.md`) for a Gitea `repository`; for a GitHub one it resolves them against the
-      default branch.
 
 ## Worth doing, not blocking
 
@@ -197,14 +185,14 @@ Then:
 
 - [ ] **A gate that refuses a floating version anywhere in the repo.** Maintainer's ask on
       [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the `release.yaml`
-      pinning thread, which stays open until this lands. Pinning every action and runner by hand is
-      what the ask followed; the gate is what keeps them pinned. It has to cover workflow `uses:`
-      and `runs-on:`, compose `image:`, and Dockerfile `FROM`, and the conventions differ per kind —
-      actions take a semver tag, images the full patch version — so one grep for `latest` is not it.
+      pinning thread. Pinning every action and runner by hand is what the ask followed; the gate is
+      what keeps them pinned. It has to cover workflow `uses:` and `runs-on:`, compose `image:`, and
+      Dockerfile `FROM`, and the conventions differ per kind — actions take a semver tag, images the
+      full patch version — so one grep for `latest` is not it.
 
 - [ ] **A gate that fails when the test matrix misses the current Node.** Maintainer's ask on
-      [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the Node 26 thread, which
-      stays open until this lands. Node 26 was added by hand; nothing notices when 27 ships. Needs a
+      [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the Node 26 thread. Node
+      26 was added by hand; nothing notices when 27 ships. Needs a
       source for what Current is — the Node release schedule is published as JSON — and a decision
       on whether a new Current fails the build or opens a PR, which is what Renovate already does
       for everything else here.
