@@ -1,7 +1,7 @@
 {
 	"name": "@larvit/smpp",
 	"version": "1.0.0",
-	"description": "Simplified SMPP implementation",
+	"description": "SMPP 3.4 client and server for Node.js with the session layer built in: keepalive, reconnect, send window, long messages and delivery receipts",
 	"keywords": [
 		"esm",
 		"pdu",
