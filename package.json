@@ -9,19 +9,16 @@
 		"smpp",
 		"typescript"
 	],
-	"homepage": "https://github.com/larvit/larvitsmpp",
-	"bugs": {
-		"url": "https://github.com/larvit/larvitsmpp/issues"
-	},
+	"homepage": "https://gitea.larvit.se/larvit/smpp-js",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/larvit/larvitsmpp.git"
+		"url": "git+https://gitea.larvit.se/larvit/smpp-js.git"
 	},
 	"license": "MIT",
 	"author": {
 		"name": "Mikael 'Lilleman' Göransson",
 		"email": "lilleman@larvit.se",
-		"url": "http://github.com/larvit/larvitsmpp"
+		"url": "https://gitea.larvit.se/larvit/smpp-js"
 	},
 	"type": "module",
 	"exports": {
@@ -37,8 +34,7 @@
 		"node": ">=18.0.0"
 	},
 	"publishConfig": {
-		"access": "public",
-		"provenance": true
+		"access": "public"
 	},
 	"scripts": {
 		"build": "tsc --project tsconfig.build.json",

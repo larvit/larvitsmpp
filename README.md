@@ -1,7 +1,6 @@
 # @larvit/smpp
 
 [![npm](https://img.shields.io/npm/v/@larvit/smpp)](https://www.npmjs.com/package/@larvit/smpp)
-[![Test](https://github.com/larvit/larvitsmpp/actions/workflows/test.yaml/badge.svg)](https://github.com/larvit/larvitsmpp/actions/workflows/test.yaml)
 
 SMPP 3.4 client and server for Node.js with the session layer built in: keepalive, reconnect, send
 window, long messages and delivery receipts. TypeScript, ESM, no dependencies.
@@ -14,7 +13,8 @@ window, long messages and delivery receipts. TypeScript, ESM, no dependencies.
 - **Graceful shutdown.** `close()` waits for what is in flight, so neither end has to guess.
 - **Never throws.** Every fallible call resolves to `{ err?, … }`.
 - **Interoperable.** Tested as a client against Jasmin and SMPPSim, and as a server against Kannel,
-  jsmpp, Cloudhopper, python-smpplib and php-smpp: [interop-tests/](interop-tests/README.md).
+  jsmpp, Cloudhopper, python-smpplib and php-smpp:
+  [interop-tests/](https://gitea.larvit.se/larvit/smpp-js/src/branch/main/interop-tests/README.md).
 
 [Install](#install) · [Send an SMS](#send-an-sms) · [Delivery reports](#delivery-reports) ·
 [Receive SMS](#receive-sms) · [Run an SMPP server](#run-an-smpp-server) · [Errors](#errors) ·
@@ -630,7 +630,7 @@ if (isCommand(pduObj, 'submit_sm')) {
 
 ## Migrating from larvitsmpp 0.4.0
 
-See [MIGRATION.md](MIGRATION.md).
+See [MIGRATION.md](https://gitea.larvit.se/larvit/smpp-js/src/branch/main/MIGRATION.md).
 
 ## Development
 

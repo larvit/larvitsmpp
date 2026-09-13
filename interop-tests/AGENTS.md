@@ -96,6 +96,6 @@ ways the next experiment must see. One fix per defect class, as its own change:
    then the implementation; then the decision record in the root `AGENTS.md` where the fix settles
    a question of the wire or the session's life.
 3. `/larv-review` on the branch, with the pull request based on `main`. When it marks the PR
-   ready, squash-merge it.
+   ready, fast-forward it.
 4. Back in the experiments worktree: fast-forward `main`, rerun the experiment that found the
    defect, delete the workaround its test carried, and note the fix in the findings file.
