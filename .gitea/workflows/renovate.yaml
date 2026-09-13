@@ -1,0 +1,25 @@
+name: Renovate
+
+on:
+  schedule:
+    - cron: '43 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  renovate:
+    runs-on: docker-host
+    steps:
+      - name: Run Renovate against this repo
+        env:
+          GITHUB_COM_TOKEN: ${{ secrets.RENOVATE_GITHUB_TOKEN }}
+          RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+        run: |
+          docker run --rm \
+            -e GITHUB_COM_TOKEN \
+            -e LOG_LEVEL=info \
+            -e RENOVATE_ENDPOINT=https://gitea.larvit.se/api/v1 \
+            -e RENOVATE_GIT_AUTHOR="Renovate Bot <renovate@larvit.se>" \
+            -e RENOVATE_PLATFORM=gitea \
+            -e RENOVATE_REPOSITORIES=${{ github.repository }} \
+            -e RENOVATE_TOKEN \
+            renovate/renovate:44.39.2
