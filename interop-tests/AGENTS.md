@@ -90,12 +90,12 @@ Then add the file to README.md's findings table.
 Every defect a phase records is fixed before the next phase runs — a fix can change behaviour in
 ways the next experiment must see. One fix per defect class, as its own change:
 
-1. A worktree on a branch off `origin/typescript` (never `origin/master`, the 0.4.0 code), named
+1. A worktree on a branch off `origin/main` (never `origin/v0.4.0`, the 0.4.0 code), named
    for the defect.
 2. Regression tests in `test/` first, naming the behaviour with the reproducer from the findings;
    then the implementation; then the decision record in the root `AGENTS.md` where the fix settles
    a question of the wire or the session's life.
-3. `/larv-review` on the branch, with the pull request based on `typescript`. When it marks the PR
+3. `/larv-review` on the branch, with the pull request based on `main`. When it marks the PR
    ready, squash-merge it.
-4. Back in the experiments worktree: fast-forward `typescript`, rerun the experiment that found the
+4. Back in the experiments worktree: fast-forward `main`, rerun the experiment that found the
    defect, delete the workaround its test carried, and note the fix in the findings file.

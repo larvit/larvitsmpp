@@ -7,7 +7,7 @@ Guidance for LLM agents working in this repository. What each file in it is for 
 
 A ground-up TypeScript rewrite of `larvitsmpp` 0.4.0, published as `@larvit/smpp` 1.0.0. The branch
 started from an orphan commit — no history from 0.4.0 is carried over. The 0.4.0 source is still
-readable on the `master` branch of the same repository and is the reference for protocol behaviour,
+readable on the `v0.4.0` branch of the same repository and is the reference for protocol behaviour,
 not for structure or style.
 
 ## Goals
