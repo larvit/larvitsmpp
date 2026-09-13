@@ -239,7 +239,7 @@ Each file answers one question, and a fact belongs to the file whose question it
   behaviour that changed on the wire.
 - **AGENTS.md — what may not change, and why.** Goals, hard rules, architecture, conventions, and the
   decisions the goals do not already settle. It does not restate behaviour README states.
-- **todo.md** is a temporary working file that sets its own rules; nothing here governs it.
+- **todo.md** is a working file that sets its own rules; nothing here governs it.
 
 A sentence living in two of them is a defect: delete the copy in the file whose question it does not
 answer. The toolchain commands are the one deliberate exception — README's copy serves a contributor

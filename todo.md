@@ -1,16 +1,15 @@
 # todo.md
 
-Remaining work for the `@larvit/smpp` 1.0.0 rewrite. Read [AGENTS.md](AGENTS.md) first — the goals
-and hard rules there constrain every item below.
+Remaining work for `@larvit/smpp`. Read [AGENTS.md](AGENTS.md) first — the goals and hard rules
+there constrain every item below.
 
-This is a temporary working file: it is deleted when 1.0.0 ships, and until then it sets its own
-rules. The documentation conventions in AGENTS.md do not govern it, and nothing here is a source
-anything else may cite.
+This is a working file that sets its own rules. The documentation conventions in AGENTS.md do not
+govern it, and nothing here is a source anything else may cite.
 
 ## Status
 
-The rewrite is **feature complete and green**: the suite, lint and typecheck are clean on Node 18,
-20, 22 and 24. What is left is release work and a few things worth adding before or after 1.0.0.
+The rewrite is **feature complete and green**: the suite, lint and typecheck are clean on Node 18
+to 26. What is left is release work and a few things worth adding before or after 1.0.0.
 
 ## The agreed API
 
@@ -68,52 +67,15 @@ Rules the API follows:
 | A transient state sent under the marker the spec gives it, off the same list the reader uses | `test/session-extras.test.ts` |
 | A listener that throws, or rejects, reaching `sessionError`/`serverError` rather than the process | `test/session.test.ts`, `test/error-from.test.ts` |
 | Cross-checked against node-smpp both ways and over a live session | `test/interop.test.ts` |
-| CI on Node 18/20/22/24, Renovate, tag-triggered publish | `.github/workflows/` |
+| CI on Node 18 to 26, Renovate, tag-triggered publish | `.github/workflows/` |
 
 Every defect listed in the AGENTS.md table has a regression test naming the behaviour.
 
-## The GitHub backlog, once this branch is `main`
-
-Nothing below is closed while the default branch is still 0.4.0 — declining a security bump on a live
-default branch is worse than leaving it open. Work through this immediately after the rename.
-
-**Close as fixed by 1.0.0**, naming the replacement in the comment:
-
-| | Fixed by |
-| --- | --- |
-| [#4](https://github.com/larvit/larvitsmpp/issues/4) DLR errors with `message_state` missing | `dlrFromPdu()` parses the `stat:` receipt text when the TLVs are absent |
-| [#33](https://github.com/larvit/larvitsmpp/issues/33) Large inbound text arrives as raw `Buffer` segments | `IncomingRequests` reassembles a UDH-carrying `deliver_sm` into one `sms` event |
-| [#3](https://github.com/larvit/larvitsmpp/issues/3) Tests for flash messages | `test/session.test.ts` |
-| [#20](https://github.com/larvit/larvitsmpp/issues/20) Tests fail on current dependency versions | The mocha suite is gone; `node:test` on Node 18/20/22/24 |
-| [#2](https://github.com/larvit/larvitsmpp/issues/2) Tests for the README examples | `test/readme.test.ts` |
-| [#17](https://github.com/larvit/larvitsmpp/issues/17) `addr_ton`/`addr_npi` should be settable | `sendSms()` takes all four, documented and tested |
-| [#16](https://github.com/larvit/larvitsmpp/issues/16) Support all three bind types | Bound and enforced in both directions |
-| [#13](https://github.com/larvit/larvitsmpp/issues/13) Limit a long SMS to fewer segments | The `maxSegments` send option |
-| [#68](https://github.com/larvit/larvitsmpp/pull/68) `message_id` in `submit_sm_resp`, spec DLR codes | All four hold: `sendResp()` always answers a `message_id`, per segment; `stat:UNDELIV` is the 7-character code. Credit the reporter — the fork found real defects. |
-
-**Close as superseded**, all against 0.4.0 dependencies the rewrite does not have — `async`,
-`coveralls`, `eslint`, `iconv-lite`, `larvitutils`, `mocha`, `mocha-eslint`, `portfinder`, `uuid`:
-[#40](https://github.com/larvit/larvitsmpp/pull/40), [#41](https://github.com/larvit/larvitsmpp/pull/41),
-[#42](https://github.com/larvit/larvitsmpp/pull/42), [#45](https://github.com/larvit/larvitsmpp/pull/45),
-[#46](https://github.com/larvit/larvitsmpp/pull/46), [#47](https://github.com/larvit/larvitsmpp/pull/47),
-[#59](https://github.com/larvit/larvitsmpp/pull/59), [#63](https://github.com/larvit/larvitsmpp/pull/63),
-[#64](https://github.com/larvit/larvitsmpp/pull/64), [#65](https://github.com/larvit/larvitsmpp/pull/65),
-[#67](https://github.com/larvit/larvitsmpp/pull/67), [#70](https://github.com/larvit/larvitsmpp/pull/70).
-[#70](https://github.com/larvit/larvitsmpp/pull/70) is the open `uuid` advisory GitHub reports on the
-default branch; it disappears with the runtime dependencies rather than being fixed.
-
-[#60](https://github.com/larvit/larvitsmpp/issues/60) is Renovate's dashboard — leave it, it
-re-baselines itself against the new `package.json`.
-
-**Leave open:** [#8](https://github.com/larvit/larvitsmpp/issues/8), the socket's remote host and
-port on log messages. Only `server - incoming connection` carries them today; putting them on every
-session message is a change to every call site.
-
 ## Before publishing 1.0.0
 
-- [ ] Create the `@larvit/smpp` package on npm and add `NPM_TOKEN` to the repository secrets, which
-      `.github/workflows/release.yaml` needs.
-- [ ] Tag `v1.0.0` to publish.
+- [x] `NPM_TOKEN`, which `.github/workflows/release.yaml` needs, is set as an organization secret.
+- [ ] Tag `v1.0.0` to publish. The first publish creates `@larvit/smpp` on npm, provided the token
+      can publish under `@larvit`.
 - [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.
 - [ ] **Rename the branches, once everything above is done.** Maintainer's call, 2026-09-04:
@@ -126,6 +88,95 @@ session message is a change to every call site.
             and the open PRs based on `master`, which a rename carries over rather than closes.
       - [ ] Delete `rewrite-base` once [#71](https://github.com/larvit/larvitsmpp/pull/71) is
             resolved; it exists only to give that PR a reviewable diff.
+
+## Close the GitHub backlog, once this branch is `main`
+
+Nothing below is closed while the default branch is still 0.4.0 — declining a security bump on a
+live default branch is worse than leaving it open. Work through this immediately after the rename.
+
+**Answer and close as fixed by 1.0.0**, the reply naming what fixed it:
+
+- [ ] [#2](https://github.com/larvit/larvitsmpp/issues/2) Tests for the README examples:
+      `test/readme.test.ts`.
+- [ ] [#3](https://github.com/larvit/larvitsmpp/issues/3) Tests for flash messages:
+      `test/session.test.ts`.
+- [ ] [#4](https://github.com/larvit/larvitsmpp/issues/4) DLR errors with `message_state` missing:
+      `dlrFromPdu()` parses the `stat:` receipt text when the TLVs are absent.
+- [ ] [#13](https://github.com/larvit/larvitsmpp/issues/13) Limit a long SMS to fewer segments: the
+      `maxSegments` send option.
+- [ ] [#16](https://github.com/larvit/larvitsmpp/issues/16) Support all three bind types: bound and
+      enforced in both directions.
+- [ ] [#17](https://github.com/larvit/larvitsmpp/issues/17) `addr_ton`/`addr_npi` should be
+      settable: `sendSms()` takes all four, documented and tested.
+- [ ] [#20](https://github.com/larvit/larvitsmpp/issues/20) Tests fail on current dependency
+      versions: the mocha suite is gone; `node:test` on Node 18 to 26.
+- [ ] [#33](https://github.com/larvit/larvitsmpp/issues/33) Large inbound text arrives as raw
+      `Buffer` segments: `IncomingRequests` reassembles a UDH-carrying `deliver_sm` into one `sms`
+      event.
+- [ ] [#68](https://github.com/larvit/larvitsmpp/pull/68), a pull request: `message_id` in
+      `submit_sm_resp`, spec DLR codes. All four hold: `sendResp()` always answers a `message_id`,
+      per segment; `stat:UNDELIV` is the 7-character code. Credit the reporter — the fork found real
+      defects.
+
+**Close as superseded**, all against 0.4.0 dependencies the rewrite does not have — `async`,
+`coveralls`, `eslint`, `iconv-lite`, `larvitutils`, `mocha`, `mocha-eslint`, `portfinder`, `uuid`:
+
+- [ ] [#40](https://github.com/larvit/larvitsmpp/pull/40),
+      [#41](https://github.com/larvit/larvitsmpp/pull/41),
+      [#42](https://github.com/larvit/larvitsmpp/pull/42),
+      [#45](https://github.com/larvit/larvitsmpp/pull/45),
+      [#46](https://github.com/larvit/larvitsmpp/pull/46),
+      [#47](https://github.com/larvit/larvitsmpp/pull/47),
+      [#59](https://github.com/larvit/larvitsmpp/pull/59),
+      [#63](https://github.com/larvit/larvitsmpp/pull/63),
+      [#64](https://github.com/larvit/larvitsmpp/pull/64),
+      [#67](https://github.com/larvit/larvitsmpp/pull/67),
+      [#70](https://github.com/larvit/larvitsmpp/pull/70),
+      [#77](https://github.com/larvit/larvitsmpp/pull/77).
+      [#70](https://github.com/larvit/larvitsmpp/pull/70) is the open `uuid` advisory GitHub reports
+      on the default branch; it disappears with the runtime dependencies rather than being fixed.
+
+[#60](https://github.com/larvit/larvitsmpp/issues/60) is Renovate's dashboard — leave it, it
+re-baselines itself against the new `package.json`.
+
+**Leave open:** [#8](https://github.com/larvit/larvitsmpp/issues/8), the socket's remote host and
+port on log messages. Only `server - incoming connection` carries them today; putting them on every
+session message is a change to every call site.
+
+## Move the repository to Gitea
+
+`gitea.larvit.se/larvit/smpp-js` becomes the repository and `github.com/larvit/smpp-js` a push mirror
+of it. Maintainer's call, 2026-09-13. `@larvit/adf-codec` already runs from Gitea, without a mirror.
+
+Decide first:
+
+- [ ] **Before or after 1.0.0.** Before: 1.0.0's `repository`, `homepage` and `bugs` name the final
+      home. After: 1.0.0 ships now from the pipeline that is already green, and the renamed GitHub
+      repository redirects the links it carries.
+- [ ] **Provenance.** npm generates it only on GitHub Actions and GitLab CI/CD. Publishing from Gitea
+      drops it, as adf-codec's publishing does; publishing from the mirror keeps it, but makes every
+      release depend on the mirror being in sync.
+- [ ] **Where issues and pull requests are filed**, Gitea or the GitHub mirror. adf-codec has Gitea
+      issues switched off.
+- [ ] **Review bot.** CodeRabbit does not support Gitea.
+
+Then:
+
+- [ ] Migrate `larvit/larvitsmpp` into `larvit/smpp-js` with Gitea's GitHub migration, as a regular
+      repository rather than a pull mirror.
+- [ ] Fast-forward as the only merge style, as on adf-codec, plus what adf-codec lacks: a protection
+      rule on `main` requiring a pull request and a green CI status. That is what makes the commit on
+      `main` the commit CI tested; GitHub's merge buttons always write a new commit.
+- [ ] Rename the GitHub repository to `larvit/smpp-js` and add it to Gitea as a push mirror.
+- [ ] Move `.github/workflows/` to `.gitea/workflows/` on the `docker-host` runner, with Renovate as a
+      scheduled workflow like adf-codec's. Gitea reads `.gitea/workflows/` and falls back to
+      `.github/workflows/`; left where they are, the mirror runs every workflow a second time on
+      GitHub, the release included.
+- [ ] Point `package.json`, the README badges and links, AGENTS.md and MIGRATION.md at Gitea, and change
+      `interop-tests/AGENTS.md` step 3 from squash-merge to fast-forward.
+- [ ] Check how npmjs.com renders the README's relative links (`MIGRATION.md`,
+      `interop-tests/README.md`) for a Gitea `repository`; for a GitHub one it resolves them against the
+      default branch.
 
 ## Worth doing, not blocking
 
