@@ -74,8 +74,8 @@ Every defect listed in the AGENTS.md table has a regression test naming the beha
 
 ## Move the repository to Gitea
 
-`gitea.larvit.se/larvit/smpp-js` is the repository. `github.com/larvit/smpp-js` becomes a push mirror
-of it and the place issues are filed. Maintainer's calls, 2026-09-13 and 2026-09-14.
+`gitea.larvit.se/larvit/smpp-js` is the repository. `github.com/larvit/smpp-js` mirrors it and is the
+place issues are filed. Maintainer's calls, 2026-09-13 and 2026-09-14.
 
 - [x] `larvit/smpp-js` holds `main`, from `typescript`, and `v0.4.0`, from `master`. `rewrite-base`
       and the `renovate/*` branches stayed behind.
@@ -106,8 +106,8 @@ of it and the place issues are filed. Maintainer's calls, 2026-09-13 and 2026-09
 ## Retire the GitHub repository
 
 Nothing here starts before 0.5.0 is published. Maintainer's call, 2026-09-14. Then in this order:
-the push mirror replaces GitHub's branches with Gitea's, which closes every pull request based on
-`master` without a reply, and GitHub refuses to delete the default branch it syncs over.
+deleting GitHub's old branches closes every pull request based on them without a reply, and GitHub
+refuses to delete its default branch.
 
 - [ ] Close the backlog below.
 - [ ] Close [#71](https://github.com/larvit/larvitsmpp/pull/71), pointing at Gitea.
@@ -115,7 +115,10 @@ the push mirror replaces GitHub's branches with Gitea's, which closes every pull
       URL in `package.json` resolves from then on.
 - [ ] Push `main` and make it GitHub's default branch.
 - [ ] Remove Renovate and CodeRabbit from the GitHub repository.
-- [ ] Add it to Gitea as a push mirror, with a GitHub credential that can write to it.
+- [ ] Mirror to GitHub from `.gitea/workflows/mirror.yaml`, with `MIRROR_GITHUB_TOKEN`. Every push
+      sends all of Gitea's branches and tags, overwriting a same-named ref, and a branch or tag deleted
+      on Gitea is deleted there too. Refs only GitHub has, its pull requests and forks stay, so one can
+      be taken in. Maintainer's call, 2026-09-14.
 
 ## Close the GitHub backlog
 
