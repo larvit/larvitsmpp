@@ -1023,3 +1023,10 @@ Grouped by what each one constrains.
   their own. The four files that are not tests are the exception the rule needs stated:
   `dummy-smsc.ts`, `raw-pdus.ts`, `reference-smpp.d.ts` and `teardown.ts` answer no question and are
   named for what they hold.
+
+- **CI tests on Linux only; `src/` keeps off what is known to break on macOS or Windows.** Maintainer's
+  call, 2026-09-14. Nothing verifies either platform, so the code avoids what is known to differ there:
+  shelling out, a path joined by hand, a signal Windows does not deliver, a Unix socket or a file mode.
+  That binds what `dist/` runs; the container tooling, `interop-tests/` and the `package.json` scripts
+  run on Linux by goal 9. Rejected: macOS and Windows runners, on GitHub's mirror or as Gitea
+  host-mode runners on a Windows VM and a Mac.

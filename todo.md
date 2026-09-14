@@ -289,8 +289,14 @@ Each lands under AGENTS.md goal 6: an option or a hook, with the call that passe
 
 - [ ] **Failover across SMSC hosts.** Maintainer's call, 2026-09-14. `client()` takes one `host` and
       `port`; Kannel, Jasmin and php-smpp take several. A list the reconnect loop walks holds only
-      which host the one session is on, so it needs no store. Open: in order or round robin, and when
-      to try the first host again.
+      which host the one session is on, so it needs no store. Two options, both maintainer's calls:
+      - **Order**, `fixed` or round robin, default `fixed`. Fixed starts every reconnect at the first
+        host; round robin at the host after the one the link was last on.
+      - **Starting over**, a boolean, default on: once the last host has been tried, go back to the
+        first. Off ends the session once the last host fails, as a drop does under `reconnect: false`.
+      Open: how the list and today's `host` and `port` share one spelling; whether the backoff grows
+      per host or per pass; and whether round robin with starting over off still tries the hosts
+      before the one it started at.
 
 ### The server
 
@@ -379,22 +385,6 @@ Each lands under AGENTS.md goal 6: an option or a hook, with the call that passe
       `--test-coverage-branches` and `--test-coverage-functions`, which Node 22 and later take — a job
       of its own on 24, since the matrix runs compiled JavaScript — and add it to `main`'s required
       checks. Raise the floor as coverage rises; never lower it.
-
-- [ ] **Tests on macOS and Windows, on Gitea runners.** Gitea 1.26.4 runs the Ubuntu jobs on
-      `dedicated-runner`; a Windows and a macOS host each running `act_runner` in host mode, under
-      labels such as `windows-2025:host` and `macos-15:host`, run the same `setup-node` matrix and can
-      be required checks on `main`. Registered ephemeral — the runner API already carries the flag — a
-      runner takes one job and leaves, so its host can be reset from a snapshot and registered again;
-      that loop is ours to script. CI already installs Node with `setup-node` rather than through
-      `compose.yaml`, so goal 9 needs no new exception.
-      - **Windows:** a KVM VM on our metal, or `dockur/windows`, the same VM packaged as a container,
-        which needs `/dev/kvm`. Either needs a Windows licence; the evaluation editions expire. Node
-        on `PATH`, since host mode runs `actions/checkout` and `actions/setup-node` with the host's
-        `node`. `cmd` hands the scripts' `*.test.*` globs to Node unexpanded, which Node 21 and later
-        expand themselves, so Node 18 and 20 cannot run there as the scripts stand.
-      - **macOS:** Apple hardware. Apple's licence allows macOS guests only on Apple hardware, so not
-        on our metal: a Mac mini running `act_runner` itself, or Tart VMs on it, two macOS guests at a
-        time.
 
 - [ ] **Mutation testing.** `@stryker-mutator/tap-runner` runs `node:test` suites and measures whether
       a test notices a change, which coverage cannot; `@semyonf/smpp` runs Stryker in CI. The session
