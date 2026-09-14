@@ -332,7 +332,14 @@ Each lands under AGENTS.md goal 6: an option or a hook, with the call that passe
       `match`, whether `detect()` may pick it, and enough for `splitMessage()` to budget a segment
       without halving a character. Take encodings as a client or server option rather than mutating a
       module table as `smpp` does, so two sessions in one process cannot disagree about a name. A taken
-      name is an `err`. Settle `consts.ENCODING`'s names first.
+      name is an `err`. Settle `consts.ENCODING`'s names first. An entry may claim a `data_coding` a
+      built-in already uses, maintainer's call, 2026-09-14: an SMSC whose default alphabet, 0x00, is
+      Latin-1 needs Latin-1 written and read under it
+      ([#23](https://github.com/larvit/larvitsmpp/issues/23)). The entry then owns that coding on its
+      session both ways: `encodingByDataCoding()` resolves to it, `detect()` tries it in the
+      built-in's place, and naming the displaced built-in is an `err` naming the entry. Two entries
+      on one coding are an `err`. Settle whether a claim on 0x00 reaches the class groups
+      `messageClassEncoding()` reads GSM 7-bit from, which `flash` writes under.
 
 - [ ] **The alphabets SMPP 3.4 names that no encoding carries.** `consts.ENCODING` lists the
       `data_coding` ids (5.2.19); only `ASCII`, `LATIN1` and `UCS2` can be sent. Those with a published
