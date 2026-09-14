@@ -1,7 +1,6 @@
 name: Mirror
 
 on:
-  delete:
   push:
   schedule:
     - cron: '17 3 * * *'
@@ -12,11 +11,10 @@ permissions:
 
 jobs:
   push:
-    if: github.event_name != 'delete'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # Gitea 1.26 rolls back a run whose jobs share a group, so the delete job lives in mirror-delete.yaml.
     concurrency:
-      cancel-in-progress: false
       group: mirror
     steps:
       - name: Push every branch and tag to GitHub, overwriting a same-named ref
@@ -29,39 +27,3 @@ jobs:
           git -C mirror.git -c credential.helper= \
             -c credential.helper='!f() { echo username=x-access-token; echo "password=$MIRROR_GITHUB_TOKEN"; }; f' \
             push "$MIRROR_URL" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
-
-  delete:
-    if: github.event_name == 'delete'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    concurrency:
-      cancel-in-progress: false
-      group: mirror
-    steps:
-      - name: Delete the ref from GitHub once Gitea no longer has it
-        env:
-          MIRROR_GITHUB_TOKEN: ${{ secrets.MIRROR_GITHUB_TOKEN }}
-          MIRROR_URL: https://github.com/larvit/smpp-js.git
-          REF: ${{ github.event.ref }}
-          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}.git
-        run: |
-          # Gitea Actions sends the full ref name here, where its webhooks send the short one.
-          case "$REF" in
-            refs/heads/*|refs/tags/*) ;;
-            *) echo "delete event names '$REF', not a full branch or tag ref"; exit 1 ;;
-          esac
-
-          # ls-remote --exit-code: 0 the ref exists, 2 it does not, anything else the remote could not be read.
-          on_gitea=0
-          git ls-remote --exit-code "$SOURCE_URL" "$REF" > /dev/null || on_gitea=$?
-          if [ "$on_gitea" -ne 2 ]; then exit "$on_gitea"; fi
-
-          on_github=0
-          git ls-remote --exit-code "$MIRROR_URL" "$REF" > /dev/null || on_github=$?
-          if [ "$on_github" -eq 2 ]; then exit 0; fi
-          if [ "$on_github" -ne 0 ]; then exit "$on_github"; fi
-
-          git init --bare --quiet mirror.git
-          git -C mirror.git -c credential.helper= \
-            -c credential.helper='!f() { echo username=x-access-token; echo "password=$MIRROR_GITHUB_TOKEN"; }; f' \
-            push "$MIRROR_URL" ":$REF"

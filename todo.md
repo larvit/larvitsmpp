@@ -115,10 +115,10 @@ refuses to delete its default branch.
       URL in `package.json` resolves from then on.
 - [ ] Push `main` and make it GitHub's default branch.
 - [ ] Remove Renovate and CodeRabbit from the GitHub repository.
-- [ ] Mirror to GitHub from `.gitea/workflows/mirror.yaml`, with `MIRROR_GITHUB_TOKEN`. Every push
-      sends all of Gitea's branches and tags, overwriting a same-named ref, and a branch or tag deleted
-      on Gitea is deleted there too. Refs only GitHub has, its pull requests and forks stay, so one can
-      be taken in. Maintainer's call, 2026-09-14.
+- [ ] Mirror to GitHub from `.gitea/workflows/mirror.yaml` and `mirror-delete.yaml`, with
+      `MIRROR_GITHUB_TOKEN`. A push of a commit carrying the workflow, and the nightly run, send all of
+      Gitea's branches and tags, overwriting a same-named ref; a branch or tag deleted on Gitea is
+      deleted there too. Refs only GitHub has stay. Maintainer's call, 2026-09-14.
 
 ## Close the GitHub backlog
 
