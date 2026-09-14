@@ -160,12 +160,13 @@ the push mirror replaces GitHub's branches with Gitea's, which closes every pull
       [#70](https://github.com/larvit/larvitsmpp/pull/70) is the open `uuid` advisory GitHub reports
       on the default branch; it disappears with the runtime dependencies rather than being fixed.
 
-[#60](https://github.com/larvit/larvitsmpp/issues/60) is Renovate's dashboard — close it with
-Renovate's removal from GitHub.
+[#60](https://github.com/larvit/larvitsmpp/issues/60) is Renovate's dashboard and stays open after
+the rewrite, for a dependency added later. Maintainer's call, 2026-09-14.
 
-**Leave open:** [#8](https://github.com/larvit/larvitsmpp/issues/8), the socket's remote host and
-port on log messages. Only `server - incoming connection` carries them today; putting them on every
-session message is a change to every call site.
+**Close as tracked here**, the reply saying it will be implemented on Gitea:
+
+- [ ] [#8](https://github.com/larvit/larvitsmpp/issues/8) The socket's remote host and port on log
+      messages: under Worth doing, not blocking. Maintainer's call, 2026-09-14.
 
 ## Worth doing, not blocking
 
@@ -224,6 +225,13 @@ session message is a change to every call site.
       `session-extras.test.ts` and `readme.test.ts` reject after 5000 ms; `session.test.ts` and
       `tls.test.ts` wait forever, so an event that never fires still hangs the run the way an
       unclosed listener used to. One shared, guarded copy closes the rest of that class.
+
+- [ ] **The peer's address and bind on every session log message.** `remoteAddress` and `remotePort`
+      reach only `server - incoming connection`, and `systemId` only the bind messages, so with
+      several peers connected one session's lines cannot be told apart, and a reconnect leaves nothing
+      stable to filter on. Carrying them in every session message's metadata is a change to every
+      call site. From [#8](https://github.com/larvit/larvitsmpp/issues/8), closed there as tracked
+      here; maintainer's call, 2026-09-14.
 
 - [ ] **A peer whose message ids share one base logs a refused merge on every send.** `smsc01-000123`
       and `smsc01-000124` carry the same base, so `DlrMerger` merges the first message and refuses
