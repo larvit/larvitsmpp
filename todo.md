@@ -100,7 +100,7 @@ place issues are filed. Maintainer's calls, 2026-09-13 and 2026-09-14.
 - [x] `NPM_TOKEN`, which `.gitea/workflows/release.yaml` needs, is a Gitea organization secret.
 - [x] Tag `v0.5.0` on Gitea to publish. The first publish creates `@larvit/smpp` on npm, provided the
       token can publish under `@larvit`.
-- [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
+- [x] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.
 
 ## Retire the GitHub repository
@@ -109,39 +109,44 @@ Nothing here starts before 0.5.0 is published. Maintainer's call, 2026-09-14. Th
 deleting GitHub's old branches closes every pull request based on them without a reply, and GitHub
 refuses to delete its default branch.
 
-- [ ] Close the backlog below.
-- [ ] Close [#71](https://github.com/larvit/larvitsmpp/pull/71), pointing at Gitea.
-- [ ] Rename `larvit/larvitsmpp` to `larvit/smpp-js`. GitHub redirects the old URLs, and the `bugs`
+- [x] Close the backlog below.
+- [x] Close [#71](https://github.com/larvit/larvitsmpp/pull/71), pointing at Gitea.
+- [x] Rename `larvit/larvitsmpp` to `larvit/smpp-js`. GitHub redirects the old URLs, and the `bugs`
       URL in `package.json` resolves from then on.
-- [ ] Push `main` and make it GitHub's default branch.
-- [ ] Remove Renovate and CodeRabbit from the GitHub repository.
-- [ ] Mirror to GitHub from `.gitea/workflows/mirror.yaml` and `mirror-delete.yaml`, with
+- [x] Push `main` and make it GitHub's default branch.
+- [x] Renovate is Silent for this repository in the Mend Developer Portal, so it opens nothing on
+      GitHub while the organization-wide installation stays. CodeRabbit stays installed.
+      Maintainer's call, 2026-09-14.
+- [x] Mirror to GitHub from `.gitea/workflows/mirror.yaml` and `mirror-delete.yaml`, with
       `MIRROR_GITHUB_TOKEN`. A push of a commit carrying the workflow, and the nightly run, send all of
       Gitea's branches and tags, overwriting a same-named ref; a branch or tag deleted on Gitea is
       deleted there too. Refs only GitHub has stay. Maintainer's call, 2026-09-14.
+- [x] GitHub's wiki, projects and Actions are off, the Travis app and webhook are gone, and its About
+      matches the package. Gitea carries the same description, website and topics, and sends issues
+      to GitHub as its external tracker.
 
 ## Close the GitHub backlog
 
 **Answer and close as fixed by 0.5.0**, the reply naming what fixed it:
 
-- [ ] [#2](https://github.com/larvit/larvitsmpp/issues/2) Tests for the README examples:
+- [x] [#2](https://github.com/larvit/larvitsmpp/issues/2) Tests for the README examples:
       `test/readme.test.ts`.
-- [ ] [#3](https://github.com/larvit/larvitsmpp/issues/3) Tests for flash messages:
+- [x] [#3](https://github.com/larvit/larvitsmpp/issues/3) Tests for flash messages:
       `test/session.test.ts`.
-- [ ] [#4](https://github.com/larvit/larvitsmpp/issues/4) DLR errors with `message_state` missing:
+- [x] [#4](https://github.com/larvit/larvitsmpp/issues/4) DLR errors with `message_state` missing:
       `dlrFromPdu()` parses the `stat:` receipt text when the TLVs are absent.
-- [ ] [#13](https://github.com/larvit/larvitsmpp/issues/13) Limit a long SMS to fewer segments: the
+- [x] [#13](https://github.com/larvit/larvitsmpp/issues/13) Limit a long SMS to fewer segments: the
       `maxSegments` send option.
-- [ ] [#16](https://github.com/larvit/larvitsmpp/issues/16) Support all three bind types: bound and
+- [x] [#16](https://github.com/larvit/larvitsmpp/issues/16) Support all three bind types: bound and
       enforced in both directions.
-- [ ] [#17](https://github.com/larvit/larvitsmpp/issues/17) `addr_ton`/`addr_npi` should be
+- [x] [#17](https://github.com/larvit/larvitsmpp/issues/17) `addr_ton`/`addr_npi` should be
       settable: `sendSms()` takes all four, documented and tested.
-- [ ] [#20](https://github.com/larvit/larvitsmpp/issues/20) Tests fail on current dependency
+- [x] [#20](https://github.com/larvit/larvitsmpp/issues/20) Tests fail on current dependency
       versions: the mocha suite is gone; `node:test` on Node 18 to 26.
-- [ ] [#33](https://github.com/larvit/larvitsmpp/issues/33) Large inbound text arrives as raw
+- [x] [#33](https://github.com/larvit/larvitsmpp/issues/33) Large inbound text arrives as raw
       `Buffer` segments: `IncomingRequests` reassembles a UDH-carrying `deliver_sm` into one `sms`
       event.
-- [ ] [#68](https://github.com/larvit/larvitsmpp/pull/68), a pull request: `message_id` in
+- [x] [#68](https://github.com/larvit/larvitsmpp/pull/68), a pull request: `message_id` in
       `submit_sm_resp`, spec DLR codes. All four hold: `sendResp()` always answers a `message_id`,
       per segment; `stat:UNDELIV` is the 7-character code. Credit the reporter — the fork found real
       defects.
@@ -149,7 +154,7 @@ refuses to delete its default branch.
 **Close as superseded**, all against 0.4.0 dependencies the rewrite does not have — `async`,
 `coveralls`, `eslint`, `iconv-lite`, `larvitutils`, `mocha`, `mocha-eslint`, `portfinder`, `uuid`:
 
-- [ ] [#40](https://github.com/larvit/larvitsmpp/pull/40),
+- [x] [#40](https://github.com/larvit/larvitsmpp/pull/40),
       [#41](https://github.com/larvit/larvitsmpp/pull/41),
       [#42](https://github.com/larvit/larvitsmpp/pull/42),
       [#45](https://github.com/larvit/larvitsmpp/pull/45),
@@ -169,7 +174,7 @@ the rewrite, for a dependency added later. Maintainer's call, 2026-09-14.
 
 **Close as tracked here**, the reply saying it will be implemented on Gitea:
 
-- [ ] [#8](https://github.com/larvit/larvitsmpp/issues/8) The socket's remote host and port on log
+- [x] [#8](https://github.com/larvit/larvitsmpp/issues/8) The socket's remote host and port on log
       messages: under Worth doing, not blocking. Maintainer's call, 2026-09-14.
 
 ## Worth doing, not blocking
@@ -406,6 +411,11 @@ Each lands under AGENTS.md goal 6: an option or a hook, with the call that passe
       never inside it.
 
 ## Declined
+
+- **A check that warns before `MIRROR_GITHUB_TOKEN` expires.** Gitea mails no one about a failed
+  scheduled run, since its Actions bot triggers those, so a nightly check would fail unseen. The
+  maintainer relies on GitHub's own expiry reminders, and on the mirror's first failed push run after
+  expiry, which mails whoever pushed. Maintainer's call, 2026-09-14.
 
 - **CommonJS.** ESM only, maintainer's call reaffirmed 2026-09-14, though `node-smpp-next` ships both.
   `require()` of an ES module works unflagged from Node 20.19 and 22.12.
