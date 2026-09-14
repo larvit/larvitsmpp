@@ -7,7 +7,6 @@ permissions:
   contents: read
 
 jobs:
-  # No concurrency group: Gitea cancels a queued run when the next one in its group arrives, dropping the delete.
   delete:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

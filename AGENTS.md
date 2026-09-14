@@ -148,9 +148,9 @@ docker compose run --rm node npm run build
   TypeScript 7 once that constraint lifts.
 - GitHub mirrors Gitea through `.gitea/workflows/mirror.yaml`, which never prunes, and
   `mirror-delete.yaml`, one run per deleted ref. A delete run that fails or outlives Gitea's queue
-  timeout leaves the ref on GitHub until it is re-run. Accepted: a stale ref there is harmless, and
-  refs only GitHub has must survive. Maintainer's call, 2026-09-14; valid while nothing deploys from
-  GitHub.
+  timeout, or a push run that cloned before the delete, leaves the ref on GitHub until the delete
+  run is re-run. Accepted: a stale ref there is harmless, and refs only GitHub has must survive.
+  Maintainer's call, 2026-09-14; valid while nothing deploys from GitHub.
 
 ## Defects found in 0.4.0
 

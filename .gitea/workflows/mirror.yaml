@@ -13,7 +13,7 @@ jobs:
   push:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Gitea 1.26 rolls back a run whose jobs share a group, so the delete job lives in mirror-delete.yaml.
+    # Gitea cancels a queued job in this group when the next one arrives; only the full push may join.
     concurrency:
       group: mirror
     steps:
