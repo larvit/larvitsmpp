@@ -19,7 +19,7 @@ RUN git clone https://github.com/fizzed/cloudhopper-smpp.git /src \
 
 # A self-signed cert this image trusts, generated at build time - never committed. server.key/crt
 # are PEM (for our server()'s own tls option); truststore.jks is what the driver's SSL client trusts.
-FROM eclipse-temurin:21.0.8_9-jre-jammy AS certs
+FROM eclipse-temurin:21.0.12_8-jre-jammy AS certs
 
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends openssl \
@@ -42,7 +42,7 @@ COPY pom.xml .
 COPY src ./src
 RUN mvn -q package -DskipTests
 
-FROM eclipse-temurin:21.0.8_9-jre-jammy AS runtime
+FROM eclipse-temurin:21.0.12_8-jre-jammy AS runtime
 
 WORKDIR /app
 COPY --from=build /driver/target/driver.jar ./driver.jar

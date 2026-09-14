@@ -22,7 +22,7 @@ COPY pom.xml .
 COPY src ./src
 RUN mvn -q package -DskipTests
 
-FROM eclipse-temurin:21.0.8_9-jre-jammy AS runtime
+FROM eclipse-temurin:21.0.12_8-jre-jammy AS runtime
 
 WORKDIR /app
 COPY --from=build /driver/target/driver.jar ./driver.jar
