@@ -32,16 +32,22 @@ one wins. They do not override the hard rules below.
    about a message the application sent reaches it as a report rather than as an inbound message, and
    says whether it is final, so nothing has to read the PDU to tell those apart. An option retunes a
    default or opts out of it; an option does not switch on the thing the caller obviously wanted.
-6. **A small, stable public surface over reshapeable internals.** Only what `src/index.ts` exports is
+6. **Configurable and extendable, never at the defaults' expense.** Where an application needs other
+   than the default and cannot build it from what is exported — a rate limit counted per PDU, an
+   alphabet, a receipt format — it gets an option or a hook rather than a fork. A call that passes no
+   options stays exactly as easy and as safe, and a hook is a seam the library calls, never a way into
+   its internals.
+7. **A small, stable public surface over reshapeable internals.** Only what `src/index.ts` exports is
    published. A new option has to beat "the application can do this itself", and has to keep a
    promise this library can verify. The low-level surface is a passthrough: policy binds what the
    library composes, never what the caller wrote.
-7. **Nothing that needs state wider than one session.** No throughput throttling, no persistence
-   across a restart, no coordination between processes — and no seam handing the application state to
+8. **Nothing that needs state wider than one session.** No persistence across a restart, no
+   coordination between processes, no pool of sessions — and no seam handing the application state to
    persist for one of those either, which commits to the same scope through the back door and
-   publishes an internal shape to do it. This is the scope floor, and it is why an otherwise
-   reasonable feature is declined without a fresh argument each time.
-8. **It builds, tests and runs the same everywhere.** Container-only toolchain, no runtime
+   publishes an internal shape to do it. A limit wider than a session, such as an account's rate
+   limit, is the application's to hold, behind a hook the library calls (goal 6). This is the scope
+   floor, and it is why an otherwise reasonable feature is declined without a fresh argument each time.
+9. **It builds, tests and runs the same everywhere.** Container-only toolchain, no runtime
    dependencies, the Node 18 floor verified in CI rather than asserted, every README example executed
    by the suite.
 
@@ -289,7 +295,7 @@ Grouped by what each one constrains.
 - **`PduRefusedError` is exported, and `sessionError` names it in the event's type.** Maintainer's
   call, 2026-09-05, from a product review: one event carries both a PDU the peer malformed and the
   session's own failure, and `instanceof` is the only way to separate them that hard rule 4 allows —
-  without the class as a value an application is left string-matching `err.message`. Goal 6 is paid by
+  without the class as a value an application is left string-matching `err.message`. Goal 7 is paid by
   exporting the discriminant and the struct it carries and nothing else: `PduHeader` is named because
   an application that logs or forwards a header wants a name for it, `PduRefusalReason` is not
   because `reason` is compared against string literals, and an accessor
@@ -316,7 +322,7 @@ Grouped by what each one constrains.
   runtime: `Object.hasOwn(encodings, x)` is the only test the published surface offered and it
   narrows nothing, so `isEncodingName()` is exported beside `isCommandName()` and `isErrorName()`,
   which serve their own tables that way. Rejected: a `Result` signature on all three, which costs
-  every typed consumer a narrow forever — goal 6, and the tag is the last cheap chance to spend it —
+  every typed consumer a narrow forever — goal 7, and the tag is the last cheap chance to spend it —
   to guard a state the compiler refuses. Where the domain really is open the check is already there:
   `sendSms()` takes its options as `unknown` and refuses `encoding` by name, which is what a caller
   without types gets. `smppTime.encode()` is where that reasoning lands the other way and is recorded
@@ -421,13 +427,13 @@ Grouped by what each one constrains.
   the suite ran took the 0x40 this library sends on a concatenated segment, but Route Mobile and
   Kaleyra both document `esm_class` 0x43 for one, and a caller facing either had to hand-build every
   segment through `send()` — giving up the split, the per-segment ids, the send window and the
-  receipt merge, which is what goal 6 means by beating "the application can do this itself". The four
+  receipt merge, which is what goal 7 means by beating "the application can do this itself". The four
   modes of SMPP 3.4 5.2.12 are a `MESSAGING_MODE` constant group and the option takes one of their
   names, so 0x43 is a composition this library makes rather than a value a caller states, and the UDH
   indicator a segment carrying a header needs cannot be cleared by anything the option can express.
   It takes three of those four: 2.10.3 carries transaction mode on `data_sm` alone, and none goes out
   of here, so `FORWARD` stays in the group that mirrors the spec table and `sendSms()` refuses it by
-  that reason rather than as an unknown name — a mode this library cannot deliver is a promise goal 6
+  that reason rather than as an unknown name — a mode this library cannot deliver is a promise goal 7
   will not let it make. `DATAGRAM` with `dlr: true` is refused on the same footing: 2.10.2 defines the
   report away, so arming `DlrMerger` for one is goal 2's wrong answer, where the mode alone and a
   report under any other mode both go out untouched. Those three names left `ESM_CLASS`, where they
@@ -484,7 +490,7 @@ Grouped by what each one constrains.
   `encodingByDataCoding()` reads the alphabet off that same test rather than repeating the group
   masks beside it. It is exported for the reason `concatOf()` is — an application that needs a class
   other than 0 would otherwise rewrite the read this fixed. Rejected: a `messageClass` field on the
-  `sms` event, which pays goal 6 for three classes nothing here acts on, where the boolean the
+  `sms` event, which pays goal 7 for three classes nothing here acts on, where the boolean the
   application already had covers the one it does. Compressed text is out of scope and stays out —
   nothing here implements 3GPP TS 23.042, so a compressed body reaches the application as whatever
   its declared alphabet makes of it — but bit 5 does not move the class bits, so 0x30 is read as
@@ -666,14 +672,14 @@ Grouped by what each one constrains.
   returned `42 44 46` — `"BDF"` — reported as built, while a string `message_payload` was cut to its
   low octets whatever `data_coding` said. Goal 2 owns it, as it owns the `sendSms()` guard above.
   The line falls at the string: a `Buffer` is octets the caller already chose and goes out as given
-  under any `data_coding`, which is what keeps goal 6's escape hatch open — the raw UDH, 8-bit binary
+  under any `data_coding`, which is what keeps goal 7's escape hatch open — the raw UDH, 8-bit binary
   and deliberately malformed bodies `interop-tests/` builds are all still buildable — and a string
   with no `data_coding` is untouched, detection carrying every character it was picked for. The
   guard is `unencodable()` again rather than a second reading, and `unencodableText()` is the
   character, its code point and its index said once for both refusals — unexported where
   `unencodable()` is published, since wording `{ char, index }` into a sentence rewrites no read a
   caller would get wrong, where asking the codec is, and publishing it would freeze this library's
-  error prose as API for an application whose own refusal should read like itself. Goal 6, from the
+  error prose as API for an application whose own refusal should read like itself. Goal 7, from the
   architecture review of [#99](https://github.com/larvit/larvitsmpp/pull/99), 2026-09-09. It is
   reached through
   `encodeBody()` in `message.ts`, which is where the `data_coding`-to-text pair already lives:
@@ -828,7 +834,7 @@ Grouped by what each one constrains.
   dropped with the link — is traffic the peer will not send again, so each one reaches `sessionError`
   as well as the log. Rejected there: an exported `MessageLostError` carrying the group, on the
   `PduRefusedError` pattern — no `sms` ever fired for that group, so there is nothing in it the
-  application could act on, and goal 6 does not buy a second exported class to make a count
+  application could act on, and goal 7 does not buy a second exported class to make a count
   distinguishable. Accepted: a completing segment whose own answer the socket would not carry still
   reaches the application, because the message is whole and correct and the failed answer is on
   `sessionError` — a peer that re-sends after the drop is the smaller risk than dropping a message
@@ -840,7 +846,7 @@ Grouped by what each one constrains.
   of the multipart change: `server()` filled the session's only `onRequest` slot, so the escape hatch
   the error above names was reachable only by hand-wiring a `Session` over a raw socket, giving up
   bind acceptance, `authenticate`, the session set and the drain `close()` runs over it — which is
-  what goal 6 means by beating "the application can do this itself". What the library verifies is the
+  what goal 7 means by beating "the application can do this itself". What the library verifies is the
   ordering rather than the hook's honesty about answering: the hook is consulted only for a non-bind
   request on a session already bound, so no bind — a second one on a live session included — and
   nothing a peer sends before one can be intercepted however the hook is written. One

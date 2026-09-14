@@ -9,7 +9,8 @@ govern it, and nothing here is a source anything else may cite.
 ## Status
 
 The rewrite is **feature complete and green**: the suite, lint and typecheck are clean on Node 18
-to 26. What is left is release work and a few things worth adding before or after 0.5.0.
+to 26, and 0.5.0 is on npm. What is left is housekeeping around the release, a few things worth
+adding, and the gaps a comparison with other SMPP libraries found.
 
 ## The agreed API
 
@@ -97,7 +98,7 @@ of it and the place issues are filed. Maintainer's calls, 2026-09-13 and 2026-09
 
 - [x] 0.5.0 rather than 1.0.0, while usage is this low. Maintainer's call, 2026-09-14.
 - [x] `NPM_TOKEN`, which `.gitea/workflows/release.yaml` needs, is a Gitea organization secret.
-- [ ] Tag `v0.5.0` on Gitea to publish. The first publish creates `@larvit/smpp` on npm, provided the
+- [x] Tag `v0.5.0` on Gitea to publish. The first publish creates `@larvit/smpp` on npm, provided the
       token can publish under `@larvit`.
 - [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.
@@ -242,9 +243,6 @@ the rewrite, for a dependency added later. Maintainer's call, 2026-09-14.
       end to end. The interop suite is the natural place.
 - [ ] **Move to TypeScript 7** once `typescript-eslint` supports it; `renovate.json` pins TypeScript
       below 6.1 for exactly that reason.
-- [ ] **Coverage reporting.** `node --test --experimental-test-coverage` works today; nothing
-      publishes the numbers.
-
 - [ ] **An `onReceipt` hook.** Receipt text is only loosely specified and operators disagree on it,
       but `dlrFromPdu()` is wired into `IncomingRequests` with no seam of its own: an application
       facing a format we do not parse has to take the whole PDU on `onRequest` and reimplement the
@@ -252,18 +250,167 @@ the rewrite, for a dependency added later. Maintainer's call, 2026-09-14.
       Mirror the `onRequest` seam — return a `Dlr` to own the receipt, `undefined` to fall through
       to the built-in parser.
 
+## Gaps against other SMPP libraries
+
+From comparing 0.5.0 with `smpp`, `@semyonf/smpp`, `@leissner/node-red-smpp`, `node-smpp-next`,
+`smpp-js-sdk`, `smppjs`, cloudhopper-smpp, jsmpp, go-smpp, Kannel, Jasmin and php-smpp, 2026-09-14.
+Each lands under AGENTS.md goal 6: an option or a hook, with the call that passes none unchanged.
+
+### Sending
+
+- [ ] **A limiter hook, with a messages-per-second cap built on it.** Maintainer's call, 2026-09-14,
+      reversing the earlier decline: Kannel, Jasmin, go-smpp and `smpp-js-sdk` all limit throughput.
+      Count PDUs, not `sendSms()` calls — a long message is one `submit_sm` per segment and the
+      operator counts those, which an application wrapping `sendSms()` cannot see. The hook is where an
+      account-wide limit lives: a bucket the application holds across sessions or processes, which
+      goal 8 keeps out of here. The built-in cap is the per-session case; the default stays uncapped.
+      Open: the hook's shape (a wait that resolves when a PDU may go, cut short by the send's
+      `signal`), which requests it gates — messages, never `enquire_link`, `unbind` or a response — and
+      whether its wait counts against `responseTimeout`.
+
+- [ ] **Back off and resend on `ESME_RTHROTTLED`.** The SMSC refused the PDU, so resending cannot
+      duplicate it and goal 2 holds, and the retry needs nothing wider than the session. Needs a
+      decision: on by default with a bounded budget, as goal 5 suggests, and whether `ESME_RMSGQFUL`
+      counts too. A throttled answer is also what a limiter hook wants to hear about.
+
+- [ ] **`sendSms()` takes the rest of `submit_sm`.** `service_type`, `priority_flag`, `protocol_id`,
+      `replace_if_present_flag` and TLVs on every segment, and `registered_delivery` beyond final
+      receipts: on failure only, and intermediate notifications. Today each needs `send()`, which gives
+      up splitting, the alphabet checks and receipt merging. TLVs are the common case: India's DLT
+      rules put `PE_ID` (0x1400) and `TEMPLATE_ID` (0x1401) on every `submit_sm`, and USSD rides on
+      `ussd_service_op`. Refuse a TLV the send composes itself (`sar_*`, `message_payload`). Open: one
+      spelling for receipts, since `dlr: true` and a raw `registered_delivery` could disagree, and
+      whether goal 4's rule on optional parameters binds a TLV the caller named.
+
+- [ ] **Choose how a long message is spelled on the wire.** Only an 8-bit UDH reference goes out
+      (`message.ts`), though the reader takes a 16-bit UDH, `sar_*` and `message_payload` alike. Some
+      SMSCs take only `sar_*` or `message_payload`; php-smpp offers all three. A 16-bit reference also
+      makes a collision rarer: the 8-bit one wraps every 255 sends on a session.
+
+- [ ] **Failover across SMSC hosts.** `client()` takes one `host` and `port`; Kannel, Jasmin and
+      php-smpp take several. Asked 2026-09-14 whether this needs state wider than a session: a list the
+      reconnect loop walks holds only which host the one session is on, so goal 8 does not decline it,
+      unlike a pool (Declined). Needs a decision: in order or round robin, and when to try the first
+      host again.
+
+### The server
+
+- [ ] **`sendSms()` on a `server()` session sends `submit_sm` toward the ESME.** Kannel answers
+      `ESME_RINVCMDID` (`interop-tests/kannel.test.ts`, "MO to Kannel"), and goal 1 says that PDU never
+      goes out. A server has no other way to send an MO message either: `sendMo()` in that test builds
+      one from `submitSmParams()` and `ConcatReference`, neither exported. Choosing `deliver_sm` by
+      `linkEnd` gives MO messages the splitting and checks, keeps one method for one goal, and refuses
+      the options 3.4 has `deliver_sm` leave empty (`scheduleDeliveryTime`, `validityPeriod`).
+
+- [ ] **Error TLVs on a response this library builds.** `buildBody()` in `pdu.ts` writes no body for
+      any non-zero status, so a server cannot answer a `data_sm` with `delivery_failure_reason`,
+      `network_error_code` or `additional_status_info_text`, and a 5.0 peer gets none of its error TLVs.
+      3.4 omits the body on error for `submit_sm_resp` by name; read each response's section before
+      widening it. Reading needs nothing: an error response carrying a body already parses.
+
+- [ ] **PROXY protocol on `server()`.** Behind HAProxy or an AWS NLB every session's remote address is
+      the balancer's, so `authenticate` cannot allow-list by IP and logs name the wrong peer. v1 is
+      text; v2 is binary and the only one an NLB sends. `smpp` accepts v1 from anyone; accept either
+      only from addresses the option names.
+
+- [ ] **`outbind`.** In the command table, handled nowhere: a client cannot take an SMSC's `outbind`
+      and bind back, and `server()` cannot send one. Rare; take it on with a peer that uses it.
+
+- [ ] **Register vendor-specific commands.** 3.4 reserves `command_id` `0x00010200`–`0x000102FF` for
+      SMSC vendors; today one arrives as a `PduRefusedError`. `smpp` has `addCommand()`. The same
+      shape question as registering an encoding.
+
+### Encodings
+
+- [ ] **Register a custom encoding.** Maintainer's ask, 2026-09-14. `EncodingName` is a closed union
+      of three (`defs/encodings.ts`). An entry needs a name, a `data_coding`, `encode`, `decode`,
+      `match`, whether `detect()` may pick it, and enough for `splitMessage()` to budget a segment
+      without halving a character. Take encodings as a client or server option rather than mutating a
+      module table as `smpp` does, so two sessions in one process cannot disagree about a name. A taken
+      name is an `err`. Settle `consts.ENCODING`'s names first.
+
+- [ ] **The alphabets SMPP 3.4 names that no encoding carries.** `consts.ENCODING` lists the
+      `data_coding` ids (5.2.19); only `ASCII`, `LATIN1` and `UCS2` can be sent. Those with a published
+      definition, and what each costs:
+      - 0x01 IA5 (ITU-T T.50, ASCII in practice): trivial.
+      - 0x06 ISO-8859-5 (Cyrillic) and 0x07 ISO-8859-8 (Hebrew): 96-entry tables.
+      - 0x05 JIS X 0208, 0x0D JIS X 0212, 0x0A ISO-2022-JP and 0x0E KS C 5601: two-octet sets.
+        `TextDecoder` reads them through ICU — EUC-JP and EUC-KR once each octet's high bit is set,
+        `iso-2022-jp` as is; checked for JIS X 0208 and KS C 5601 on Node 24.18.0. Nothing built in
+        encodes them, so ship tables or build the reverse map on first use by decoding the 94×94 grid.
+        A Node without full ICU throws from `new TextDecoder()`, which hard rule 1 wraps into an `err`.
+      - 0x09 pictogram has no published definition; leave it out.
+
+- [ ] **GSM 7-bit national language shift tables.** 3GPP TS 23.038 defines them for Turkish, Spanish
+      (single shift only), Portuguese and ten Indian languages — Bengali, Gujarati, Hindi, Kannada,
+      Malayalam, Oriya, Punjabi, Tamil, Telugu and Urdu — selected per message by UDH elements 0x25
+      (locking) and 0x24 (single). They keep that text near GSM's segment size instead of UCS2's 67
+      characters. Reading means honouring those elements in `decodeMessage()`; sending means `detect()`
+      picking a table, with each element's 3 octets off the segment budget. `smpp` has Turkish, Spanish
+      and Portuguese, used only when the caller writes the UDH.
+
+- [ ] **Packed GSM 7-bit, opt-in.** Everything goes out unpacked, SMPP's convention (AGENTS.md, "GSM
+      7-bit is sent unpacked"); go-smpp carries a packed codec for SMSCs that want septets. Find an SMSC
+      that needs it before building it.
+
+- [ ] **`consts.ENCODING` spells five alphabets twice.** `CYRILLIC`/`ISO_8859_5`,
+      `HEBREW`/`ISO_8859_8`, `JIS`/`X_0208_1990`, `EXTENDED_KANJI_JIS`/`X_0212_1990` and
+      `LATIN1`/`ISO_8859_1`; `FLASH` is a message class, not an alphabet. One name each before
+      registration starts taking names. A breaking change to an export.
+
+### Observability
+
+- [ ] **Metrics.** Inbound traffic has `data`, `incomingPdu` and `incomingPduObj`; outbound has no
+      event, and nothing counts requests in flight, queued for a window slot, waiting for a link, or
+      unanswered. `smpp` and `@semyonf/smpp` emit `metrics`; cloudhopper keeps per-session counters. An
+      `outgoingPdu`/`outgoingPduObj` pair mirrors the inbound events; the counters can be one read-only
+      snapshot, read from the owner of each count rather than a second tally that can drift.
+
+### Packaging, tests and CI
+
+- [ ] **The source maps point at files the package does not ship.** `sourceMap` and `declarationMap`
+      write maps whose `sources` are `../src/*.ts`, and `files` publishes only `dist`, so 225 KB of the
+      555 KB package leads nowhere. Add `src` to `files`, which makes the maps work — go to definition
+      lands in the TypeScript — or drop both maps from the build. `inlineSources` would fix only the
+      `.js.map` files.
+
+- [ ] **A coverage report and a floor in the gate.** `node --test --experimental-test-coverage
+      --test-coverage-include='src/**' test/*.test.ts` on Node 24.18.0, 2026-09-14: 98.77% lines,
+      93.85% branches, 98.28% functions. Gate at 98, 93 and 98 with `--test-coverage-lines`,
+      `--test-coverage-branches` and `--test-coverage-functions`, which Node 22 and later take — a job
+      of its own on 24, since the matrix runs compiled JavaScript — and add it to `main`'s required
+      checks. Raise the floor as coverage rises; never lower it.
+
+- [ ] **Tests on macOS and Windows.** GitHub's hosted `macos-*` and `windows-*` runners are free for
+      public repositories and `actions/setup-node` runs on both, so the job is a `.github/workflows`
+      file with a matrix. It cannot gate: pull requests and required checks live on Gitea, which has no
+      such runners without a self-hosted machine of each, so on the mirror it reports after merge. It
+      runs Node on the runner, as the Ubuntu jobs already do — GitHub's macOS runners have no Docker
+      and its Windows runners run no Linux containers — so goal 9 needs no new exception. On Windows
+      the scripts' `*.test.*` globs reach Node unexpanded, which Node 21 and later expand themselves;
+      Node 18 and 20 cannot run there as the scripts stand. Waits for "Retire the GitHub repository".
+
+- [ ] **Mutation testing.** `@stryker-mutator/tap-runner` runs `node:test` suites and measures whether
+      a test notices a change, which coverage cannot; `@semyonf/smpp` runs Stryker in CI. The session
+      suites are timer-heavy, so start with the codec and the encodings.
+
+- [ ] **A Node-RED node, as a package of its own.** `@leissner/node-red-smpp` is the only SMPP node in
+      the Node-RED library, and by a read of its source it never parses a receipt and never answers the
+      SMSC's `enquire_link`. Its UI is a fair list of what operators set. It builds on this package,
+      never inside it.
+
 ## Declined
 
-- **Merge state surviving a process restart.** Declined by AGENTS.md goal 7, maintainer's call,
+- **Merge state surviving a process restart.** Declined by AGENTS.md goal 8, maintainer's call,
   2026-09-02. A restart loses every incomplete receipt group and a peer has no reason to resend one it
   already had answered, so the loss is real — but surviving it means handing the application the merge
   state to persist, which the scope floor covers as squarely as holding the state here would, and
-  which publishes the shape of `DlrMerger`'s groups against goal 6. Nothing is foreclosed: the seam
+  which publishes the shape of `DlrMerger`'s groups against goal 7. Nothing is foreclosed: the seam
   can still be added after 0.5.0 as a minor.
 
-- **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** Declined by AGENTS.md
-  goal 7: an operator's rate limit is scoped to the account, while the widest thing this library owns
-  is a session, so a bucket here cannot see a second process binding the same account and is wrong in
-  exactly the case it exists for. `sendSms()` surfaces `ESME_RTHROTTLED` to the caller instead, and
-  `maxOutstanding` stays — a window slot frees on the peer's next response, which is self-limiting in
-  a way a rate ceiling is not.
+- **A pool of sessions.** Declined by AGENTS.md goal 8, maintainer's call, 2026-09-14: sends shared
+  across several sessions need state wider than any one of them. `node-smpp-next`'s `createPool()` is
+  the example. An application can run several clients and choose between them.
+
+- **CommonJS.** ESM only, maintainer's call reaffirmed 2026-09-14, though `node-smpp-next` ships both.
+  `require()` of an ES module works unflagged from Node 20.19 and 22.12.
