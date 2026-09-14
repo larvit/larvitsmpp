@@ -41,12 +41,13 @@ one wins. They do not override the hard rules below.
    published. A new option has to beat "the application can do this itself", and has to keep a
    promise this library can verify. The low-level surface is a passthrough: policy binds what the
    library composes, never what the caller wrote.
-8. **Nothing that needs state wider than one session.** No persistence across a restart, no
-   coordination between processes, no pool of sessions — and no seam handing the application state to
-   persist for one of those either, which commits to the same scope through the back door and
-   publishes an internal shape to do it. A limit wider than a session, such as an account's rate
-   limit, is the application's to hold, behind a hook the library calls (goal 6). This is the scope
-   floor, and it is why an otherwise reasonable feature is declined without a fresh argument each time.
+8. **State wider than one session goes through one store.** A pool of sessions, a limit shared
+   between processes, and what has to survive a restart — receipts still awaited, a message half
+   reassembled — are held through a store interface and never beside it. Without a store the
+   application supplies, that state is in memory and ends with the process, and the defaults need
+   none. The interface carries the library's own versioned records, never an internal shape handed
+   to the application to persist. Coordinating processes any other way is declined without a fresh
+   argument each time.
 9. **It builds, tests and runs the same everywhere.** Container-only toolchain, no runtime
    dependencies, the Node 18 floor verified in CI rather than asserted, every README example executed
    by the suite.

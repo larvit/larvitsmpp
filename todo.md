@@ -261,12 +261,12 @@ Each lands under AGENTS.md goal 6: an option or a hook, with the call that passe
 - [ ] **A limiter hook, with a messages-per-second cap built on it.** Maintainer's call, 2026-09-14,
       reversing the earlier decline: Kannel, Jasmin, go-smpp and `smpp-js-sdk` all limit throughput.
       Count PDUs, not `sendSms()` calls — a long message is one `submit_sm` per segment and the
-      operator counts those, which an application wrapping `sendSms()` cannot see. The hook is where an
-      account-wide limit lives: a bucket the application holds across sessions or processes, which
-      goal 8 keeps out of here. The built-in cap is the per-session case; the default stays uncapped.
-      Open: the hook's shape (a wait that resolves when a PDU may go, cut short by the send's
-      `signal`), which requests it gates — messages, never `enquire_link`, `unbind` or a response — and
-      whether its wait counts against `responseTimeout`.
+      operator counts those, which an application wrapping `sendSms()` cannot see. The hook takes a
+      limiter the application already runs; the built-in cap counts per session until the store at the
+      bottom lets it span sessions and processes. The default stays uncapped. Open: the hook's shape (a
+      wait that resolves when a PDU may go, cut short by the send's `signal`), which requests it gates
+      — messages, never `enquire_link`, `unbind` or a response — and whether its wait counts against
+      `responseTimeout`.
 
 - [ ] **Back off and resend on `ESME_RTHROTTLED`.** The SMSC refused the PDU, so resending cannot
       duplicate it and goal 2 holds, and the retry needs nothing wider than the session. Needs a
@@ -287,11 +287,10 @@ Each lands under AGENTS.md goal 6: an option or a hook, with the call that passe
       SMSCs take only `sar_*` or `message_payload`; php-smpp offers all three. A 16-bit reference also
       makes a collision rarer: the 8-bit one wraps every 255 sends on a session.
 
-- [ ] **Failover across SMSC hosts.** `client()` takes one `host` and `port`; Kannel, Jasmin and
-      php-smpp take several. Asked 2026-09-14 whether this needs state wider than a session: a list the
-      reconnect loop walks holds only which host the one session is on, so goal 8 does not decline it,
-      unlike a pool (Declined). Needs a decision: in order or round robin, and when to try the first
-      host again.
+- [ ] **Failover across SMSC hosts.** Maintainer's call, 2026-09-14. `client()` takes one `host` and
+      `port`; Kannel, Jasmin and php-smpp take several. A list the reconnect loop walks holds only
+      which host the one session is on, so it needs no store. Open: in order or round robin, and when
+      to try the first host again.
 
 ### The server
 
@@ -368,11 +367,11 @@ Each lands under AGENTS.md goal 6: an option or a hook, with the call that passe
 
 ### Packaging, tests and CI
 
-- [ ] **The source maps point at files the package does not ship.** `sourceMap` and `declarationMap`
-      write maps whose `sources` are `../src/*.ts`, and `files` publishes only `dist`, so 225 KB of the
-      555 KB package leads nowhere. Add `src` to `files`, which makes the maps work — go to definition
-      lands in the TypeScript — or drop both maps from the build. `inlineSources` would fix only the
-      `.js.map` files.
+- [ ] **Ship `src`, so the source maps lead somewhere.** Maintainer's call, 2026-09-14. `sourceMap`
+      and `declarationMap` write maps whose `sources` are `../src/*.ts`, but `files` publishes only
+      `dist`, so 82 of the package's 167 files, 225 KB of its 555 KB unpacked, point at nothing. Adding
+      `src` (41 files, 209 KB) makes go to definition land in the TypeScript, and lets a debugger or
+      `--enable-source-maps` show it.
 
 - [ ] **A coverage report and a floor in the gate.** `node --test --experimental-test-coverage
       --test-coverage-include='src/**' test/*.test.ts` on Node 24.18.0, 2026-09-14: 98.77% lines,
@@ -381,14 +380,21 @@ Each lands under AGENTS.md goal 6: an option or a hook, with the call that passe
       of its own on 24, since the matrix runs compiled JavaScript — and add it to `main`'s required
       checks. Raise the floor as coverage rises; never lower it.
 
-- [ ] **Tests on macOS and Windows.** GitHub's hosted `macos-*` and `windows-*` runners are free for
-      public repositories and `actions/setup-node` runs on both, so the job is a `.github/workflows`
-      file with a matrix. It cannot gate: pull requests and required checks live on Gitea, which has no
-      such runners without a self-hosted machine of each, so on the mirror it reports after merge. It
-      runs Node on the runner, as the Ubuntu jobs already do — GitHub's macOS runners have no Docker
-      and its Windows runners run no Linux containers — so goal 9 needs no new exception. On Windows
-      the scripts' `*.test.*` globs reach Node unexpanded, which Node 21 and later expand themselves;
-      Node 18 and 20 cannot run there as the scripts stand. Waits for "Retire the GitHub repository".
+- [ ] **Tests on macOS and Windows, on Gitea runners.** Gitea 1.26.4 runs the Ubuntu jobs on
+      `dedicated-runner`; a Windows and a macOS host each running `act_runner` in host mode, under
+      labels such as `windows-2025:host` and `macos-15:host`, run the same `setup-node` matrix and can
+      be required checks on `main`. Registered ephemeral — the runner API already carries the flag — a
+      runner takes one job and leaves, so its host can be reset from a snapshot and registered again;
+      that loop is ours to script. CI already installs Node with `setup-node` rather than through
+      `compose.yaml`, so goal 9 needs no new exception.
+      - **Windows:** a KVM VM on our metal, or `dockur/windows`, the same VM packaged as a container,
+        which needs `/dev/kvm`. Either needs a Windows licence; the evaluation editions expire. Node
+        on `PATH`, since host mode runs `actions/checkout` and `actions/setup-node` with the host's
+        `node`. `cmd` hands the scripts' `*.test.*` globs to Node unexpanded, which Node 21 and later
+        expand themselves, so Node 18 and 20 cannot run there as the scripts stand.
+      - **macOS:** Apple hardware. Apple's licence allows macOS guests only on Apple hardware, so not
+        on our metal: a Mac mini running `act_runner` itself, or Tart VMs on it, two macOS guests at a
+        time.
 
 - [ ] **Mutation testing.** `@stryker-mutator/tap-runner` runs `node:test` suites and measures whether
       a test notices a change, which coverage cannot; `@semyonf/smpp` runs Stryker in CI. The session
@@ -401,16 +407,32 @@ Each lands under AGENTS.md goal 6: an option or a hook, with the call that passe
 
 ## Declined
 
-- **Merge state surviving a process restart.** Declined by AGENTS.md goal 8, maintainer's call,
-  2026-09-02. A restart loses every incomplete receipt group and a peer has no reason to resend one it
-  already had answered, so the loss is real — but surviving it means handing the application the merge
-  state to persist, which the scope floor covers as squarely as holding the state here would, and
-  which publishes the shape of `DlrMerger`'s groups against goal 7. Nothing is foreclosed: the seam
-  can still be added after 0.5.0 as a minor.
-
-- **A pool of sessions.** Declined by AGENTS.md goal 8, maintainer's call, 2026-09-14: sends shared
-  across several sessions need state wider than any one of them. `node-smpp-next`'s `createPool()` is
-  the example. An application can run several clients and choose between them.
-
 - **CommonJS.** ESM only, maintainer's call reaffirmed 2026-09-14, though `node-smpp-next` ships both.
   `require()` of an ES module works unflagged from Node 20.19 and 22.12.
+
+## An optional store
+
+- [ ] **Pooling, and state that survives a restart, through an optional store.** Maintainer's call,
+      2026-09-14. It replaces two declines — merge state surviving a restart, and a pool of sessions —
+      and AGENTS.md goal 8 was rewritten for it. Big: design before code.
+      - **What it holds.** Receipts still awaited and the groups `DlrMerger` collects. Segments of a
+        message already answered but not yet whole, which the peer will not send again (goal 2). The
+        concatenation reference, so a restart does not reuse one. For a pool, the ids every session
+        sent, since an SMSC may deliver a receipt on any bind of the account, and the
+        messages-per-second budget the sessions share.
+      - **What it cannot hold.** A response belongs to the link its request arrived on, so a message
+        left unanswered at a restart stays unanswerable; the peer's own timeout settles it.
+      - **Pooling.** Several sessions, in one process or many, behind one send: a message goes to a
+        bound session with a free window slot, all its segments on that one. In one process the
+        in-memory store is enough; across processes the application supplies one.
+      - **The interface.** Narrow, with keys and records of the library's own making, versioned, with
+        expiry: a record from an older version is read or refused, never misread, and `DlrMerger`'s
+        group shape is never published (goal 7). What processes share needs an atomic operation —
+        compare-and-set or increment — since get-then-set races.
+      - **Adapters live elsewhere.** Redis, Postgres or SQLite stores are packages of their own; this
+        one ships the interface and the in-memory store, and no runtime dependency (goal 9).
+      - **When the store fails.** Open: a send whose awaited receipt cannot be recorded is refused, or
+        sent and reported as undetermined (goal 2); a pool whose store is down stops, or falls back to
+        memory. Either way, an application that supplied no store never waits on one.
+      - **One spelling.** A store-backed cap and the limiter hook both reach a limit shared between
+        processes; settle which owns that case before building the second.
