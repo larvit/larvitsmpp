@@ -1,6 +1,6 @@
 # jsmpp has no published artifact for this pin; cloned at a fixed commit and installed into the
 # local Maven repo, which the driver build below then depends on.
-FROM maven:3.9.11-eclipse-temurin-21 AS jsmpp-source
+FROM maven:3.9.16-eclipse-temurin-21 AS jsmpp-source
 
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends git \
@@ -13,7 +13,7 @@ RUN git clone https://github.com/opentelecoms-org/jsmpp.git /src \
 	&& git checkout "${JSMPP_COMMIT}" \
 	&& mvn -q -pl jsmpp -am install -DskipTests -Dgpg.skip=true
 
-FROM maven:3.9.11-eclipse-temurin-21 AS build
+FROM maven:3.9.16-eclipse-temurin-21 AS build
 
 COPY --from=jsmpp-source /root/.m2 /root/.m2
 

@@ -1,6 +1,6 @@
 # cloudhopper-smpp (the fizzed fork) has no published artifact; cloned at a fixed commit and
 # installed into the local Maven repo, which the driver build below then depends on.
-FROM maven:3.9.11-eclipse-temurin-21 AS cloudhopper-source
+FROM maven:3.9.16-eclipse-temurin-21 AS cloudhopper-source
 
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends git \
@@ -33,7 +33,7 @@ RUN mkdir -p /certs \
 	&& openssl pkcs12 -export -in /certs/server.crt -inkey /certs/server.key \
 		-out /certs/keystore.p12 -name interop -password pass:changeit
 
-FROM maven:3.9.11-eclipse-temurin-21 AS build
+FROM maven:3.9.16-eclipse-temurin-21 AS build
 
 COPY --from=cloudhopper-source /root/.m2 /root/.m2
 
