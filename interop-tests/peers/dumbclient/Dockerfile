@@ -23,7 +23,7 @@ RUN sed -i \
 		smpp.go \
 	&& go build -o /out/smpp-dumb-client-noping ./app/smpp-dumb-client
 
-FROM --platform=linux/amd64 alpine:3.23.5 AS runtime
+FROM --platform=linux/amd64 alpine:3.24.1 AS runtime
 
 RUN apk add --no-cache netcat-openbsd
 
