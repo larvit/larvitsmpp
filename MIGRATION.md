@@ -1,6 +1,6 @@
 # Migrating from larvitsmpp 0.4.0
 
-`@larvit/smpp` 1.0.0 succeeds [larvitsmpp](https://www.npmjs.com/package/larvitsmpp) 0.4.0. The
+`@larvit/smpp` 0.5.0 succeeds [larvitsmpp](https://www.npmjs.com/package/larvitsmpp) 0.4.0. The
 shape is the same, connect, send, listen for delivery reports, with callbacks replaced by promises.
 
 ## API changes

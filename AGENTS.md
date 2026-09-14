@@ -5,7 +5,7 @@ Guidance for LLM agents working in this repository. What each file in it is for 
 
 ## What this is
 
-A ground-up TypeScript rewrite of `larvitsmpp` 0.4.0, published as `@larvit/smpp` 1.0.0. The branch
+A ground-up TypeScript rewrite of `larvitsmpp` 0.4.0, published as `@larvit/smpp` 0.5.0. The branch
 started from an orphan commit — no history from 0.4.0 is carried over. The 0.4.0 source is still
 readable on the `v0.4.0` branch of the same repository and is the reference for protocol behaviour,
 not for structure or style.
@@ -338,14 +338,15 @@ Grouped by what each one constrains.
   What settles it here is the resolved text rather than the parameter, because `writeParams()`
   substitutes the field's own default: a peer that omits `message_id` and one that writes it empty
   build the same octets, leaving a raw-parameter test nothing to tell apart. Rejected: keeping `''`
-  and documenting it, which leaves the published type promising what the value does not keep —
-  goal 2, a wrong answer about what the peer named. Rejected: dropping the unnamed entries, which
-  breaks the positional correspondence with `pduObjs` that README promises and loses which segment a
-  PDU belongs to. Rejected: `{ id?: string; pduObj: PduObject }[]`, which makes that positional
-  promise structural where today the compiler cannot check it; deferred to the next major, the first
-  place two documented fields may become one. Accepted: every consumer reading `smsIds` narrows,
-  including the majority whose SMSC names every id; indexing narrows too, except for the consumer
-  who sets `noUncheckedIndexedAccess`, which typed `smsIds[0]` as `string | undefined` already.
+  and documenting it, which leaves the published type promising what the value does not keep — goal
+  2, a wrong answer about what the peer named. Rejected: dropping the unnamed entries, which breaks
+  the positional correspondence with `pduObjs` that README promises and loses which segment a PDU
+  belongs to. Rejected: `{ id?: string; pduObj: PduObject }[]`, which makes that positional promise
+  structural where today the compiler cannot check it; deferred to the next breaking release, the
+  first place two documented fields may become one. Accepted: every consumer reading `smsIds`
+  narrows, including the majority whose SMSC names every id; indexing narrows too, except for the
+  consumer who sets `noUncheckedIndexedAccess`, which typed `smsIds[0]` as `string | undefined`
+  already.
 
 ### The wire
 

@@ -1,6 +1,6 @@
 {
 	"name": "@larvit/smpp",
-	"version": "1.0.0",
+	"version": "0.5.0",
 	"description": "SMPP 3.4 client and server for Node.js with the session layer built in: keepalive, reconnect, send window, long messages and delivery receipts",
 	"keywords": [
 		"esm",
@@ -10,6 +10,9 @@
 		"typescript"
 	],
 	"homepage": "https://gitea.larvit.se/larvit/smpp-js",
+	"bugs": {
+		"url": "https://github.com/larvit/smpp-js/issues"
+	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://gitea.larvit.se/larvit/smpp-js.git"
