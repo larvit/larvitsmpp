@@ -9,7 +9,7 @@ govern it, and nothing here is a source anything else may cite.
 ## Status
 
 The rewrite is **feature complete and green**: the suite, lint and typecheck are clean on Node 18
-to 26. What is left is release work and a few things worth adding before or after 1.0.0.
+to 26. What is left is release work and a few things worth adding before or after 0.5.0.
 
 ## The agreed API
 
@@ -73,51 +73,52 @@ Every defect listed in the AGENTS.md table has a regression test naming the beha
 
 ## Move the repository to Gitea
 
-`gitea.larvit.se/larvit/smpp-js` is the repository and `github.com/larvit/smpp-js` becomes a push
-mirror of it. Maintainer's call, 2026-09-13, to move before 1.0.0.
+`gitea.larvit.se/larvit/smpp-js` is the repository. `github.com/larvit/smpp-js` becomes a push mirror
+of it and the place issues are filed. Maintainer's calls, 2026-09-13 and 2026-09-14.
 
 - [x] `larvit/smpp-js` holds `main`, from `typescript`, and `v0.4.0`, from `master`. `rewrite-base`
       and the `renovate/*` branches stayed behind.
 - [x] Fast-forward is the only merge style. `main` takes no pushes, requires `Test / lint
       (pull_request)` and `Test / test (*) (pull_request)`, blocks an outdated branch, and gives
-      admins no override.
+      admins no override. Every other branch takes force pushes.
 - [x] The workflows are in `.gitea/workflows/`. Tests run on pull requests only, the event the gate
       reads; Renovate runs as a scheduled workflow, as on adf-codec.
 - [x] The release publishes without provenance, which npm generates only on GitHub Actions and
       GitLab CI/CD.
-- [x] `package.json` names Gitea. The README links absolutely: npmjs.com resolves a relative link
-      against itself when the `repository` is not on GitHub. Its test badge is gone, since Gitea
-      reports a workflow's status per branch and no workflow runs on `main`.
-- [ ] Add `RENOVATE_GITHUB_TOKEN` as an organization secret. The Renovate workflow reads it for
-      GitHub-hosted lookups, the actions included, and adf-codec has it as a repository secret only.
-- [ ] **Where issues are filed.** Gitea issues are off, so `package.json` names no `bugs` URL until
-      this is decided.
-- [ ] **Review bot.** CodeRabbit does not support Gitea.
+- [x] `package.json` names Gitea, and the GitHub mirror's issues as `bugs`. The README links
+      absolutely: npmjs.com resolves a relative link against itself when the `repository` is not on
+      GitHub. Its test badge is gone, since Gitea reports a workflow's status per branch and no
+      workflow runs on `main`.
+- `RENOVATE_GITHUB_TOKEN` exists nowhere, so Renovate queries github.com unauthenticated, as
+  adf-codec's nightly run already does without a warning. `RENOVATE_TOKEN` is the Gitea token and
+  cannot stand in for it. Add a github.com token only if lookups hit the rate limit.
 
-## Before publishing 1.0.0
+## Before publishing 0.5.0
 
+- [x] 0.5.0 rather than 1.0.0, while usage is this low. Maintainer's call, 2026-09-14.
 - [x] `NPM_TOKEN`, which `.gitea/workflows/release.yaml` needs, is a Gitea organization secret.
-- [ ] Tag `v1.0.0` on Gitea to publish. The first publish creates `@larvit/smpp` on npm, provided the
+- [ ] Tag `v0.5.0` on Gitea to publish. The first publish creates `@larvit/smpp` on npm, provided the
       token can publish under `@larvit`.
 - [ ] `npm deprecate larvitsmpp` pointing at `@larvit/smpp`. Maintainer's call to run it; not
       something CI should do.
 
 ## Retire the GitHub repository
 
-In this order. The push mirror replaces GitHub's branches with Gitea's, which closes every pull
-request based on `master` without a reply, and GitHub refuses to delete the default branch it syncs
-over.
+Nothing here starts before 0.5.0 is published. Maintainer's call, 2026-09-14. Then in this order:
+the push mirror replaces GitHub's branches with Gitea's, which closes every pull request based on
+`master` without a reply, and GitHub refuses to delete the default branch it syncs over.
 
 - [ ] Close the backlog below.
 - [ ] Close [#71](https://github.com/larvit/larvitsmpp/pull/71), pointing at Gitea.
-- [ ] Rename `larvit/larvitsmpp` to `larvit/smpp-js`; GitHub redirects the old URLs.
+- [ ] Rename `larvit/larvitsmpp` to `larvit/smpp-js`. GitHub redirects the old URLs, and the `bugs`
+      URL in `package.json` resolves from then on.
 - [ ] Push `main` and make it GitHub's default branch.
 - [ ] Remove Renovate and CodeRabbit from the GitHub repository.
 - [ ] Add it to Gitea as a push mirror, with a GitHub credential that can write to it.
 
 ## Close the GitHub backlog
 
-**Answer and close as fixed by 1.0.0**, the reply naming what fixed it:
+**Answer and close as fixed by 0.5.0**, the reply naming what fixed it:
 
 - [ ] [#2](https://github.com/larvit/larvitsmpp/issues/2) Tests for the README examples:
       `test/readme.test.ts`.
@@ -192,11 +193,13 @@ session message is a change to every call site.
 
 - [ ] **A gate that fails when the test matrix misses the current Node.** Maintainer's ask on
       [#71](https://github.com/larvit/larvitsmpp/pull/71), 2026-09-06, on the Node 26 thread. Node
-      26 was added by hand; nothing notices when 27 ships. Needs a
-      source for what Current is — the Node release schedule is published as JSON — and a decision
-      on whether a new Current fails the build or opens a PR, which is what Renovate already does
-      for everything else here.
+      26 was added by hand; nothing notices when 27 ships. Needs a source for what Current is — the
+      Node release schedule is published as JSON — and a decision on whether a new Current fails the
+      build or opens a PR, which is what Renovate already does for everything else here.
 
+- [ ] **CodeRabbit reviews through the GitHub mirror.** CodeRabbit does not support Gitea, so mirror
+      each Gitea pull request to GitHub for it to review there. Maintainer's ask, 2026-09-14; not
+      started until asked.
 
 - [ ] **Group the session's collaborators under `src/session/`.** `session.ts` imports
       `dlr-merger`, `incoming-requests`, `link-timers`, `outgoing-requests`, `pdu-transport`,
@@ -248,7 +251,7 @@ session message is a change to every call site.
   already had answered, so the loss is real — but surviving it means handing the application the merge
   state to persist, which the scope floor covers as squarely as holding the state here would, and
   which publishes the shape of `DlrMerger`'s groups against goal 6. Nothing is foreclosed: the seam
-  can still be added after 1.0.0 as a minor.
+  can still be added after 0.5.0 as a minor.
 
 - **Throughput throttling — a TPS cap, and backing off on `ESME_RTHROTTLED`.** Declined by AGENTS.md
   goal 7: an operator's rate limit is scoped to the account, while the widest thing this library owns
